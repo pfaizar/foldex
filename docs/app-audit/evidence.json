@@ -1,0 +1,959 @@
+{
+  "base_commit": "fa372957b280ba2733092b24a01efa0ac6907296",
+  "date": "2026-10-25",
+  "environment": {
+    "os": "Linux",
+    "machine": "x86_64",
+    "rust": "1.95.0",
+    "profile": "dev (opt-level=1; dependencies opt-level=2)",
+    "catalog_rows": 100000,
+    "catalog_repeats": 5,
+    "filesystem_cache": "synthetic catalogs just ingested; warm; OS cache not flushed",
+    "scope": "portable logic and headless egui; no Windows desktop, DX12, OneDrive provider, or native Shell runtime verification"
+  },
+  "behavioral_probes": [
+    {
+      "generated_nodes_over_three_frames": 21,
+      "labels": [
+        "Files",
+        "Files",
+        "Files"
+      ],
+      "probe": "listing_accessibility",
+      "roles": [
+        "GenericContainer",
+        "GenericContainer",
+        "GenericContainer",
+        "Window",
+        "Unknown",
+        "GenericContainer",
+        "GenericContainer",
+        "GenericContainer",
+        "GenericContainer",
+        "GenericContainer",
+        "Window",
+        "Unknown",
+        "GenericContainer",
+        "GenericContainer",
+        "GenericContainer",
+        "GenericContainer",
+        "GenericContainer",
+        "Window",
+        "Unknown",
+        "GenericContainer",
+        "GenericContainer"
+      ],
+      "visible_filename_exposed": false
+    },
+    {
+      "newer_bookmark_survives": false,
+      "newer_shortcut_survives": false,
+      "owner_launcher_survives": true,
+      "owner_workspace_survives": false,
+      "probe": "multiwindow_session"
+    },
+    {
+      "error": "Workspace state exceeds its 256 KiB budget",
+      "navigation_entries_per_tab": 64,
+      "probe": "session_budget",
+      "saved_layouts": 3,
+      "serialized_bytes": 339555,
+      "tabs": 4,
+      "writer_budget": 262144
+    },
+    {
+      "events_after_release": 2,
+      "events_while_mutation_blocked": 0,
+      "probe": "operation_queue",
+      "simulation": "mutation history lock held for 250 ms"
+    },
+    {
+      "after_nonrefresh_request": 1,
+      "after_refresh": 2,
+      "files_on_disk": 2,
+      "probe": "search_freshness",
+      "same_generation": true,
+      "stale_marked_complete": true,
+      "stale_marked_from_cache": false
+    },
+    {
+      "completes_after_newer_client_deactivation": true,
+      "oldest_pending_after_other_two_complete": true,
+      "oldest_received_any_event": false,
+      "probe": "three_active_searches"
+    },
+    {
+      "first_entries": 1,
+      "new_generation": true,
+      "probe": "unchanged_scope_rebuild",
+      "second_entries": 1
+    }
+  ],
+  "large_directory": {
+    "probe": "large_flat_directory",
+    "created": 150000,
+    "filename_bytes": 121,
+    "enumerated": 126542,
+    "complete": false,
+    "limit": "Some(MemoryBudget)",
+    "logical_model_bytes": 49367708,
+    "enumerate_ms": 203.814,
+    "omitted_file_exists": true,
+    "filter_matches_for_omitted_file": 0
+  },
+  "catalog_paging": {
+    "measurements": [
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "",
+        "page": "first",
+        "offset": 0,
+        "rows": 256,
+        "elapsed_ms": 7.323,
+        "head_ms": 6.88,
+        "row_decode_ms": 0.439,
+        "run": 1
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "",
+        "page": "within_head",
+        "offset": 768,
+        "rows": 256,
+        "elapsed_ms": 0.294,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.292,
+        "run": 1
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "",
+        "page": "cross_head",
+        "offset": 1024,
+        "rows": 256,
+        "elapsed_ms": 94.28,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.347,
+        "run": 1
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "",
+        "page": "deep_warm",
+        "offset": 50000,
+        "rows": 256,
+        "elapsed_ms": 0.545,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.518,
+        "run": 1
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "report",
+        "page": "first",
+        "offset": 0,
+        "rows": 256,
+        "elapsed_ms": 10.453,
+        "head_ms": 10.371,
+        "row_decode_ms": 0.079,
+        "run": 1
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "report",
+        "page": "within_head",
+        "offset": 768,
+        "rows": 256,
+        "elapsed_ms": 0.067,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.065,
+        "run": 1
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "report",
+        "page": "cross_head",
+        "offset": 1024,
+        "rows": 256,
+        "elapsed_ms": 113.803,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.11,
+        "run": 1
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "report",
+        "page": "deep_warm",
+        "offset": 50000,
+        "rows": 256,
+        "elapsed_ms": 0.102,
+        "head_ms": 0.001,
+        "row_decode_ms": 0.091,
+        "run": 1
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "rpt",
+        "page": "first",
+        "offset": 0,
+        "rows": 256,
+        "elapsed_ms": 11.073,
+        "head_ms": 10.951,
+        "row_decode_ms": 0.12,
+        "run": 1
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "rpt",
+        "page": "within_head",
+        "offset": 768,
+        "rows": 256,
+        "elapsed_ms": 0.094,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.092,
+        "run": 1
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "rpt",
+        "page": "cross_head",
+        "offset": 1024,
+        "rows": 256,
+        "elapsed_ms": 109.048,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.103,
+        "run": 1
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "rpt",
+        "page": "deep_warm",
+        "offset": 50000,
+        "rows": 256,
+        "elapsed_ms": 0.1,
+        "head_ms": 0.001,
+        "row_decode_ms": 0.088,
+        "run": 1
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "",
+        "page": "first",
+        "offset": 0,
+        "rows": 256,
+        "elapsed_ms": 10.04,
+        "head_ms": 9.469,
+        "row_decode_ms": 0.568,
+        "run": 2
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "",
+        "page": "within_head",
+        "offset": 768,
+        "rows": 256,
+        "elapsed_ms": 0.354,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.351,
+        "run": 2
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "",
+        "page": "cross_head",
+        "offset": 1024,
+        "rows": 256,
+        "elapsed_ms": 104.879,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.361,
+        "run": 2
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "",
+        "page": "deep_warm",
+        "offset": 50000,
+        "rows": 256,
+        "elapsed_ms": 0.358,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.332,
+        "run": 2
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "report",
+        "page": "first",
+        "offset": 0,
+        "rows": 256,
+        "elapsed_ms": 10.514,
+        "head_ms": 10.356,
+        "row_decode_ms": 0.156,
+        "run": 2
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "report",
+        "page": "within_head",
+        "offset": 768,
+        "rows": 256,
+        "elapsed_ms": 0.104,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.102,
+        "run": 2
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "report",
+        "page": "cross_head",
+        "offset": 1024,
+        "rows": 256,
+        "elapsed_ms": 128.86,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.385,
+        "run": 2
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "report",
+        "page": "deep_warm",
+        "offset": 50000,
+        "rows": 256,
+        "elapsed_ms": 0.105,
+        "head_ms": 0.001,
+        "row_decode_ms": 0.091,
+        "run": 2
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "rpt",
+        "page": "first",
+        "offset": 0,
+        "rows": 256,
+        "elapsed_ms": 9.382,
+        "head_ms": 9.27,
+        "row_decode_ms": 0.11,
+        "run": 2
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "rpt",
+        "page": "within_head",
+        "offset": 768,
+        "rows": 256,
+        "elapsed_ms": 0.094,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.092,
+        "run": 2
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "rpt",
+        "page": "cross_head",
+        "offset": 1024,
+        "rows": 256,
+        "elapsed_ms": 120.366,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.112,
+        "run": 2
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "rpt",
+        "page": "deep_warm",
+        "offset": 50000,
+        "rows": 256,
+        "elapsed_ms": 0.103,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.091,
+        "run": 2
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "",
+        "page": "first",
+        "offset": 0,
+        "rows": 256,
+        "elapsed_ms": 8.033,
+        "head_ms": 7.522,
+        "row_decode_ms": 0.507,
+        "run": 3
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "",
+        "page": "within_head",
+        "offset": 768,
+        "rows": 256,
+        "elapsed_ms": 0.347,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.345,
+        "run": 3
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "",
+        "page": "cross_head",
+        "offset": 1024,
+        "rows": 256,
+        "elapsed_ms": 99.172,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.376,
+        "run": 3
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "",
+        "page": "deep_warm",
+        "offset": 50000,
+        "rows": 256,
+        "elapsed_ms": 0.364,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.338,
+        "run": 3
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "report",
+        "page": "first",
+        "offset": 0,
+        "rows": 256,
+        "elapsed_ms": 10.892,
+        "head_ms": 10.806,
+        "row_decode_ms": 0.085,
+        "run": 3
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "report",
+        "page": "within_head",
+        "offset": 768,
+        "rows": 256,
+        "elapsed_ms": 0.074,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.072,
+        "run": 3
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "report",
+        "page": "cross_head",
+        "offset": 1024,
+        "rows": 256,
+        "elapsed_ms": 116.783,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.109,
+        "run": 3
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "report",
+        "page": "deep_warm",
+        "offset": 50000,
+        "rows": 256,
+        "elapsed_ms": 0.104,
+        "head_ms": 0.001,
+        "row_decode_ms": 0.092,
+        "run": 3
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "rpt",
+        "page": "first",
+        "offset": 0,
+        "rows": 256,
+        "elapsed_ms": 10.075,
+        "head_ms": 9.956,
+        "row_decode_ms": 0.117,
+        "run": 3
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "rpt",
+        "page": "within_head",
+        "offset": 768,
+        "rows": 256,
+        "elapsed_ms": 0.112,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.11,
+        "run": 3
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "rpt",
+        "page": "cross_head",
+        "offset": 1024,
+        "rows": 256,
+        "elapsed_ms": 111.624,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.11,
+        "run": 3
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "rpt",
+        "page": "deep_warm",
+        "offset": 50000,
+        "rows": 256,
+        "elapsed_ms": 0.107,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.095,
+        "run": 3
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "",
+        "page": "first",
+        "offset": 0,
+        "rows": 256,
+        "elapsed_ms": 7.634,
+        "head_ms": 7.039,
+        "row_decode_ms": 0.592,
+        "run": 4
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "",
+        "page": "within_head",
+        "offset": 768,
+        "rows": 256,
+        "elapsed_ms": 0.287,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.284,
+        "run": 4
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "",
+        "page": "cross_head",
+        "offset": 1024,
+        "rows": 256,
+        "elapsed_ms": 100.644,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.37,
+        "run": 4
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "",
+        "page": "deep_warm",
+        "offset": 50000,
+        "rows": 256,
+        "elapsed_ms": 0.386,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.359,
+        "run": 4
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "report",
+        "page": "first",
+        "offset": 0,
+        "rows": 256,
+        "elapsed_ms": 10.173,
+        "head_ms": 10.089,
+        "row_decode_ms": 0.083,
+        "run": 4
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "report",
+        "page": "within_head",
+        "offset": 768,
+        "rows": 256,
+        "elapsed_ms": 0.071,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.069,
+        "run": 4
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "report",
+        "page": "cross_head",
+        "offset": 1024,
+        "rows": 256,
+        "elapsed_ms": 119.81,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.11,
+        "run": 4
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "report",
+        "page": "deep_warm",
+        "offset": 50000,
+        "rows": 256,
+        "elapsed_ms": 0.099,
+        "head_ms": 0.001,
+        "row_decode_ms": 0.087,
+        "run": 4
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "rpt",
+        "page": "first",
+        "offset": 0,
+        "rows": 256,
+        "elapsed_ms": 8.797,
+        "head_ms": 8.695,
+        "row_decode_ms": 0.101,
+        "run": 4
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "rpt",
+        "page": "within_head",
+        "offset": 768,
+        "rows": 256,
+        "elapsed_ms": 0.087,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.086,
+        "run": 4
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "rpt",
+        "page": "cross_head",
+        "offset": 1024,
+        "rows": 256,
+        "elapsed_ms": 116.304,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.11,
+        "run": 4
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "rpt",
+        "page": "deep_warm",
+        "offset": 50000,
+        "rows": 256,
+        "elapsed_ms": 0.102,
+        "head_ms": 0.001,
+        "row_decode_ms": 0.089,
+        "run": 4
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "",
+        "page": "first",
+        "offset": 0,
+        "rows": 256,
+        "elapsed_ms": 7.027,
+        "head_ms": 6.589,
+        "row_decode_ms": 0.436,
+        "run": 5
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "",
+        "page": "within_head",
+        "offset": 768,
+        "rows": 256,
+        "elapsed_ms": 0.259,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.258,
+        "run": 5
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "",
+        "page": "cross_head",
+        "offset": 1024,
+        "rows": 256,
+        "elapsed_ms": 91.38,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.383,
+        "run": 5
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "",
+        "page": "deep_warm",
+        "offset": 50000,
+        "rows": 256,
+        "elapsed_ms": 0.359,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.333,
+        "run": 5
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "report",
+        "page": "first",
+        "offset": 0,
+        "rows": 256,
+        "elapsed_ms": 9.995,
+        "head_ms": 9.902,
+        "row_decode_ms": 0.092,
+        "run": 5
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "report",
+        "page": "within_head",
+        "offset": 768,
+        "rows": 256,
+        "elapsed_ms": 0.081,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.079,
+        "run": 5
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "report",
+        "page": "cross_head",
+        "offset": 1024,
+        "rows": 256,
+        "elapsed_ms": 110.154,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.112,
+        "run": 5
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "report",
+        "page": "deep_warm",
+        "offset": 50000,
+        "rows": 256,
+        "elapsed_ms": 0.136,
+        "head_ms": 0.001,
+        "row_decode_ms": 0.124,
+        "run": 5
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "rpt",
+        "page": "first",
+        "offset": 0,
+        "rows": 256,
+        "elapsed_ms": 9.891,
+        "head_ms": 9.741,
+        "row_decode_ms": 0.148,
+        "run": 5
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "rpt",
+        "page": "within_head",
+        "offset": 768,
+        "rows": 256,
+        "elapsed_ms": 0.096,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.094,
+        "run": 5
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "rpt",
+        "page": "cross_head",
+        "offset": 1024,
+        "rows": 256,
+        "elapsed_ms": 107.546,
+        "head_ms": 0.0,
+        "row_decode_ms": 0.111,
+        "run": 5
+      },
+      {
+        "probe": "catalog_paging",
+        "records": 100000,
+        "query": "rpt",
+        "page": "deep_warm",
+        "offset": 50000,
+        "rows": 256,
+        "elapsed_ms": 0.103,
+        "head_ms": 0.001,
+        "row_decode_ms": 0.091,
+        "run": 5
+      }
+    ],
+    "summary": [
+      {
+        "query": "",
+        "page": "first",
+        "runs": 5,
+        "median_ms": 7.634,
+        "min_ms": 7.027,
+        "max_ms": 10.04
+      },
+      {
+        "query": "",
+        "page": "within_head",
+        "runs": 5,
+        "median_ms": 0.294,
+        "min_ms": 0.259,
+        "max_ms": 0.354
+      },
+      {
+        "query": "",
+        "page": "cross_head",
+        "runs": 5,
+        "median_ms": 99.172,
+        "min_ms": 91.38,
+        "max_ms": 104.879
+      },
+      {
+        "query": "",
+        "page": "deep_warm",
+        "runs": 5,
+        "median_ms": 0.364,
+        "min_ms": 0.358,
+        "max_ms": 0.545
+      },
+      {
+        "query": "report",
+        "page": "first",
+        "runs": 5,
+        "median_ms": 10.453,
+        "min_ms": 9.995,
+        "max_ms": 10.892
+      },
+      {
+        "query": "report",
+        "page": "within_head",
+        "runs": 5,
+        "median_ms": 0.074,
+        "min_ms": 0.067,
+        "max_ms": 0.104
+      },
+      {
+        "query": "report",
+        "page": "cross_head",
+        "runs": 5,
+        "median_ms": 116.783,
+        "min_ms": 110.154,
+        "max_ms": 128.86
+      },
+      {
+        "query": "report",
+        "page": "deep_warm",
+        "runs": 5,
+        "median_ms": 0.104,
+        "min_ms": 0.099,
+        "max_ms": 0.136
+      },
+      {
+        "query": "rpt",
+        "page": "first",
+        "runs": 5,
+        "median_ms": 9.891,
+        "min_ms": 8.797,
+        "max_ms": 11.073
+      },
+      {
+        "query": "rpt",
+        "page": "within_head",
+        "runs": 5,
+        "median_ms": 0.094,
+        "min_ms": 0.087,
+        "max_ms": 0.112
+      },
+      {
+        "query": "rpt",
+        "page": "cross_head",
+        "runs": 5,
+        "median_ms": 111.624,
+        "min_ms": 107.546,
+        "max_ms": 120.366
+      },
+      {
+        "query": "rpt",
+        "page": "deep_warm",
+        "runs": 5,
+        "median_ms": 0.103,
+        "min_ms": 0.1,
+        "max_ms": 0.107
+      }
+    ]
+  },
+  "validation": {
+    "core_index_match_fs_folder_stats": {
+      "passed": 104,
+      "ignored": 2,
+      "failed": 0
+    },
+    "behavioral_probes": {
+      "passed": 7,
+      "failed": 0
+    },
+    "app_baseline": {
+      "portable_passed": 578,
+      "linux_specific_failures": 2,
+      "excluded_tests": [
+        {
+          "name": "launcher::tests::default_roots_do_not_scan_verbatim_home_twice",
+          "reason": "Windows drive, verbatim and UNC path assertions exercise the platform-specific path implementation on Linux."
+        },
+        {
+          "name": "search::tests::repeated_unfinished_refreshes_do_not_accumulate_owned_generations",
+          "reason": "Native catalog cleanup explicitly retains all generations on Unix until cross-process leases exist (catalog/cleanup.rs)."
+        }
+      ]
+    }
+  },
+  "probe_sha256": {
+    "catalog_probe.rs": "4468641cf75c73cdcccd709b83739e6c30a54dcfcee2b7a73dfb4f4c425cd93e",
+    "platform_probe.rs": "5ed2ca2806f0203193ad92a459c3778502a5ee7d678c515888fc0c96c3a44d3e",
+    "directory_probe.rs": "ab538d7581add901d816bf172432ab430c928e0f579ff75d3e2e336d21f7e985",
+    "search_probes.rs": "ed7361acf6db3822a0022de8143fb68705f9a946ef7d7c54aba96ca009828f5f",
+    "persistence_probes.rs": "defa2fa02505cff0b7f1963f581a156c8891f58a39f611403838596e0d33bb34",
+    "accessibility_probe.rs": "5ea34b436e76d5b14b5c91446dd1bd29ee53ba5171d26475174eb23b65a645ca"
+  }
+}
