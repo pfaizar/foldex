@@ -309,6 +309,12 @@ fn main() -> eframe::Result {
                 };
                 // Winit owns this MSG for the callback lifetime. This observes only our event loop.
                 let msg = unsafe { &*(raw as *const MSG) };
+                if msg.message == hotkeys::RECORDING_WAKE_MESSAGE {
+                    if let Some(ctx) = UI_CONTEXT.get() {
+                        ctx.request_repaint();
+                    }
+                    return true;
+                }
                 if matches!(msg.message, WM_KEYDOWN | WM_SYSKEYDOWN) {
                     let ctrl = unsafe { GetKeyState(VK_CONTROL as i32) } < 0;
                     let shift = unsafe { GetKeyState(VK_SHIFT as i32) } < 0;

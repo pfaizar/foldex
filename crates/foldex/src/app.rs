@@ -309,6 +309,7 @@ impl Foldex {
             }
         };
         platform.set_owner_window(window_owner);
+        hotkeys.attach_native_capture(window_owner);
         let mut launcher_settings = session.launcher.clone();
         if let Some(run) = benchmark
             .as_ref()
@@ -1247,7 +1248,7 @@ impl Foldex {
             return;
         }
         let native = crate::native_keys::take();
-        if self.hotkeys.is_recording() || (!self.popup_active() && !Self::editing(ctx)) {
+        if !self.hotkeys.is_recording() && !self.popup_active() && !Self::editing(ctx) {
             ctx.input_mut(|i| crate::native_keys::merge(&mut i.events, native));
         }
         if self.hotkeys.is_recording() {
@@ -2830,7 +2831,6 @@ impl eframe::App for Foldex {
             }
             input.events.append(&mut run.input);
         }
-        self.hotkeys.prepare_input(input);
         let timed = self
             .benchmark
             .as_ref()
@@ -2860,6 +2860,10 @@ impl eframe::App for Foldex {
                 self.deferred_editor_input.clear();
             }
         }
+        if self.hotkeys.is_recording() {
+            crate::native_keys::merge(&mut input.events, crate::native_keys::take());
+        }
+        self.hotkeys.capture_raw_input(input);
         // A compact atlas is sufficient for text and icons, and avoids oversized
         // font allocations or precision problems on low-end GL implementations.
         input.max_texture_side = Some(input.max_texture_side.unwrap_or(2048).min(2048));

@@ -5,10 +5,15 @@ use egui::{Event, Id, Key, Modifiers, Rect, Sense, UiBuilder, pos2, vec2};
 use foldex_ui::{Icon, Theme, components, motion::MotionProfile};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     time::Duration,
 };
 
+mod native_recorder;
+#[cfg(windows)]
+pub(crate) const RECORDING_WAKE_MESSAGE: u32 = native_recorder::WAKE_MESSAGE;
+
+const MAX_CAPTURE_EVENTS: usize = 512;
 const MAX_BINDINGS: usize = 512;
 const MAX_EVENTS: usize = 32;
 const MAX_QUEUED: usize = 16;
@@ -319,6 +324,10 @@ pub struct Hotkeys {
     revision: u64,
     recording: Option<Recording>,
     recording_cancel: bool,
+    recording_held: Modifiers,
+    raw_recorded: bool,
+    recording_keys_down: HashSet<Key>,
+    native_capture: native_recorder::Recorder,
     filter: String,
     editor_focus: bool,
     filter_rows: Vec<usize>,
@@ -447,6 +456,10 @@ impl Hotkeys {
             revision: 0,
             recording: None,
             recording_cancel: false,
+            recording_held: Modifiers::NONE,
+            raw_recorded: false,
+            recording_keys_down: HashSet::new(),
+            native_capture: Default::default(),
             filter: String::new(),
             editor_focus: false,
             filter_rows: Vec::with_capacity(COMMANDS.len()),
@@ -477,6 +490,77 @@ impl Hotkeys {
     }
     pub fn bindings(&self) -> &[Binding] {
         &self.bindings
+    }
+    pub fn attach_native_capture(&mut self, owner: isize) {
+        self.native_capture.attach(owner);
+    }
+
+    /// Runs before egui's begin-pass focus navigation and before any underlying
+    /// editor or command sees the keys. Only recorder review controls pass through.
+    pub fn capture_raw_input(&mut self, input: &mut egui::RawInput) {
+        let native = self.native_capture.drain();
+        self.capture_input_batch(input, native);
+    }
+
+    fn capture_input_batch(&mut self, input: &mut egui::RawInput, native: native_recorder::Input) {
+        if !native.events.is_empty() {
+            let recording = self.is_recording();
+            input.events.splice(
+                0..0,
+                native.events.into_iter().filter(|event| {
+                    recording || matches!(event, Event::Key { pressed: false, .. })
+                }),
+            );
+        }
+        if let Some(modifiers) = native.restore_modifiers {
+            input.events.insert(0, Event::ModifiersChanged(modifiers));
+        }
+        self.prepare_input(input);
+        if !self.is_recording() {
+            return;
+        }
+        let lost_focus = native.lost_focus
+            || !input.focused
+            || input
+                .events
+                .iter()
+                .any(|event| matches!(event, Event::WindowFocused(false)));
+        if lost_focus || native.overflow || native.cancelled {
+            self.cancel_recording();
+            discard_recorded_events(&mut input.events);
+            input.events.push(Event::ModifiersChanged(Modifiers::NONE));
+            if native.overflow {
+                self.status = Some(
+                    "Recording stopped because too many key events arrived. Try again.".into(),
+                );
+            }
+            return;
+        }
+        self.seen_len = 0;
+        self.capture_events(&mut input.events, self.recording_held);
+        if native.unsupported && self.is_recording() && !self.recording_cancel {
+            self.status = Some("That key is not supported. Try another key combination.".into());
+        }
+        if let Some(modifiers) = native.modifiers.filter(|_| self.is_recording()) {
+            self.recording_held = modifiers;
+        }
+        self.raw_recorded = self.is_recording();
+        // Releases clear keys that were down before recording started. Neutral
+        // UI modifiers keep captured Ctrl/Shift/Alt/Win out of widget navigation.
+        for event in &mut input.events {
+            if let Event::Key {
+                pressed: false,
+                modifiers,
+                ..
+            } = event
+            {
+                *modifiers = Modifiers::NONE;
+            }
+        }
+        input.events.push(Event::ModifiersChanged(Modifiers::NONE));
+        if self.recording_cancel {
+            self.native_capture.stop();
+        }
     }
     /// Keep Super separate from egui's Ctrl/Command alias. Windows reports it
     /// as key events, so carry its state across frames and preserve event order.
@@ -632,6 +716,11 @@ impl Hotkeys {
     pub fn cancel_recording(&mut self) {
         self.recording = None;
         self.recording_cancel = false;
+        self.recording_held = Modifiers::NONE;
+        self.super_keys = [false; 2];
+        self.raw_recorded = false;
+        self.recording_keys_down.clear();
+        self.native_capture.stop();
         self.cancel_pending();
     }
     pub fn display_for(&self, command: Command) -> &str {
@@ -676,7 +765,7 @@ impl Hotkeys {
         true
     }
     fn rebuild(&mut self) {
-        self.recording = None;
+        self.cancel_recording();
         self.compiled.clear();
         self.labels.clear();
         self.displays.clear();
@@ -1149,6 +1238,7 @@ impl Hotkeys {
             self.recording_cancel = true;
             return;
         }
+        self.status = None;
         if let Some(recording) = self.recording.as_mut() {
             // The Windows global launcher registration is a chord. Ordinary
             // command bindings keep every consecutive combination until Assign.
@@ -1168,6 +1258,11 @@ impl Hotkeys {
         self.start_recording(command, None);
     }
     fn start_recording(&mut self, command: Command, replace: Option<usize>) {
+        self.cancel_recording();
+        if let Err(error) = self.native_capture.start() {
+            self.status = Some(error);
+            return;
+        }
         let replace = if command == Command::Launcher {
             replace.or_else(|| {
                 self.bindings
@@ -1225,108 +1320,169 @@ impl Hotkeys {
             return;
         }
         self.recorded_frame = Some(frame);
-        ctx.input_mut(|input| {
-            let mut index = 0;
-            let mut count = 0;
-            let mut strokes = [None; MAX_EVENTS];
-            let mut logical = [0u8; MAX_EVENTS];
-            let mut normalized = [0u8; MAX_EVENTS];
-            let mut slots = 0;
-            let mut last_clipboard = [None; 3];
-            while index < input.events.len()
-                && count < MAX_EVENTS
-                && self.recording.is_some()
-                && !self.recording_cancel
+        if std::mem::take(&mut self.raw_recorded) {
+            return;
+        }
+        ctx.input_mut(|input| self.capture_events(&mut input.events, input.modifiers));
+    }
+    fn capture_events(&mut self, events: &mut Vec<Event>, modifiers: Modifiers) {
+        self.recording_held = modifiers;
+        if events.iter().filter(|event| recording_event(event)).count() > MAX_CAPTURE_EVENTS {
+            self.cancel_recording();
+            self.status =
+                Some("Recording stopped because too many key events arrived. Try again.".into());
+            discard_recorded_events(events);
+            return;
+        }
+        let mut index = 0;
+        let mut count = 0;
+        let mut strokes = [None; MAX_CAPTURE_EVENTS];
+        let mut logical = [0u16; MAX_CAPTURE_EVENTS];
+        let mut normalized = [0u16; MAX_CAPTURE_EVENTS];
+        let mut slots = 0;
+        let mut last_clipboard = [None; 3];
+        while index < events.len()
+            && count < MAX_CAPTURE_EVENTS
+            && self.recording.is_some()
+            && !self.recording_cancel
+        {
+            if let Some(Event::Key {
+                key,
+                physical_key,
+                pressed,
+                repeat,
+                ..
+            }) = events.get_mut(index)
             {
-                if matches!(input.events.get(index), Some(Event::Key { key, modifiers, .. })
-                    if *key == Key::Tab && !modifiers.ctrl && !modifiers.alt && !modifiers.command && !modifiers.mac_cmd
-                    || self.recording_review_focus && modifiers.is_none() && matches!(key, Key::Enter | Key::Space)) {
-                    if matches!(input.events.get(index), Some(Event::Key { key: Key::Tab, .. })) {
-                        self.recording_review_focus = true;
-                    }
-                    index += 1;
+                let key = physical_key.unwrap_or(*key);
+                if *pressed {
+                    *repeat |= !self.recording_keys_down.insert(key);
+                } else {
+                    self.recording_keys_down.remove(&key);
+                }
+            }
+            match events.get(index) {
+                Some(Event::ModifiersChanged(modifiers)) => {
+                    self.recording_held = *modifiers;
+                    events.remove(index);
                     continue;
                 }
-                if let Some(Event::Key {
+                Some(Event::Key {
+                    key,
+                    pressed,
+                    modifiers,
+                    ..
+                }) if modifier_key(*key) => {
+                    self.recording_held = *modifiers;
+                    if *pressed {
+                        events.remove(index);
+                    } else {
+                        index += 1;
+                    }
+                    continue;
+                }
+                Some(Event::Key { modifiers, .. }) => self.recording_held = *modifiers,
+                _ => {}
+            }
+            if matches!(events.get(index), Some(Event::Key { key, modifiers, .. })
+                if *key == Key::Tab && !modifiers.ctrl && !modifiers.alt && !modifiers.command && !modifiers.mac_cmd
+                || self.recording_review_focus && modifiers.is_none() && matches!(key, Key::Enter | Key::Space))
+            {
+                if matches!(events.get(index), Some(Event::Key { key: Key::Tab, .. })) {
+                    self.recording_review_focus = true;
+                }
+                index += 1;
+                continue;
+            }
+            if let Some(Event::Key {
+                key,
+                physical_key,
+                modifiers,
+                pressed: true,
+                repeat: true,
+            }) = events.get(index)
+            {
+                let stroke =
+                    Stroke::event(shortcut_key(*key, *physical_key, *modifiers), *modifiers);
+                count += 1;
+                consume_event(events, index, stroke);
+                continue;
+            }
+            let item = match events.get(index) {
+                Some(Event::Key {
                     key,
                     physical_key,
                     modifiers,
                     pressed: true,
-                    repeat: true,
-                }) = input.events.get(index)
-                {
+                    repeat: false,
+                }) if !modifier_key(*key) => {
                     let stroke =
                         Stroke::event(shortcut_key(*key, *physical_key, *modifiers), *modifiers);
-                    count += 1;
-                    consume_event(&mut input.events, index, stroke);
-                    continue;
-                }
-                let item = match input.events.get(index) {
-                    Some(Event::Key {
-                        key,
-                        physical_key,
-                        modifiers,
-                        pressed: true,
-                        repeat: false,
-                    }) if !modifier_key(*key) => {
-                        let stroke = Stroke::event(
-                            shortcut_key(*key, *physical_key, *modifiers),
-                            *modifiers,
-                        );
-                        if let Some(slot) = clipboard_stroke_slot(stroke) {
-                            last_clipboard[slot] = Some(stroke);
-                        }
-                        Some((stroke, false))
+                    if let Some(slot) = clipboard_stroke_slot(stroke) {
+                        last_clipboard[slot] = Some(stroke);
                     }
-                    Some(Event::Copy) => Some((
-                        self.recording_clipboard(Key::C, input.modifiers, &last_clipboard),
-                        true,
-                    )),
-                    Some(Event::Cut) => Some((
-                        self.recording_clipboard(Key::X, input.modifiers, &last_clipboard),
-                        true,
-                    )),
-                    Some(Event::Paste(_)) => Some((
-                        self.recording_clipboard(Key::V, input.modifiers, &last_clipboard),
-                        true,
-                    )),
-                    _ => None,
-                };
-                let Some((stroke, semantic)) = item else {
-                    index += 1;
-                    continue;
-                };
-                count += 1;
-                let slot = strokes[..slots]
-                    .iter()
-                    .position(|existing| *existing == Some(stroke))
-                    .unwrap_or_else(|| {
-                        let slot = slots;
-                        strokes[slot] = Some(stroke);
-                        slots += 1;
-                        slot
-                    });
-                let native = self.seen[..self.seen_len]
-                    .iter()
-                    .filter(|seen| **seen == Some(stroke))
-                    .count() as u8;
-                let capture = if semantic {
-                    normalized[slot] += 1;
-                    normalized[slot] > logical[slot].max(native)
-                } else {
-                    logical[slot] += 1;
-                    logical[slot] > normalized[slot].max(native)
-                };
-                if capture {
-                    self.capture(stroke);
+                    Some((stroke, false))
                 }
-                consume_event(&mut input.events, index, stroke);
+                Some(Event::Copy) => Some((
+                    self.recording_clipboard(Key::C, self.recording_held, &last_clipboard),
+                    true,
+                )),
+                Some(Event::Cut) => Some((
+                    self.recording_clipboard(Key::X, self.recording_held, &last_clipboard),
+                    true,
+                )),
+                Some(Event::Paste(_)) => Some((
+                    self.recording_clipboard(Key::V, self.recording_held, &last_clipboard),
+                    true,
+                )),
+                _ => None,
+            };
+            let Some((stroke, semantic)) = item else {
+                index += 1;
+                continue;
+            };
+            count += 1;
+            let slot = strokes[..slots]
+                .iter()
+                .position(|existing| *existing == Some(stroke))
+                .unwrap_or_else(|| {
+                    let slot = slots;
+                    strokes[slot] = Some(stroke);
+                    slots += 1;
+                    slot
+                });
+            let native = self.seen[..self.seen_len]
+                .iter()
+                .filter(|seen| **seen == Some(stroke))
+                .count() as u16;
+            let capture = if semantic {
+                normalized[slot] += 1;
+                normalized[slot] > logical[slot].max(native)
+            } else {
+                logical[slot] += 1;
+                logical[slot] > normalized[slot].max(native)
+            };
+            if capture {
+                self.capture(stroke);
             }
-            // Composition and text aliases belong to the captured chord, never
-            // to the covered shortcut search or root command dispatcher.
-            input.events.retain(|event| !matches!(event,
-                Event::Text(_) | Event::Ime(_) | Event::Copy | Event::Cut | Event::Paste(_)));
+            consume_event(events, index, stroke);
+        }
+        // Composition and text aliases belong to the captured chord, never
+        // to the covered shortcut search or root command dispatcher.
+        events.retain(|event| {
+            !matches!(
+                event,
+                Event::Text(_) | Event::Ime(_) | Event::Copy | Event::Cut | Event::Paste(_)
+            )
         });
+        if self.recording_cancel {
+            events.retain(|event| {
+                !matches!(
+                    event,
+                    Event::Key { pressed: true, .. } | Event::ModifiersChanged(_)
+                )
+            });
+        }
     }
     fn recording_clipboard(
         &self,
@@ -1462,6 +1618,7 @@ impl Hotkeys {
                     {
                         self.recording_return = Some(list_id);
                         self.start_recording(command, None);
+                        self.recording_keys_down = ctx.input(|input| input.keys_down.clone());
                         self.recorded_frame = Some(frame);
                     }
                 }
@@ -2236,6 +2393,7 @@ impl Hotkeys {
         } else if let Some((command, index, return_to)) = edit {
             self.recording_return = Some(return_to);
             self.start_recording(command, index);
+            self.recording_keys_down = ui.input(|input| input.keys_down.clone());
             self.recorded_frame = Some(ui.ctx().cumulative_frame_nr());
         }
         changed
@@ -2436,7 +2594,12 @@ impl Hotkeys {
                         capture_rect,
                         capture_id,
                         "Record a shortcut",
-                    );
+                    )
+                    .interact(Sense::click());
+                    if capture.clicked() {
+                        capture.request_focus();
+                        self.recording_review_focus = false;
+                    }
                     if self.recording_focus_capture && foldex_ui::components::can_focus(ui) {
                         capture.request_focus();
                         self.recording_focus_capture = ui.is_sizing_pass() || !capture.has_focus();
@@ -2447,14 +2610,22 @@ impl Hotkeys {
                         foldex_ui::Theme::color(theme.chrome),
                     );
                     let captured_label = candidate.label();
+                    let held = held_modifiers_label(self.recording_held);
+                    let preview = if captured_label.is_empty() {
+                        held
+                    } else if held.is_empty() {
+                        captured_label
+                    } else {
+                        format!("{captured_label}  ·  {held}")
+                    };
                     foldex_ui::components::elided_label(
                         ui.painter(),
                         capture_rect.shrink2(egui::vec2(8.0 * m.scale, 0.0)),
                         theme,
-                        if recording.strokes.is_empty() {
+                        if preview.is_empty() {
                             "Press a key combination…"
                         } else {
-                            &captured_label
+                            &preview
                         },
                         theme.fg(),
                         false,
@@ -2480,6 +2651,14 @@ impl Hotkeys {
                         ui.label(
                             egui::RichText::new("Include Ctrl, Alt, Shift or Win with one key.")
                                 .color(Theme::color(theme.danger)),
+                        );
+                    }
+                    if let Some(status) = &self.status {
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(status).color(Theme::color(theme.danger)),
+                            )
+                            .wrap(),
                         );
                     }
                     for &index in &conflicts {
@@ -2543,16 +2722,21 @@ impl Hotkeys {
                     );
                 },
             );
+            if components::dialog_is_closing(ctx, Id::new("hotkey-recording")) {
+                self.recording_cancel = true;
+                self.native_capture.stop();
+            }
             cancel |= !recording_open;
             if clear {
+                self.status = None;
+                self.recording_review_focus = false;
                 if let Some(recording) = self.recording.as_mut() {
                     recording.strokes.clear();
                     self.recording_focus_capture = true;
                 }
             }
             if cancel {
-                self.recording = None;
-                self.recording_cancel = false;
+                self.cancel_recording();
                 self.editor_focus = self.recording_return.is_none();
                 ctx.request_repaint();
             }
@@ -2560,7 +2744,7 @@ impl Hotkeys {
                 match self.assign(candidate, recording.replace, replace_conflicts) {
                     Ok(()) => {
                         changed = true;
-                        self.recording = None;
+                        self.cancel_recording();
                         self.recording_return = Some(Id::new("hotkey-commands-focus"));
                         self.editor_selected = Some(recording.command);
                         self.editor_reveal = true;
@@ -2667,6 +2851,50 @@ fn clipboard_stroke_slot(stroke: Stroke) -> Option<usize> {
         None
     }
 }
+fn recording_event(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Key { .. }
+            | Event::ModifiersChanged(_)
+            | Event::Text(_)
+            | Event::Ime(_)
+            | Event::Copy
+            | Event::Cut
+            | Event::Paste(_)
+    )
+}
+
+fn discard_recorded_events(events: &mut Vec<Event>) {
+    events.retain(|event| {
+        !recording_event(event) || matches!(event, Event::Key { pressed: false, .. })
+    });
+    for event in events {
+        if let Event::Key { modifiers, .. } = event {
+            *modifiers = Modifiers::NONE;
+        }
+    }
+}
+
+fn held_modifiers_label(modifiers: Modifiers) -> String {
+    [
+        (modifiers.ctrl, "Ctrl"),
+        (modifiers.alt, "Alt"),
+        (modifiers.shift, "Shift"),
+        (
+            modifiers.mac_cmd,
+            if cfg!(target_os = "macos") {
+                "Cmd"
+            } else {
+                "Win"
+            },
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(held, label)| held.then_some(label))
+    .collect::<Vec<_>>()
+    .join("+")
+}
+
 fn modifier_key(key: Key) -> bool {
     matches!(
         key,
@@ -2923,6 +3151,372 @@ mod tests {
     }
 
     #[test]
+    fn raw_capture_previews_modifiers_without_exposing_them_to_ui_navigation() {
+        for (key, modifiers, name) in [
+            (Key::ControlLeft, Modifiers::CTRL, "Ctrl"),
+            (Key::ShiftRight, Modifiers::SHIFT, "Shift"),
+            (Key::AltLeft, Modifiers::ALT, "Alt"),
+            (
+                Key::SuperLeft,
+                Modifiers {
+                    mac_cmd: true,
+                    ..Modifiers::NONE
+                },
+                if cfg!(target_os = "macos") {
+                    "Cmd"
+                } else {
+                    "Win"
+                },
+            ),
+        ] {
+            let mut hotkeys = Hotkeys::default();
+            hotkeys.record(Command::Parent);
+            let mut input = raw(
+                0.0,
+                vec![
+                    key_event_for_modifier(key, modifiers),
+                    Event::ModifiersChanged(modifiers),
+                ],
+            );
+            hotkeys.capture_raw_input(&mut input);
+            assert_eq!(held_modifiers_label(hotkeys.recording_held), name);
+            assert!(hotkeys.recording.as_ref().unwrap().strokes.is_empty());
+            assert!(
+                !input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, Event::Key { pressed: true, .. }))
+            );
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_ui(input, |ui| {
+                assert!(ui.input(|input| input.keys_down.is_empty() && input.modifiers.is_none()));
+                hotkeys.poll_recording(ui.ctx());
+                assert_eq!(held_modifiers_label(hotkeys.recording_held), name);
+            });
+            output.textures_delta.clear();
+        }
+    }
+
+    fn key_event_for_modifier(key: Key, modifiers: Modifiers) -> Event {
+        Event::Key {
+            key,
+            physical_key: Some(key),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    #[test]
+    fn raw_capture_hides_arrows_before_egui_can_move_keyboard_focus() {
+        let ctx = egui::Context::default();
+        let first = Id::new("recording-priority-first");
+        let second = Id::new("recording-priority-second");
+        let mut hotkeys = Hotkeys::default();
+        let mut output = ctx.run_ui(raw(0.0, vec![]), |ui| {
+            ui.interact(ui.max_rect(), first, Sense::focusable_noninteractive())
+                .request_focus();
+        });
+        output.textures_delta.clear();
+        hotkeys.record(Command::Parent);
+        let mut input = raw(
+            0.1,
+            vec![
+                key(Key::ArrowDown, Modifiers::NONE),
+                Event::Text("private".into()),
+                Event::Ime(egui::ImeEvent::Commit("private".into())),
+            ],
+        );
+        hotkeys.capture_raw_input(&mut input);
+        let mut output = ctx.run_ui(input, |ui| {
+            ui.interact(ui.max_rect(), first, Sense::focusable_noninteractive());
+            ui.interact(ui.max_rect(), second, Sense::focusable_noninteractive());
+            assert_eq!(ui.memory(|memory| memory.focused()), Some(first));
+            assert!(!ui.input(|input| input.events.iter().any(recording_event))
+                || ui.input(|input| input.events.iter().all(|event| matches!(event, Event::ModifiersChanged(modifiers) if modifiers.is_none()))));
+        });
+        output.textures_delta.clear();
+        assert_eq!(
+            hotkeys.recording.as_ref().unwrap().strokes,
+            vec![KeyStroke::new(Key::ArrowDown, Modifiers::NONE)]
+        );
+    }
+
+    #[test]
+    fn raw_capture_retains_event_order_and_releases_without_sticky_modifiers() {
+        let mut hotkeys = Hotkeys::from_bindings(vec![]);
+        hotkeys.record(Command::Refresh);
+        let ctrl = Modifiers::CTRL;
+        let mut input = raw(
+            0.0,
+            vec![
+                key(Key::A, Modifiers::NONE),
+                up(Key::A, Modifiers::NONE),
+                key(Key::SuperLeft, Modifiers::NONE),
+                key(Key::ControlLeft, ctrl),
+                key(Key::A, ctrl),
+                up(Key::A, ctrl),
+                up(Key::SuperLeft, ctrl),
+                up(Key::ControlLeft, Modifiers::NONE),
+            ],
+        );
+        hotkeys.capture_raw_input(&mut input);
+        let captured = &hotkeys.recording.as_ref().unwrap().strokes;
+        assert_eq!(captured.len(), 2);
+        assert!(!captured[0].cmd && !captured[0].ctrl);
+        assert!(captured[1].cmd && captured[1].ctrl);
+        assert!(hotkeys.recording_held.is_none());
+        assert!(input.events.iter().all(|event| matches!(event,
+            Event::Key { pressed: false, modifiers, .. } | Event::ModifiersChanged(modifiers) if modifiers.is_none())));
+        hotkeys.cancel_recording();
+        let mut ordinary = raw(0.1, vec![key(Key::A, Modifiers::NONE)]);
+        hotkeys.capture_raw_input(&mut ordinary);
+        assert!(
+            matches!(ordinary.events[0], Event::Key { pressed: true, modifiers, .. } if modifiers.is_none())
+        );
+    }
+
+    #[test]
+    fn native_modifier_snapshot_wins_over_duplicate_logical_releases() {
+        let mut hotkeys = Hotkeys::from_bindings(vec![]);
+        hotkeys.record(Command::Refresh);
+        let full = Modifiers {
+            ctrl: true,
+            alt: true,
+            shift: true,
+            mac_cmd: true,
+            command: true,
+        };
+        let remaining = Modifiers {
+            ctrl: false,
+            command: false,
+            ..full
+        };
+        let mut input = raw(0.0, vec![up(Key::ControlLeft, Modifiers::NONE)]);
+        hotkeys.capture_input_batch(
+            &mut input,
+            native_recorder::Input {
+                events: vec![key(Key::A, full)],
+                modifiers: Some(remaining),
+                ..Default::default()
+            },
+        );
+        assert_eq!(hotkeys.recording_held, remaining);
+        let stroke = &hotkeys.recording.as_ref().unwrap().strokes[0];
+        assert!(stroke.ctrl && stroke.shift && stroke.alt && stroke.cmd);
+    }
+
+    #[test]
+    fn raw_focus_loss_even_within_one_frame_cancels_without_leaking_keys() {
+        let original = default_bindings();
+        let mut hotkeys = Hotkeys::from_bindings(original.clone());
+        hotkeys.record(Command::Parent);
+        let mut input = raw(
+            0.0,
+            vec![
+                Event::WindowFocused(false),
+                Event::WindowFocused(true),
+                key(Key::F5, Modifiers::NONE),
+            ],
+        );
+        hotkeys.capture_raw_input(&mut input);
+        assert!(!hotkeys.is_recording());
+        assert_eq!(hotkeys.bindings(), original);
+        assert!(
+            !input
+                .events
+                .iter()
+                .any(|event| matches!(event, Event::Key { pressed: true, .. }))
+        );
+        let mut normal = raw(0.1, vec![key(Key::F5, Modifiers::NONE)]);
+        hotkeys.capture_raw_input(&mut normal);
+        assert!(normal.events.iter().any(|event| matches!(
+            event,
+            Event::Key {
+                key: Key::F5,
+                pressed: true,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn escape_consumes_the_rest_of_the_recorded_burst_and_preserves_bindings() {
+        let mut hotkeys = Hotkeys::default();
+        let original = hotkeys.bindings().to_vec();
+        hotkeys.record(Command::Parent);
+        let mut input = raw(
+            0.0,
+            vec![
+                key(Key::Escape, Modifiers::NONE),
+                key(Key::F5, Modifiers::NONE),
+                Event::Copy,
+                Event::Text("private".into()),
+            ],
+        );
+        hotkeys.capture_raw_input(&mut input);
+        assert!(hotkeys.recording_cancel);
+        assert_eq!(hotkeys.bindings(), original);
+        assert!(input.events.iter().all(
+            |event| matches!(event, Event::ModifiersChanged(modifiers) if modifiers.is_none())
+        ));
+    }
+
+    #[test]
+    fn raw_capture_detects_repeats_before_egui_and_preserves_separate_presses() {
+        let mut hotkeys = Hotkeys::from_bindings(vec![]);
+        hotkeys.record(Command::Refresh);
+        let mut input = raw(
+            0.0,
+            vec![
+                key(Key::A, Modifiers::NONE),
+                key(Key::A, Modifiers::NONE),
+                up(Key::A, Modifiers::NONE),
+                key(Key::A, Modifiers::NONE),
+            ],
+        );
+        hotkeys.capture_raw_input(&mut input);
+        assert_eq!(hotkeys.recording.as_ref().unwrap().strokes.len(), 2);
+        assert!(
+            input
+                .events
+                .iter()
+                .all(|event| !matches!(event, Event::Key { pressed: true, .. }))
+        );
+    }
+
+    #[test]
+    fn raw_capture_accepts_fast_sequences_beyond_the_command_dispatch_budget() {
+        let mut hotkeys = Hotkeys::from_bindings(vec![]);
+        hotkeys.record(Command::Refresh);
+        let events = (0..100)
+            .flat_map(|_| [key(Key::A, Modifiers::CTRL), up(Key::A, Modifiers::CTRL)])
+            .collect();
+        let mut input = raw(0.0, events);
+        hotkeys.capture_raw_input(&mut input);
+        assert_eq!(hotkeys.recording.as_ref().unwrap().strokes.len(), 100);
+    }
+
+    #[test]
+    fn raw_overflow_discards_partial_bindings_and_keeps_releases_for_ui_cleanup() {
+        let mut hotkeys = Hotkeys::default();
+        let original = hotkeys.bindings().to_vec();
+        hotkeys.record(Command::Parent);
+        let mut events = vec![key(Key::F5, Modifiers::NONE); MAX_CAPTURE_EVENTS + 1];
+        events.push(up(Key::Enter, Modifiers::CTRL));
+        let mut input = raw(0.0, events);
+        hotkeys.capture_raw_input(&mut input);
+        assert!(!hotkeys.is_recording());
+        assert_eq!(hotkeys.bindings(), original);
+        assert!(hotkeys.status.as_deref().unwrap().contains("too many"));
+        assert!(input.events.iter().any(|event| matches!(event, Event::Key { key: Key::Enter, pressed: false, modifiers, .. } if modifiers.is_none())));
+    }
+
+    #[test]
+    fn late_native_events_after_cancellation_never_execute_application_shortcuts() {
+        let mut hotkeys = Hotkeys::default();
+        let mut input = raw(0.0, vec![]);
+        hotkeys.capture_input_batch(
+            &mut input,
+            native_recorder::Input {
+                events: vec![key(Key::F5, Modifiers::NONE), up(Key::F5, Modifiers::NONE)],
+                ..Default::default()
+            },
+        );
+        assert!(
+            !input
+                .events
+                .iter()
+                .any(|event| matches!(event, Event::Key { pressed: true, .. }))
+        );
+        assert!(
+            input
+                .events
+                .iter()
+                .any(|event| matches!(event, Event::Key { pressed: false, .. }))
+        );
+    }
+
+    #[test]
+    fn native_escape_and_overflow_cancel_before_any_widget_receives_input() {
+        for overflow in [false, true] {
+            let mut hotkeys = Hotkeys::default();
+            let original = hotkeys.bindings().to_vec();
+            hotkeys.record(Command::Parent);
+            let mut input = raw(0.0, vec![key(Key::F5, Modifiers::NONE)]);
+            hotkeys.capture_input_batch(
+                &mut input,
+                native_recorder::Input {
+                    cancelled: !overflow,
+                    overflow,
+                    modifiers: Some(Modifiers::CTRL),
+                    ..Default::default()
+                },
+            );
+            assert!(!hotkeys.is_recording());
+            assert!(hotkeys.recording_held.is_none());
+            assert_eq!(hotkeys.bindings(), original);
+            assert!(
+                !input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, Event::Key { pressed: true, .. }))
+            );
+        }
+    }
+
+    #[test]
+    fn restoring_os_modifiers_does_not_overwrite_new_real_modifier_changes() {
+        let mut hotkeys = Hotkeys::default();
+        let mut input = raw(
+            0.0,
+            vec![
+                Event::ModifiersChanged(Modifiers::NONE),
+                Event::ModifiersChanged(Modifiers::SHIFT),
+            ],
+        );
+        hotkeys.capture_input_batch(
+            &mut input,
+            native_recorder::Input {
+                restore_modifiers: Some(Modifiers::CTRL),
+                ..Default::default()
+            },
+        );
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(input, |ui| {
+            assert_eq!(ui.input(|input| input.modifiers), Modifiers::SHIFT)
+        });
+        output.textures_delta.clear();
+    }
+
+    #[test]
+    fn raw_repeat_tracking_uses_physical_keys_when_shift_changes_the_logical_release() {
+        let mut hotkeys = Hotkeys::from_bindings(vec![]);
+        hotkeys.record(Command::Refresh);
+        let modifiers = Modifiers::CTRL | Modifiers::SHIFT;
+        let down = Event::Key {
+            key: Key::Exclamationmark,
+            physical_key: Some(Key::Num1),
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let release = Event::Key {
+            key: Key::Num1,
+            physical_key: Some(Key::Num1),
+            pressed: false,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        let mut input = raw(0.0, vec![down.clone(), release.clone(), down, release]);
+        hotkeys.capture_raw_input(&mut input);
+        assert_eq!(
+            hotkeys.recording.as_ref().unwrap().strokes,
+            vec![KeyStroke::new(Key::Num1, modifiers); 2]
+        );
+    }
+
+    #[test]
     fn deep_sequence_conflicts_and_longest_prefix_fallback_are_exact() {
         let bindings = vec![
             sequence(Command::Back, &[Key::G]),
@@ -3074,7 +3668,7 @@ mod tests {
         let mut open = true;
         let mut input = raw(frame as f64 / 60.0, events);
         input.screen_rect = Some(Rect::from_min_size(egui::Pos2::ZERO, size));
-        hotkeys.prepare_input(&mut input);
+        hotkeys.capture_raw_input(&mut input);
         let mut output = ctx.run_ui(input, |ui| {
             theme.apply(ui.ctx());
             changed |= hotkeys.editor_popup_ui(ui.ctx(), theme, &mut open);
@@ -3400,6 +3994,115 @@ mod tests {
                 sequence: captured
             }]
         );
+    }
+
+    #[test]
+    fn clearing_a_reviewed_shortcut_immediately_returns_enter_to_the_recorder() {
+        let ctx = egui::Context::default();
+        let theme = Theme {
+            reduced_motion: true,
+            ..Default::default()
+        };
+        let size = vec2(1000.0, 700.0);
+        let mut hotkeys = Hotkeys::from_bindings(vec![]);
+        hotkeys.benchmark_open_editor("Refresh");
+        let mut frame = 0;
+        editor_settle(&mut hotkeys, &ctx, &theme, &mut frame, size);
+        hotkeys.record(Command::Refresh);
+        editor_settle(&mut hotkeys, &ctx, &theme, &mut frame, size);
+        editor_frame(
+            &mut hotkeys,
+            &ctx,
+            &theme,
+            frame,
+            size,
+            vec![key(Key::A, Modifiers::NONE), up(Key::A, Modifiers::NONE)],
+        );
+        frame += 1;
+        for _ in 0..2 {
+            editor_frame(
+                &mut hotkeys,
+                &ctx,
+                &theme,
+                frame,
+                size,
+                vec![
+                    key(Key::Tab, Modifiers::NONE),
+                    up(Key::Tab, Modifiers::NONE),
+                ],
+            );
+            frame += 1;
+        }
+        editor_frame(
+            &mut hotkeys,
+            &ctx,
+            &theme,
+            frame,
+            size,
+            vec![key(Key::Space, Modifiers::NONE)],
+        );
+        frame += 1;
+        assert!(hotkeys.recording.as_ref().unwrap().strokes.is_empty());
+        editor_frame(
+            &mut hotkeys,
+            &ctx,
+            &theme,
+            frame,
+            size,
+            vec![
+                up(Key::Space, Modifiers::NONE),
+                key(Key::Enter, Modifiers::NONE),
+            ],
+        );
+        assert_eq!(
+            hotkeys.recording.as_ref().unwrap().strokes,
+            vec![KeyStroke::new(Key::Enter, Modifiers::NONE)]
+        );
+        assert!(hotkeys.bindings().is_empty());
+    }
+
+    #[test]
+    fn closing_recording_releases_capture_before_its_dialog_animation_finishes() {
+        let ctx = egui::Context::default();
+        let theme = Theme::default();
+        let size = vec2(1000.0, 700.0);
+        let mut hotkeys = Hotkeys::from_bindings(vec![]);
+        hotkeys.benchmark_open_editor("Refresh");
+        let mut frame = 0;
+        editor_settle(&mut hotkeys, &ctx, &theme, &mut frame, size);
+        hotkeys.record(Command::Refresh);
+        for _ in 0..4 {
+            editor_settle(&mut hotkeys, &ctx, &theme, &mut frame, size);
+        }
+        let close = ctx
+            .read_response(Id::new("hotkey-recording").with("close"))
+            .unwrap()
+            .rect
+            .center();
+        editor_click(&mut hotkeys, &ctx, &theme, &mut frame, size, close);
+        assert!(components::dialog_is_closing(
+            &ctx,
+            Id::new("hotkey-recording")
+        ));
+        assert!(
+            hotkeys.recording_cancel,
+            "Stop native capture when closing starts, not after the animation"
+        );
+        editor_frame(
+            &mut hotkeys,
+            &ctx,
+            &theme,
+            frame,
+            size,
+            vec![key(Key::A, Modifiers::CTRL)],
+        );
+        assert!(
+            hotkeys
+                .recording
+                .as_ref()
+                .is_none_or(|recording| recording.strokes.is_empty())
+        );
+        assert!(hotkeys.bindings().is_empty());
     }
 
     #[test]

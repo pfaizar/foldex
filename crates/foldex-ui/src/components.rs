@@ -542,6 +542,15 @@ pub fn close_dialog(ctx: &egui::Context, id: Id) {
     ctx.request_repaint();
 }
 
+/// A caller can release native resources as soon as dismissal starts while the
+/// modal layer continues to shield covered controls through its closing motion.
+pub fn dialog_is_closing(ctx: &egui::Context, id: Id) -> bool {
+    ctx.data(|data| {
+        data.get_temp::<DialogMotion>(id.with("entry-motion"))
+            .is_some_and(|motion| motion.closing)
+    })
+}
+
 /// Shared modal geometry. Measurement uses the available screen, independently
 /// of the animated clip, so asynchronous content can grow beyond its first frame.
 pub fn dialog<R>(
