@@ -278,7 +278,7 @@ impl Foldex {
             assets.enable_cut_tracking();
         }
         let mut commands = crate::commands::Palette::new();
-        let hotkeys = session
+        let mut hotkeys = session
             .hotkeys
             .clone()
             .map(|mut bindings| {
@@ -286,7 +286,6 @@ impl Foldex {
                 crate::hotkeys::Hotkeys::from_bindings(bindings)
             })
             .unwrap_or_default();
-        hotkeys.update_palette(&mut commands);
         if let Some(pins) = session.command_bookmarks.clone() {
             commands.set_bookmarks(pins);
         }
@@ -324,6 +323,8 @@ impl Foldex {
             launcher_runtime.isolate,
             launcher_runtime.channel,
         )?;
+        hotkeys.set_launcher_shortcut(&launcher.settings.hotkey);
+        hotkeys.update_palette(&mut commands);
         let home_history_service = crate::home_history::Service::new(
             wake.clone(),
             benchmark.is_none() && (!launcher_runtime.isolate || launcher_runtime.auxiliary),
@@ -1243,10 +1244,6 @@ impl Foldex {
         if !ctx.input(|input| input.focused) {
             let _ = crate::native_keys::take();
             self.hotkeys.cancel_pending();
-            return;
-        }
-        if self.options_popup.is_recording_launcher_shortcut() {
-            let _ = crate::native_keys::take();
             return;
         }
         let native = crate::native_keys::take();
@@ -2636,7 +2633,7 @@ mod tests {
             app.hotkeys_open,
             "The owner must remain alive while closing"
         );
-        app.hotkeys.record(crate::commands::Command::Parent, true);
+        app.hotkeys.record(crate::commands::Command::Parent);
         assert!(app.hotkeys.is_recording());
         let mut next_frame = frame + 31;
         for n in frame + 31..frame + 151 {
@@ -2833,7 +2830,7 @@ impl eframe::App for Foldex {
             }
             input.events.append(&mut run.input);
         }
-        self.options_popup.capture_launcher_shortcut(input);
+        self.hotkeys.prepare_input(input);
         let timed = self
             .benchmark
             .as_ref()

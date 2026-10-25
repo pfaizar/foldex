@@ -38,7 +38,7 @@ workers keep browsing, icons and folder statistics out of the UI thread.
 | **Windows doing Windows things** | Use native Properties, Folder Options, clipboard, drag and drop, New templates, compression and installed context-menu actions. Copy, move, rename and recycle with Windows conflict and progress dialogs. Browse the Recycle Bin, restore items or empty it with confirmation. Undo and redo compatible file operations. |
 | **Network when you need it** | Expand Network to see connected shares, connect through Windows dialogs, or browse the native network view. Local browsing does not start network discovery. |
 | **Details when you need them** | Choose, reorder and resize columns. Calculate folder sizes and item counts in the background. Toggle file and folder visibility from the footer. |
-| **Make it yours** | Choose Dark, Light or System mode. Customize both palettes in a named color scheme, then save, import or export themes. Adjust text size, density, corners, motion and shortcuts in Options. |
+| **Make it yours** | Choose Dark, Light or System mode. Customize both palettes in a named color scheme, then save, import or export themes. Adjust text size, density, corners and motion in Options; customize shortcuts in Hotkeys. |
 
 ### Built to stay responsive
 
@@ -159,8 +159,10 @@ in the file listing to filter immediately. Use
 | Rename / new folder | `F2` / `Ctrl+Shift+N` |
 | Open Options | `Ctrl+,` |
 
-Shortcuts can be changed in Options. Menu navigation, selection, search results,
-Home and the launcher support keyboard use throughout.
+Shortcuts, including the global launcher shortcut, can be changed in Hotkeys.
+Record a combination with any modifiers, or keep pressing combinations to build
+a command sequence, then choose Assign. Menu navigation, selection, search
+results, Home and the launcher support keyboard use throughout.
 
 File-operation history lasts for the current window session. Undo preserves
 edited files and refuses occupied restore destinations. Permanent deletion,
@@ -169,7 +171,8 @@ are not reversible through Foldex history.
 
 ## Personalization and storage
 
-- **Options:** appearance, shortcuts, launcher settings, application updates and Windows integration.
+- **Options:** appearance, launcher settings, application updates and Windows integration.
+- **Hotkeys:** all keyboard shortcuts, including the global launcher shortcut.
 - **`theme.toml`:** an editable theme in your data folder. Reload with `Ctrl+Shift+R`.
 - **`themes/`:** your saved and imported color schemes. Each theme contains both dark and light colors. Save and share them from Options.
 - **`foldex-session.json`:** saved workspace, bookmarks and preferences.

@@ -2453,8 +2453,7 @@ impl Foldex {
                     && probe.outer.contains_rect(probe.search) && probe.outer.contains_rect(probe.close)
                     && probe.outer.contains_rect(probe.footer)
                     && probe.search.right() <= probe.close.left()
-                    && probe.settings[0].bottom() <= probe.settings[1].top() + 0.1
-                    && probe.settings[1].bottom() <= probe.separator.top() + 0.1
+                    && probe.settings.bottom() <= probe.separator.top() + 0.1
                     && self.ui_context.read_response(Id::new("hotkeys-editor-window").with("clear")).is_none()
                     && probe.rows.iter().all(|row| {
                         row.rect.expand(0.1).contains_rect(row.text)

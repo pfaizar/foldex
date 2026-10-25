@@ -176,9 +176,9 @@ impl Foldex {
             }
         }
         if events & native::TOGGLE != 0 {
-            if self.options_popup.is_recording_launcher_shortcut() {
-                self.options_popup
-                    .record_active_launcher_shortcut(&self.launcher.settings.hotkey);
+            if self.hotkeys.is_recording() {
+                self.hotkeys
+                    .record_active_launcher_shortcut(ctx, &self.launcher.settings.hotkey);
             } else if self.launcher_open {
                 self.close_launcher(true);
             } else {
@@ -195,13 +195,23 @@ impl Foldex {
         if events & native::EXIT != 0 {
             self.exit_background(ctx);
         }
-        self.launcher.settle_launcher_shortcut();
+        if self.hotkeys.settle_launcher_change(&mut self.launcher) {
+            self.hotkeys.update_palette(&mut self.commands);
+            self.session_dirty = true;
+            self.save_due = Some(Instant::now());
+        }
         if events & native::STATUS != 0 && self.launcher.launcher_settings_error().is_some() {
             // A failed tray/hotkey must never leave an unreachable hidden app.
             if !self.explorer_visible {
                 self.show_explorer(ctx);
             }
-            if !self.options {
+            if let Some(error) = self.launcher.launcher_shortcut_error() {
+                self.hotkeys.launcher_error(error);
+                if !self.hotkeys_open {
+                    self.hotkeys_open = true;
+                    self.hotkeys.focus_editor();
+                }
+            } else if !self.options {
                 self.open_launcher_options();
             }
         }

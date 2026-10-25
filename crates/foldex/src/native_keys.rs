@@ -328,7 +328,7 @@ pub fn strip_synthetic(events: &mut Vec<Event>) {
     events.retain(|event| !matches!(event, Event::Key { key, physical_key: None, pressed: true, modifiers, repeat } if Chord { key: *key, modifiers: *modifiers, repeat: *repeat }.clipboard().is_some()));
 }
 
-fn physical_key(vk: u32) -> Option<Key> {
+pub(crate) fn physical_key(vk: u32) -> Option<Key> {
     const LETTERS: [Key; 26] = [
         Key::A,
         Key::B,

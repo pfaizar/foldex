@@ -39,7 +39,6 @@ enum OptionId {
     ExportTheme,
     DefaultExplorer,
     Updates,
-    LauncherShortcut,
     LauncherBackground,
     LauncherClipboard,
     LauncherFolders,
@@ -145,11 +144,6 @@ const OPTIONS: &[Definition] = &[
         id: OptionId::Updates,
         title: "Application Updates",
         description: "Check for new versions, download updates and choose automatic updates.",
-    },
-    Definition {
-        id: OptionId::LauncherShortcut,
-        title: "Launcher Shortcut",
-        description: "Record the global shortcut that opens the launcher.",
     },
     Definition {
         id: OptionId::LauncherBackground,
@@ -577,7 +571,7 @@ impl OptionsPopup {
     /// The Options modal and its child editors own all navigation while open.
     /// Root file actions must yield even when a non-text control has focus.
     pub(in crate::app) fn owns_navigation(&self, _ctx: &egui::Context) -> bool {
-        self.active || self.launcher_options.is_recording()
+        self.active
     }
 
     fn control_focus(&mut self, ui: &Ui, option: OptionId, response: &egui::Response) {
@@ -1471,8 +1465,7 @@ impl OptionsPopup {
                     }
                     return false;
                 }
-                OptionId::LauncherShortcut
-                | OptionId::LauncherBackground
+                OptionId::LauncherBackground
                 | OptionId::LauncherClipboard
                 | OptionId::LauncherFolders
                 | OptionId::LauncherHistory => {
