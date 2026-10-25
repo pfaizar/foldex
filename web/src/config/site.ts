@@ -13,8 +13,14 @@ export const site = {
   title: 'Foldex — Files, without the friction.',
   description:
     'A native Windows file explorer built in Rust. Browse in tabs and split panes, find files quickly, and keep your hands on the keyboard. Free and open source.',
-  repository: publicUrl(import.meta.env.PUBLIC_REPOSITORY_URL),
-  download: publicUrl(import.meta.env.PUBLIC_DOWNLOAD_URL),
+  repository: publicUrl(
+    import.meta.env.PUBLIC_REPOSITORY_URL ??
+      'https://github.com/pfaizar/foldex',
+  ),
+  download: publicUrl(
+    import.meta.env.PUBLIC_DOWNLOAD_URL ??
+      'https://github.com/pfaizar/foldex/releases',
+  ),
   license: '/LICENSE.txt',
 } as const;
 

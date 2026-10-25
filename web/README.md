@@ -42,13 +42,16 @@ Small scripts are colocated with the components that need them: mobile navigatio
 
 ## Public URLs
 
-There is deliberately no invented repository, release URL, or production domain. Until configured, “Get Foldex” goes to the working on-page source-build instructions.
+Repository and download links default to `https://github.com/pfaizar/foldex` and
+its Releases page. The Releases page includes preview releases as well as stable
+versions. The production website domain is configured separately.
 
-Copy `.env.example` to `.env` to optionally supply public repository and portable-release URLs:
+Copy `.env.example` to `.env` to optionally override the public repository and
+portable-release URLs:
 
 ```dotenv
-PUBLIC_REPOSITORY_URL=https://github.com/your-account/your-repository
-PUBLIC_DOWNLOAD_URL=https://github.com/your-account/your-repository/releases/latest
+PUBLIC_REPOSITORY_URL=https://github.com/pfaizar/foldex
+PUBLIC_DOWNLOAD_URL=https://github.com/pfaizar/foldex/releases
 ```
 
 Set **`SITE_URL` in the build environment** to the final HTTPS production origin. Do not include a path. This enables the correct canonical URLs, absolute Open Graph image URLs, sitemap, and indexable robots.txt. Without it, builds are intentionally marked `noindex` and robots.txt disallows crawling. `SITE_URL` is read by `astro.config.mjs` from the process environment, not from `.env`.

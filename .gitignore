@@ -28,6 +28,8 @@ Desktop.ini
 /.codex/
 *.swp
 *.tmp
+__pycache__/
+*.py[cod]
 
 # Upstream package-registry metadata.
 .cargo-ok

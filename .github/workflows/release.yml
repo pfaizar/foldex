@@ -1,0 +1,73 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows-portable:
+    name: Build and publish Windows x64 portable
+    runs-on: windows-2025
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      CARGO_TERM_COLOR: always
+      RELEASE_TAG: ${{ github.ref_name }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate the release tag and notes
+        run: python -B scripts/package_portable.py --tag "$env:RELEASE_TAG" --validate-only
+      - name: Install the pinned Rust toolchain
+        shell: pwsh
+        run: |
+          $toolchain = python -c "import tomllib; print(tomllib.load(open('rust-toolchain.toml', 'rb'))['toolchain']['channel'])"
+          rustup toolchain install $toolchain --profile minimal --component rustfmt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup target add x86_64-pc-windows-msvc --toolchain $toolchain
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Test the Windows workspace
+        run: cargo test --locked --workspace --target x86_64-pc-windows-msvc
+      - name: Check release tooling
+        run: python -B -m unittest discover -s scripts/tests -v
+      - name: Build the tagged application
+        run: cargo build --locked --release --target x86_64-pc-windows-msvc -p foldex
+      - name: Package the portable ZIP and notices
+        run: python -B scripts/package_portable.py --tag "$env:RELEASE_TAG"
+      - name: Retain the release artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: foldex-windows-x64
+          path: |
+            dist/Foldex-*-windows-x64-portable.zip
+            dist/Foldex-*-SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish the GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = python -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version'])"
+          $releaseArgs = @(
+            'release', 'create', $env:RELEASE_TAG,
+            "dist/Foldex-$version-windows-x64-portable.zip",
+            "dist/Foldex-$version-SHA256SUMS.txt",
+            '--verify-tag', '--title', "Foldex $version",
+            '--notes-file', "docs/releases/$($env:RELEASE_TAG).md"
+          )
+          if ($version.StartsWith('0.') -or $version.Contains('-')) {
+            $releaseArgs += '--prerelease'
+          }
+          gh @releaseArgs

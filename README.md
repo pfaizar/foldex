@@ -52,16 +52,27 @@ beside the executable.
 
 ### Portable build
 
-**Requires:** Windows x64 and the
+Download the Windows x64 portable ZIP from [GitHub Releases](https://github.com/pfaizar/foldex/releases).
+Extract the entire ZIP into a writable folder, then open `Foldex.exe`.
+GitHub's **Source code** archives contain source files, not the Windows application.
+The initial `0.x` releases are public previews with limited desktop hardware coverage.
+
+**Requires:** Windows x64, a compatible DirectX 12 graphics adapter/driver, and the
 [Microsoft Visual C++ x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist#latest-supported-redistributable-version).
 
 A portable folder contains `Foldex.exe`, the example `theme.toml`, `README.md`,
-`LICENSE`, and the `licenses` directory. Open **`Foldex.exe`** from that folder.
+`LICENSE`, `BUILD-INFO.json`, `THIRD-PARTY-NOTICES.md`, and the `licenses` directory.
 The generated `dist` directory is local build output and is not included in Git clones.
+
+The release includes a SHA-256 checksum file for the ZIP. Builds are currently
+unsigned, so Windows may display a publisher or SmartScreen prompt.
 
 You can move the portable folder to a writable location of your choice. Preserve
 `theme.toml` and `foldex-session.json` when updating to keep your appearance,
 bookmarks, workspace and launcher settings.
+
+If **Default File Explorer** is enabled in Options, turn it off before moving or
+deleting the portable folder so Windows folder and Win+E registrations are restored.
 
 The launcher shortcut defaults to **Ctrl+Alt+Space**. Closing the browser can keep
 Foldex in the system tray; choose **Exit Foldex** from the tray menu to quit, or
@@ -167,6 +178,9 @@ cargo build --locked --release -p foldex --no-default-features --features render
 Renderer features are mutually exclusive. Icon exports are committed; see
 [the artwork guide](assets/brand/README.md) if you want to regenerate them.
 Build output and personal settings are excluded from Git.
+
+CI checks Windows x64 and the website. Version tags build and publish portable
+release assets automatically; see [the release guide](docs/RELEASING.md).
 
 ## Contributing
 
