@@ -10,7 +10,8 @@ Running another installer upgrades this same copy; older versions are blocked.
 
 Preferences, themes, sessions and caches live in `%LOCALAPPDATA%\Foldex\data`.
 Updates and repairs preserve this folder. To migrate from a portable copy, exit
-both copies and copy its theme.toml, foldex-session.json and themes directory
+both copies and copy its theme.toml, foldex-session.json, foldex-preferences.json
+(when present) and themes directory
 there. The portable copy is not deleted or changed by Setup.
 
 Uninstall through Windows Settings → Apps → Installed apps → Foldex. Exit every

@@ -108,6 +108,7 @@ fn run_inner(args: &[OsString]) -> io::Result<()> {
                 Some(fixture.clone()),
                 state.join("theme.toml"),
                 state.join("session.json"),
+                state.join("preferences.json"),
                 session,
                 Instant::now(),
                 None,

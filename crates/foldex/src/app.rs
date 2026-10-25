@@ -21,6 +21,8 @@ pub(crate) mod lifecycle_probe;
 #[cfg(test)]
 mod lifecycle_tests;
 mod options_ui;
+#[cfg(test)]
+mod persistence_tests;
 pub(crate) mod recycle_ui;
 mod stress;
 mod update_ui;
@@ -75,6 +77,13 @@ impl Default for Session {
             context_pins: vec![],
             hotkeys: None,
             launcher: Default::default(),
+        }
+    }
+}
+impl Session {
+    pub fn compact_layouts(&mut self) {
+        for layout in &mut self.saved_layouts {
+            layout.state.clear_navigation_history();
         }
     }
 }
@@ -236,11 +245,22 @@ impl Foldex {
         initial: Option<PathBuf>,
         theme_path: PathBuf,
         session_path: PathBuf,
+        preferences_path: PathBuf,
         session: Session,
         started: Instant,
         benchmark: Option<crate::performance::UiRun>,
         launcher_runtime: crate::launcher::Runtime,
     ) -> std::io::Result<Self> {
+        let mut session = session;
+        session.compact_layouts();
+        let persistence = crate::persistence::Persistence::new_session(
+            Arc::new({
+                let context = cc.egui_ctx.clone();
+                move || context.request_repaint_of(egui::ViewportId::ROOT)
+            }),
+            preferences_path,
+            &serde_json::to_value(&session)?,
+        )?;
         let ctx = cc.egui_ctx.clone();
         // Workers and the tray are serviced by the root, even if a launcher
         // callback happens to be the active viewport when a worker finishes.
@@ -334,7 +354,6 @@ impl Foldex {
         sidebar_data.network.set_owner_window(window_owner);
         let mut home_history = session.home_history;
         home_history.migrate_recent(session.recent.iter().cloned());
-        let persistence = crate::persistence::Persistence::new(wake, launcher_runtime.auxiliary)?;
         let native_frame = crate::native_frame::NativeFrame::new(window_owner, &cc.egui_ctx);
         #[cfg(feature = "renderer-glow")]
         let adapter_info = cc
@@ -1712,6 +1731,7 @@ mod tests {
             Some(file),
             root.join("theme.toml"),
             root.join("session.json"),
+            root.join("preferences.json"),
             Session::default(),
             Instant::now(),
             None,
@@ -3469,6 +3489,31 @@ impl Foldex {
     }
     fn service_session(&mut self, ctx: &egui::Context) {
         self.service_window_transfers(ctx);
+        if self.persistence.preferences_pending() {
+            let local = serde_json::to_value(self.session_snapshot());
+            if let Ok(local) = local
+                && let Some(result) = self.persistence.poll_preferences(&local)
+            {
+                match result.and_then(|value| {
+                    if crate::persistence::shared::preferences(&value)
+                        == crate::persistence::shared::preferences(&local)
+                    {
+                        Ok(None)
+                    } else {
+                        serde_json::from_value::<Session>(value)
+                            .map(Some)
+                            .map_err(|error| error.to_string())
+                    }
+                }) {
+                    Ok(Some(session)) => self.apply_shared_preferences(session),
+                    Ok(None) => {}
+                    Err(error) => self.toast(
+                        format!("Shared preferences could not be refreshed: {error}"),
+                        true,
+                    ),
+                }
+            }
+        }
         // Benchmark sessions already live in disposable isolated directories.
         // Include normal hashing, debounce and persistence in their timings.
         let now = Instant::now();
@@ -3544,8 +3589,8 @@ impl Foldex {
             self.options_popup.flush_theme_preferences(ctx);
         }
         if self.session_dirty && self.save_due.is_some_and(|due| due <= now) {
-            match serde_json::to_vec_pretty(&self.session_snapshot())
-                .map_err(|e| e.to_string())
+            match serde_json::to_vec(&self.session_snapshot())
+                .map_err(|error| crate::persistence::SubmitError::Invalid(error.to_string()))
                 .and_then(|bytes| self.persistence.save(self.session_path.clone(), bytes))
             {
                 Ok(revision) => {
@@ -3554,12 +3599,16 @@ impl Foldex {
                     self.save_due = None;
                 }
                 Err(e) => {
+                    let retryable = e.retryable();
                     self.toast(format!("Workspace could not be queued: {e}"), true);
                     if self.updates.exit_pending {
                         self.cancel_update_exit(ctx, "The workspace could not be queued for saving. Installation was cancelled.");
                         self.save_due = None;
-                    } else {
+                    } else if retryable {
                         self.save_due = Some(now + Duration::from_millis(50));
+                    } else {
+                        self.save_due = None;
+                        self.close_failed = self.close_requested.is_some();
                     }
                 }
             }
@@ -3597,6 +3646,66 @@ impl Foldex {
         } else if let Some(due) = self.save_due {
             ctx.request_repaint_after(due.saturating_duration_since(now));
         }
+    }
+
+    fn apply_shared_preferences(&mut self, mut session: Session) {
+        self.bookmarks = crate::bookmarks::normalize(session.bookmarks);
+        self.saved_layouts = session.saved_layouts.into_iter().take(16).collect();
+        for layout in &mut self.saved_layouts {
+            layout.state.clear_navigation_history();
+        }
+        self.folder_views = session.folder_views.into_iter().take(128).collect();
+        if self.context.pins() != session.context_pins {
+            self.context.set_pins(&session.context_pins);
+        }
+        if let Some(bookmarks) = session.command_bookmarks {
+            self.commands.set_bookmarks(bookmarks);
+        }
+        if let Some(mut bindings) = session.hotkeys.take() {
+            crate::hotkeys::Hotkeys::add_keyboard_defaults(&mut bindings);
+            if self.hotkeys.bindings() != bindings {
+                self.hotkeys = crate::hotkeys::Hotkeys::from_bindings(bindings);
+            }
+        }
+        if self.sidebar_sections.preferences() != &session.sidebar_preferences {
+            self.sidebar_sections = chrome::SidebarSections::from_preferences(
+                self.sidebar_sections.bits(),
+                session.sidebar_preferences,
+            );
+        }
+        session.home_history.normalize();
+        if self.home_history != session.home_history {
+            self.home_history = session.home_history;
+            self.home_usage_revision = self.home_usage_revision.wrapping_add(1);
+        }
+        self.recent = session.recent.into_iter().take(10).collect();
+        let settings = session.launcher;
+        if self.launcher.settings.background != settings.background
+            || self.launcher.settings.clipboard_history != settings.clipboard_history
+        {
+            self.launcher
+                .set_launcher_flags(settings.background, settings.clipboard_history);
+        }
+        if self.launcher.settings.file_roots != settings.file_roots {
+            let roots = settings
+                .file_roots
+                .iter()
+                .map(|path| path.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(";");
+            if let Err(error) = self.launcher.apply_launcher_roots(&roots) {
+                self.toast(error, true);
+            }
+        }
+        if self.launcher.settings.hotkey != settings.hotkey
+            && let Err(error) = self.launcher.apply_launcher_shortcut(&settings.hotkey)
+        {
+            self.toast(error, true);
+        }
+        self.hotkeys
+            .set_launcher_shortcut(&self.launcher.settings.hotkey);
+        self.hotkeys.update_palette(&mut self.commands);
+        self.service_sidebar_network();
     }
 
     fn service_benchmark(&mut self, ctx: &egui::Context) {

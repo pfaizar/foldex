@@ -91,12 +91,12 @@ source archives. Builds are unsigned, so Windows may display a publisher or
 SmartScreen prompt.
 
 You can move the portable folder to a writable location of your choice. Preserve
-`theme.toml` and `foldex-session.json` when updating to keep your appearance,
+`theme.toml`, `foldex-session.json`, and `foldex-preferences.json` when updating to keep your appearance,
 bookmarks, workspace and launcher settings.
 
 Portable copies can check for releases in Options; in-app installation is for
 installed copies. To migrate, install Foldex in a separate folder, exit both
-copies, and copy your portable `theme.toml`, `foldex-session.json`, and `themes/`
+copies, and copy your portable `theme.toml`, `foldex-session.json`, `foldex-preferences.json` (when present), and `themes/`
 into `%LOCALAPPDATA%\Foldex\data`. Turn off Default File Explorer in the portable
 copy first. The installer preserves your portable folder.
 
@@ -175,7 +175,9 @@ are not reversible through Foldex history.
 - **Hotkeys:** all keyboard shortcuts, including the global launcher shortcut.
 - **`theme.toml`:** an editable theme in your data folder. Reload with `Ctrl+Shift+R`.
 - **`themes/`:** your saved and imported color schemes. Each theme contains both dark and light colors. Save and share them from Options.
-- **`foldex-session.json`:** saved workspace, bookmarks and preferences.
+- **`foldex-session.json`:** the primary window's saved workspace. Older sessions migrate automatically.
+- **`foldex-preferences.json`:** shared bookmarks, shortcuts, layouts and launcher preferences. Concurrent windows merge their edits. The previous valid document is retained as `foldex-preferences.previous.json`.
+- **`workspaces/`:** independent auxiliary-window workspace snapshots, kept separately from the primary window.
 - **`foldex-cache/`:** generated search data; it can be removed after exiting Foldex.
 - **`foldex-updates.json`:** update preferences. Installed data lives in `%LOCALAPPDATA%\Foldex\data`; portable data lives beside the executable.
 

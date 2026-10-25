@@ -265,10 +265,9 @@ impl Foldex {
                 .map(|n| n.trim().to_owned())
                 .filter(|n| !n.is_empty())
             {
-                let item = NamedWorkspace {
-                    name,
-                    state: self.workspace_state(),
-                };
+                let mut state = self.workspace_state();
+                state.clear_navigation_history();
+                let item = NamedWorkspace { name, state };
                 if let Some(old) = self.saved_layouts.iter_mut().find(|s| s.name == item.name) {
                     *old = item;
                 } else {
