@@ -164,6 +164,10 @@ Record a combination with any modifiers, or keep pressing combinations to build
 a command sequence, then choose Assign. Menu navigation, selection, search
 results, Home and the launcher support keyboard use throughout.
 
+While recording, held modifiers appear immediately and Win/Alt combinations
+belong to the recorder instead of opening Windows menus. Press Escape to cancel,
+or Tab to review the recorder controls.
+
 File-operation history lasts for the current window session. Undo preserves
 edited files and refuses occupied restore destinations. Permanent deletion,
 overwrites, folder merges and actions performed by external shell extensions
