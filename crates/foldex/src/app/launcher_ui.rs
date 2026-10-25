@@ -104,6 +104,13 @@ impl Foldex {
     }
 
     pub(super) fn request_explorer_close(&mut self, ctx: &egui::Context) {
+        if self.updates.exit_pending {
+            self.cancel_update_exit(
+                ctx,
+                "Update installation was cancelled. Your current version is unchanged.",
+            );
+            return;
+        }
         let now = Instant::now();
         if self.allow_close
             || self.close_failed

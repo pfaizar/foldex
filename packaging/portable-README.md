@@ -3,8 +3,8 @@
 Extract this entire ZIP into a writable folder, then run `Foldex.exe`. Keep
 `LICENSE`, `THIRD-PARTY-NOTICES.md`, and the `licenses` folder with the executable.
 
-Requires 64-bit Windows, a DirectX 12-capable graphics adapter and driver, and the
-[Microsoft Visual C++ x64 Redistributable](https://aka.ms/vc14/vc_redist.x64.exe).
+Requires Windows 10 x64 (1809+) and a DirectX 12-capable graphics adapter and driver.
+Official releases statically link the Visual C++ runtime.
 This initial public preview has limited desktop hardware coverage.
 
 Use **Ctrl+Alt+Space** for the launcher, **Ctrl+,** for Options, and **F1** for the
@@ -15,6 +15,11 @@ The application creates `foldex-session.json`, `foldex-cache`, and other runtime
 data beside the executable. Preserve your existing session, theme, and named
 themes when updating. After exiting Foldex, you can delete `foldex-cache` to
 rebuild generated search data.
+
+Options → Application Updates can check for releases. To enable in-app update
+installation, use the separate Windows setup EXE. Exit both copies and copy your
+portable theme, session and themes directory into `%LOCALAPPDATA%\Foldex\data`
+to migrate preferences. The installer preserves the portable folder.
 
 If you enable **Default File Explorer** in Options, turn it off before moving or
 deleting the portable folder. This restores Windows folder and Win+E registrations.

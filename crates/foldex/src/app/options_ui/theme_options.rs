@@ -55,6 +55,9 @@ impl OptionsPopup {
     pub(in crate::app) fn theme_preferences_saved(&self) -> bool {
         self.appearance.library.preferences_saved()
     }
+    pub(in crate::app) fn theme_preferences_error(&self) -> Option<&str> {
+        self.appearance.library.preferences_error()
+    }
     pub(in crate::app) fn theme_palette_changed(&mut self, theme: &mut Theme) {
         if self.color_picker.is_open()
             && let Some(option) = self.color_option

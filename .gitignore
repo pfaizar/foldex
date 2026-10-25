@@ -9,6 +9,8 @@ foldex-cache/
 foldex-session.json
 foldex-session.lock
 foldex-crash.log
+foldex-updates.json
+/updates/
 *.log
 *.sqlite3
 *.sqlite3-shm

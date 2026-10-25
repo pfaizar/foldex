@@ -194,6 +194,7 @@ pub struct Platform {
     owner: Arc<AtomicIsize>,
     integration_events: SyncSender<Event>,
     integration_busy: Arc<AtomicBool>,
+    pending_jobs: Arc<AtomicU64>,
     launcher_busy: Arc<AtomicBool>,
     integration_wake: Wake,
 }
@@ -216,6 +217,8 @@ impl Platform {
         let worker_wake = wake.clone();
         let worker_owner = owner.clone();
         let worker_history = history.clone();
+        let pending_jobs = Arc::new(AtomicU64::new(0));
+        let worker_pending = pending_jobs.clone();
         thread::Builder::new()
             .name("foldex-file-operations".into())
             .spawn(move || {
@@ -226,6 +229,7 @@ impl Platform {
                     worker_owner,
                     worker_wake,
                     worker_history,
+                    worker_pending,
                 );
             })?;
         let preview_stop = stop.clone();
@@ -262,6 +266,7 @@ impl Platform {
             owner,
             integration_events,
             integration_busy: Arc::new(AtomicBool::new(false)),
+            pending_jobs,
             launcher_busy: Arc::new(AtomicBool::new(false)),
             integration_wake,
         })
@@ -277,6 +282,15 @@ impl Platform {
     /// Cached labels only: this never waits for filesystem work or the journal.
     pub fn history_state(&self) -> HistoryState {
         self.history.state()
+    }
+
+    /// Count queued work too: a mutation waiting behind a slow shell handler
+    /// must not disappear just because no history transaction has started yet.
+    pub fn update_busy(&self) -> bool {
+        self.pending_jobs.load(Ordering::Acquire) != 0
+            || self.properties.is_busy()
+            || self.integration_busy.load(Ordering::Acquire)
+            || self.history.state().busy
     }
 
     /// The batch planner shares the same serialized mutation history.
@@ -383,9 +397,18 @@ impl Platform {
             }
             job => job,
         };
-        self.jobs.try_send(job).map_err(|error| match error {
-            TrySendError::Full(_) => "File operations are busy; try again shortly".into(),
-            TrySendError::Disconnected(_) => "File worker is unavailable".into(),
+        let tracked = !matches!(job, Job::Metrics { .. });
+        if tracked {
+            self.pending_jobs.fetch_add(1, Ordering::AcqRel);
+        }
+        self.jobs.try_send(job).map_err(|error| {
+            if tracked {
+                self.pending_jobs.fetch_sub(1, Ordering::AcqRel);
+            }
+            match error {
+                TrySendError::Full(_) => "File operations are busy; try again shortly".into(),
+                TrySendError::Disconnected(_) => "File worker is unavailable".into(),
+            }
         })
     }
 
@@ -478,8 +501,27 @@ fn operation_worker(
     owner: Arc<AtomicIsize>,
     wake: Wake,
     history: HistoryHandle,
+    pending: Arc<AtomicU64>,
 ) {
     while let Ok(job) = jobs.recv() {
+        struct Pending<'a> {
+            count: &'a AtomicU64,
+            wake: &'a Wake,
+            tracked: bool,
+        }
+        impl Drop for Pending<'_> {
+            fn drop(&mut self) {
+                if self.tracked {
+                    self.count.fetch_sub(1, Ordering::AcqRel);
+                    (self.wake)();
+                }
+            }
+        }
+        let _pending = Pending {
+            count: &pending,
+            wake: &wake,
+            tracked: !matches!(job, Job::Metrics { .. }),
+        };
         if stop.load(Ordering::Acquire) {
             break;
         }

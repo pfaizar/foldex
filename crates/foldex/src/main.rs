@@ -10,6 +10,7 @@ mod goto;
 mod home_history;
 mod hotkeys;
 mod inspector;
+mod installation;
 mod integration;
 mod keyboard;
 mod launcher;
@@ -27,6 +28,7 @@ mod search;
 mod selection;
 mod sidebar;
 mod theme_store;
+mod updates;
 mod workspace;
 mod workspace_tree;
 #[cfg(all(feature = "renderer-glow", feature = "renderer-wgpu"))]
@@ -43,6 +45,15 @@ static UI_CONTEXT: std::sync::OnceLock<egui::Context> = std::sync::OnceLock::new
 fn main() -> eframe::Result {
     let launched = Instant::now();
     let args: Vec<_> = std::env::args_os().skip(1).collect();
+    // Setup helpers must not enter single-instance activation, load user state,
+    // start network checks, or create a browser/GPU runtime.
+    if args.iter().any(|arg| arg == "--uninstall-integration") {
+        if let Err(error) = integration::uninstall() {
+            installation::show_error(&error);
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     if args.iter().any(|arg| arg == "--probe-lifecycle") {
         return app::lifecycle_probe::run(&args);
     }
@@ -115,10 +126,16 @@ fn main() -> eframe::Result {
                 .and_then(|p| p.parent().map(PathBuf::from))
                 .unwrap_or_default()
         });
+    let _running_installation = installation::claim(&exe_dir).map_err(|error| {
+        installation::show_error(&error.to_string());
+        eframe::Error::AppCreation(Box::new(error))
+    })?;
     let state_dir = startup_transfer
         .as_ref()
         .map(|startup| startup.state_directory())
-        .unwrap_or_else(|| exe_dir.clone());
+        .map(Ok)
+        .unwrap_or_else(|| installation::state_directory(&exe_dir))
+        .map_err(|error| eframe::Error::AppCreation(Box::new(error)))?;
     let crash_path = state_dir.join("foldex-crash.log");
     install_panic_log(crash_path.clone());
     let theme_path = state_dir.join("theme.toml");
@@ -379,6 +396,13 @@ fn main() -> eframe::Result {
     );
     if let Err(error) = &result {
         write_crash_report(&crash_path, format!("Foldex runtime error: {error}\n"));
+    }
+    if result.is_ok()
+        && let Err(error) = updates::finish_handoff()
+    {
+        installation::show_error(&format!(
+            "{error}\nYour current installation is unchanged. Open Foldex to try again."
+        ));
     }
     result
 }

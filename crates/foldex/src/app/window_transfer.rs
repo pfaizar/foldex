@@ -128,6 +128,9 @@ struct ChildProbe {
     frames: usize,
 }
 impl Transfers {
+    pub(super) fn busy(&self) -> bool {
+        self.outgoing.is_some() || self.incoming.is_some()
+    }
     pub(super) fn receiving(&self) -> bool {
         self.incoming.is_some()
     }

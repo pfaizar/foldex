@@ -36,6 +36,13 @@ jobs:
         run: cargo test --locked --workspace --target x86_64-pc-windows-msvc
       - name: Check release tooling
         run: python -B -m unittest discover -s scripts/tests -v
+      - name: Install Inno Setup 6.7
+        run: choco upgrade innosetup --version=6.7.0 --yes --no-progress --allow-downgrade
+      - name: Build the installer smoke-test application
+        run: cargo build --locked --target x86_64-pc-windows-msvc -p foldex
+      - name: Exercise install, repair, upgrade, downgrade and uninstall
+        shell: pwsh
+        run: ./scripts/test_installer.ps1 -Binary target/x86_64-pc-windows-msvc/debug/foldex.exe
 
   website:
     name: Website

@@ -49,6 +49,9 @@ impl Properties {
     pub fn try_recv(&self) -> Option<Result<(), String>> {
         self.result.try_lock().ok()?.take()
     }
+    pub fn is_busy(&self) -> bool {
+        self.busy.load(Ordering::Acquire)
+    }
 
     pub(super) fn spawn(
         &self,

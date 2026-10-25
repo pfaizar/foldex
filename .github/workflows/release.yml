@@ -18,8 +18,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  windows-portable:
-    name: Build and publish Windows x64 portable
+  windows:
+    name: Build and publish Windows x64 installer and portable
     runs-on: windows-2025
     timeout-minutes: 60
     permissions:
@@ -48,16 +48,23 @@ jobs:
         run: cargo test --locked --workspace --target x86_64-pc-windows-msvc
       - name: Check release tooling
         run: python -B -m unittest discover -s scripts/tests -v
+      - name: Install Inno Setup 6.7
+        run: choco upgrade innosetup --version=6.7.0 --yes --no-progress --allow-downgrade
       - name: Build the tagged application
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build --locked --release --target x86_64-pc-windows-msvc -p foldex
       - name: Package the portable ZIP and notices
         run: python -B scripts/package_portable.py --tag "$env:RELEASE_TAG"
+      - name: Package the Windows installer
+        run: python -B scripts/package_installer.py --tag "$env:RELEASE_TAG" --iscc "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
       - name: Retain the release artifacts
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: foldex-windows-x64
           path: |
             dist/Foldex-*-windows-x64-portable.zip
+            dist/Foldex-*-windows-x64-setup.exe
             dist/Foldex-*-SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
@@ -67,14 +74,26 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $version = python -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version'])"
+          $assets = @(
+            "dist/Foldex-$version-windows-x64-portable.zip",
+            "dist/Foldex-$version-windows-x64-setup.exe",
+            "dist/Foldex-$version-SHA256SUMS.txt"
+          )
           $releaseArgs = @(
             'release', 'create', $env:RELEASE_TAG,
-            "dist/Foldex-$version-windows-x64-portable.zip",
-            "dist/Foldex-$version-SHA256SUMS.txt",
-            '--verify-tag', '--title', "Foldex $version",
+            '--draft', '--verify-tag', '--title', "Foldex $version",
             '--notes-file', "docs/releases/$($env:RELEASE_TAG).md"
           )
           if ($version.StartsWith('0.') -or $version.Contains('-')) {
             $releaseArgs += '--prerelease'
           }
-          gh @releaseArgs
+          $draft = gh release view $env:RELEASE_TAG --json isDraft --jq .isDraft 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            if ($draft -ne 'true') { throw 'This version is already published. Publish a new version instead of replacing its assets.' }
+            gh release upload $env:RELEASE_TAG @assets --clobber
+          } else {
+            gh @releaseArgs @assets
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Expose the update only after every asset has uploaded successfully.
+          gh release edit $env:RELEASE_TAG --draft=false

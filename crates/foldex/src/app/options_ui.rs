@@ -38,6 +38,7 @@ enum OptionId {
     LoadThemes,
     ExportTheme,
     DefaultExplorer,
+    Updates,
     LauncherShortcut,
     LauncherBackground,
     LauncherClipboard,
@@ -139,6 +140,11 @@ const OPTIONS: &[Definition] = &[
         id: OptionId::DefaultExplorer,
         title: "Default File Explorer",
         description: "Open folders, drives and Win+E in Foldex. Turn off to restore.",
+    },
+    Definition {
+        id: OptionId::Updates,
+        title: "Application Updates",
+        description: "Check for new versions, download updates and choose automatic updates.",
     },
     Definition {
         id: OptionId::LauncherShortcut,
@@ -349,6 +355,7 @@ pub(super) struct OptionsResponse {
     pub closed: bool,
     pub integration: Option<IntegrationRequest>,
     pub sidebar_changed: bool,
+    pub updates: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -358,6 +365,7 @@ pub(super) struct IntegrationRequest {
 }
 
 pub(super) struct OptionsPopup {
+    updates_requested: bool,
     active: bool,
     closing: bool,
     query: String,
@@ -403,6 +411,7 @@ pub(super) struct OptionsPopup {
 impl Default for OptionsPopup {
     fn default() -> Self {
         Self {
+            updates_requested: false,
             active: false,
             closing: false,
             query: String::new(),
@@ -508,6 +517,7 @@ impl OptionsPopup {
         self.color_picker = Default::default();
         self.color_option = None;
         self.active = true;
+        self.updates_requested = false;
         self.closing = false;
         self.query.clear();
         self.focus = true;
@@ -849,6 +859,7 @@ impl OptionsPopup {
             }
             return OptionsResponse {
                 closed: true,
+                updates: std::mem::take(&mut self.updates_requested),
                 ..Default::default()
             };
         }
@@ -1396,6 +1407,22 @@ impl OptionsPopup {
                 return self.theme_control(ui, theme, paint, rect, option, activate);
             }
             let response = match option {
+                OptionId::Updates => {
+                    let response = foldex_ui::components::text_button_at(
+                        ui,
+                        rect,
+                        ui.id().with("updates"),
+                        paint,
+                        "Open",
+                        false,
+                    );
+                    self.control_focus(ui, option, &response);
+                    if response.clicked() || activate {
+                        self.updates_requested = true;
+                        self.closing = true;
+                    }
+                    return false;
+                }
                 OptionId::SectionBookmarks
                 | OptionId::SectionStorage
                 | OptionId::SectionPlaces
@@ -1775,6 +1802,7 @@ mod tests {
                     response.save |= next.save;
                     response.sidebar_changed |= next.sidebar_changed;
                     response.closed |= next.closed;
+                    response.updates |= next.updates;
                     if next.integration.is_some() {
                         response.integration = next.integration;
                     }
@@ -1792,6 +1820,34 @@ mod tests {
             repeat: false,
             modifiers: Modifiers::NONE,
         }
+    }
+
+    #[test]
+    fn opening_updates_releases_options_navigation_after_its_close_animation() {
+        let ctx = egui::Context::default();
+        let mut popup = OptionsPopup::default();
+        let mut theme = Theme {
+            reduced_motion: true,
+            ..Default::default()
+        };
+        let _ = pump(&mut popup, &mut theme, &ctx, 0, vec![]);
+        popup.query = "Application Updates".into();
+        popup.refilter();
+        for frame in 1..5 {
+            let _ = pump(&mut popup, &mut theme, &ctx, frame, vec![]);
+        }
+        popup.activate = Some(OptionId::Updates);
+        let mut requested = false;
+        for frame in 5..30 {
+            let (response, _) = pump(&mut popup, &mut theme, &ctx, frame, vec![]);
+            if response.updates {
+                assert!(response.closed);
+                assert!(!popup.owns_navigation(&ctx));
+                requested = true;
+                break;
+            }
+        }
+        assert!(requested, "the update dialog was never requested");
     }
 
     #[test]

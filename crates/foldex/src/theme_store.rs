@@ -46,6 +46,7 @@ pub(crate) struct Library {
     pub status: Option<(String, bool)>,
     pending_preferences: Option<(Instant, Vec<u8>)>,
     last_preferences: Option<Vec<u8>>,
+    preferences_error: Option<String>,
     preferences_inflight: usize,
 }
 impl Library {
@@ -152,6 +153,11 @@ impl Library {
             return;
         }
         self.start(ctx);
+        if self.worker.is_none() {
+            self.preferences_error = Some("The appearance writer is unavailable.".into());
+            self.pending_preferences = None;
+            return;
+        }
         match theme.write() {
             Ok(text) => {
                 let bytes = text.into_bytes();
@@ -174,17 +180,28 @@ impl Library {
                     SAVE_DELAY
                 });
             }
-            Err(error) => self.status = Some((error.to_string(), true)),
+            Err(error) => {
+                self.preferences_error = Some(error.to_string());
+                self.status = Some((error.to_string(), true));
+            }
         }
     }
     /// Returns a scheme only after its atomic library save has succeeded.
     pub fn poll(&mut self, ctx: &egui::Context) -> Option<Selection> {
         let mut selected = None;
-        while let Some(reply) = self
-            .worker
-            .as_ref()
-            .and_then(|worker| worker.rx.try_recv().ok())
-        {
+        loop {
+            let reply = match self.worker.as_ref().map(|worker| worker.rx.try_recv()) {
+                Some(Ok(reply)) => reply,
+                Some(Err(mpsc::TryRecvError::Disconnected)) => {
+                    self.preferences_error = Some("The appearance writer stopped.".into());
+                    self.preferences_inflight = 0;
+                    self.pending_preferences = None;
+                    self.worker = None;
+                    self.busy = false;
+                    break;
+                }
+                _ => break,
+            };
             match reply {
                 Reply::Listed(result) => {
                     self.busy = false;
@@ -224,8 +241,11 @@ impl Library {
                     self.preferences_inflight = self.preferences_inflight.saturating_sub(1);
                     if let Err(error) = result {
                         self.last_preferences = None;
+                        self.preferences_error = Some(error.clone());
                         self.status =
                             Some((format!("Appearance could not be saved: {error}"), true));
+                    } else {
+                        self.preferences_error = None;
                     }
                 }
             }
@@ -243,6 +263,8 @@ impl Library {
                             self.pending_preferences = Some((Instant::now() + SAVE_DELAY, bytes))
                         }
                         Err(mpsc::TrySendError::Disconnected(_)) => {
+                            self.preferences_error =
+                                Some("The appearance writer is unavailable.".into());
                             self.status =
                                 Some(("The appearance writer is unavailable.".into(), true));
                             self.last_preferences = None;
@@ -271,6 +293,13 @@ impl Library {
     }
     pub fn preferences_saved(&self) -> bool {
         self.pending_preferences.is_none() && self.preferences_inflight == 0 && !self.busy
+    }
+    pub fn preferences_error(&self) -> Option<&str> {
+        if self.pending_preferences.is_none() && self.preferences_inflight == 0 {
+            self.preferences_error.as_deref()
+        } else {
+            None
+        }
     }
 }
 
@@ -405,6 +434,36 @@ fn import_name(mut scheme: ColorScheme, library: &[ColorScheme]) -> Result<Color
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_failed_preference_save_is_visible_until_a_successful_retry() {
+        let fixture = Fixture::new();
+        let blocker = fixture.0.join("blocked");
+        fs::write(&blocker, b"not a directory").unwrap();
+        let path = blocker.join("theme.toml");
+        let ctx = egui::Context::default();
+        let mut library = Library::default();
+        library.configure(path.clone(), 0);
+        library.persist(&ctx, &Theme::default(), true);
+        let deadline = Instant::now() + Duration::from_secs(4);
+        while library.preferences_error().is_none() {
+            library.poll(&ctx);
+            assert!(
+                Instant::now() < deadline,
+                "the failed save was not reported"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        fs::remove_file(&blocker).unwrap();
+        fs::create_dir(&blocker).unwrap();
+        library.persist(&ctx, &Theme::default(), true);
+        while !library.preferences_saved() {
+            library.poll(&ctx);
+            assert!(Instant::now() < deadline, "the retry did not finish");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(library.preferences_error().is_none());
+        assert!(path.is_file());
+    }
     struct Fixture(PathBuf);
     impl Fixture {
         fn new() -> Self {
