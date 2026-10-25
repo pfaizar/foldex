@@ -202,6 +202,14 @@ cargo test --locked --workspace
 Native Shell and clipboard probes are explicitly ignored because they interact
 with Windows. The normal regression suite uses generated fixtures.
 
+File dragging supports folder rows, split panes, breadcrumb ancestors and sidebar
+folders, as well as Explorer and other Windows apps. Drag a selected item to move
+the entire selection; drag empty listing space to select a rectangle. Windows
+chooses the default transfer effect; Ctrl requests a copy and Shift requests a
+move. Quick managed file operations keep their progress dialog hidden; ongoing
+operations show native progress after one second. See the
+[file-transfer investigation and validation](docs/WINDOWS-FILE-TRANSFERS.md).
+
 An alternative OpenGL build is available for development:
 
 ```powershell
