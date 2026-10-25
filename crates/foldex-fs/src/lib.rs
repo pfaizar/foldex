@@ -32,6 +32,39 @@ impl Entry {
     pub fn is_hidden(&self) -> bool {
         self.attributes & 0x2 != 0
     }
+    /// Read basic metadata for one notified path; never opens its contents.
+    pub fn stat(path: &Path) -> io::Result<Self> {
+        #[cfg(windows)]
+        {
+            windows::stat(path)
+        }
+        #[cfg(not(windows))]
+        {
+            let metadata = fs::symlink_metadata(path)?;
+            let name = path
+                .file_name()
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "Expected a file or folder name",
+                    )
+                })?
+                .to_os_string();
+            let attributes = u32::from(metadata.is_dir()) * 0x10
+                | u32::from(metadata.is_symlink()) * 0x400
+                | u32::from(name.as_encoded_bytes().starts_with(b".")) * 0x2;
+            Ok(Self {
+                name,
+                attributes,
+                size: metadata.len(),
+                modified_secs: metadata.modified().map(unix_secs).unwrap_or(0),
+                created_secs: metadata.created().ok().map(unix_secs),
+                accessed_secs: metadata.accessed().ok().map(unix_secs),
+                metadata_known: true,
+            })
+        }
+    }
+
     fn from_std(entry: fs::DirEntry) -> Self {
         let name = entry.file_name();
         let metadata = entry.metadata().ok();

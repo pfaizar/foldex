@@ -2439,6 +2439,7 @@ mod tests {
                 source_root_modified_secs: None,
                 from_cache: false,
                 synthetic: true,
+                directory_only: false,
             },
         })
     }

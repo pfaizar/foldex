@@ -20,6 +20,7 @@ use std::{
 #[cfg(test)]
 pub(crate) mod live_tests;
 mod paging;
+mod reconcile;
 mod scopes;
 
 const MAX_CLIENTS: usize = 4096;
@@ -1028,7 +1029,8 @@ impl CountCache {
 }
 
 fn same_result_prefix(a: &IndexStatus, b: &IndexStatus) -> bool {
-    a.generation == b.generation
+    a.directory_only == b.directory_only
+        && a.generation == b.generation
         && a.revision == b.revision
         && a.entries == b.entries
         && a.scope == b.scope
@@ -1089,8 +1091,12 @@ impl Context {
             .boundary
             .as_ref()
             .map_or(&request.root, |boundary| &boundary.scope);
-        if request.boundary.is_some()
-            && !crate::bookmarks::path_eq(source_root, &std::path::absolute(&request.root)?)
+        if request
+            .boundary
+            .as_ref()
+            .is_some_and(|boundary| boundary.directory_only != request.directory_only)
+            || request.boundary.is_some()
+                && !crate::bookmarks::path_eq(source_root, &std::path::absolute(&request.root)?)
         {
             return Err(foldex_index::Error::InvalidCursor);
         }
@@ -1417,7 +1423,7 @@ impl Context {
             .and_then(to_usize)
             .or_else(|| kind_counts.map(|counts| filtered_total(&self.request.query, counts)));
         let result = snapshot(
-            &status.scope,
+            &self.request.root,
             rows.iter(),
             &status,
             self.request.started.elapsed(),
@@ -1980,6 +1986,9 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
                 match &update.status {
                     Ok(status) => {
                         if update.refetch {
+                            if !context.query_dirty && !context.count_dirty {
+                                context.request.started = Instant::now();
+                            }
                             context.query_dirty = true;
                             context.count_dirty = false;
                             context.pending_page = None;
@@ -2493,6 +2502,7 @@ mod tests {
             source_root_modified_secs: None,
             from_cache: false,
             synthetic: false,
+            directory_only: false,
         }
     }
 

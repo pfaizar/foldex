@@ -51,7 +51,7 @@ impl NativeIndexBuilder {
                 .map(Path::to_path_buf)
         });
         let excluded_fallback = canonical_scope.is_none().then_some(excluded_root);
-        let (manifest, data) = Manifest::create(&cache_dir, scope, cancel)?;
+        let (manifest, data) = Manifest::create(&cache_dir, scope, options.directory_only, cancel)?;
         Ok(Self {
             index: Some(NativeIndex::new(manifest, data)),
             mode: Mode::None,

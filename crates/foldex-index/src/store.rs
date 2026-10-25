@@ -18,6 +18,8 @@ CREATE TABLE manifest(single INTEGER PRIMARY KEY CHECK(single=1),schema_version 
  scope BLOB NOT NULL,state INTEGER NOT NULL,entries INTEGER NOT NULL,files INTEGER NOT NULL,folders INTEGER NOT NULL,
  skipped INTEGER NOT NULL,links INTEGER NOT NULL,excluded_cache INTEGER NOT NULL,started INTEGER NOT NULL,updated INTEGER NOT NULL,
  scope_modified INTEGER,synthetic INTEGER NOT NULL);
+CREATE TABLE traversal_policy(single INTEGER PRIMARY KEY CHECK(single=1),directory_only INTEGER NOT NULL CHECK(directory_only IN(0,1)));
+INSERT INTO traversal_policy VALUES(1,0);
 CREATE TABLE entries(id INTEGER PRIMARY KEY,relative BLOB NOT NULL,
  lower_name TEXT NOT NULL,source_key TEXT,is_dir INTEGER NOT NULL CHECK(is_dir IN(0,1)),hidden INTEGER NOT NULL,symlink INTEGER NOT NULL,
  size_key BLOB NOT NULL CHECK(length(size_key)=8),modified INTEGER NOT NULL,natural_key BLOB NOT NULL,raw_sort BLOB NOT NULL,extension TEXT NOT NULL);
@@ -497,6 +499,7 @@ impl IndexBuilder {
             source_root_modified_secs,
             from_cache: false,
             synthetic: false,
+            directory_only: options.directory_only,
         };
         connection.execute(
             "INSERT INTO manifest VALUES(1,2,?1,?2,?3,0,?4,0,0,0,0,0,0,0,?5,?5,?6,0)",
@@ -508,6 +511,10 @@ impl IndexBuilder {
                 status.started_unix_ms as i64,
                 source_root_modified_secs
             ],
+        )?;
+        connection.execute(
+            "UPDATE traversal_policy SET directory_only=?1 WHERE single=1",
+            params![options.directory_only],
         )?;
         write_pointer(&cache_dir, "building.index", &status.database_path)?;
         Ok(Self {
@@ -901,6 +908,24 @@ pub(crate) fn load_status(connection: &Connection, database_path: &Path) -> Resu
         return Err(Error::InvalidIndex("scope must be absolute".into()));
     }
     let state = BuildState::decode(value.6)?;
+    let policy: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='traversal_policy')",
+        [],
+        |row| row.get(0),
+    )?;
+    let directory_only = if policy {
+        match connection.query_row(
+            "SELECT directory_only FROM traversal_policy WHERE single=1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )? {
+            0 => false,
+            1 => true,
+            _ => return Err(Error::InvalidIndex("invalid traversal policy".into())),
+        }
+    } else {
+        false
+    };
     Ok(IndexStatus {
         generation: value.3,
         revision: value.4.max(0) as u64,
@@ -919,6 +944,7 @@ pub(crate) fn load_status(connection: &Connection, database_path: &Path) -> Resu
         source_root_modified_secs: value.15,
         from_cache: false,
         synthetic: value.16,
+        directory_only,
     })
 }
 

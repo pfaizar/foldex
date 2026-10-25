@@ -538,7 +538,11 @@ impl Catalog {
                 Some(selection) => super::bitmap::Rows::Selected(selection),
                 None => super::bitmap::Rows::Range(first..end),
             };
+            let deleted = self.deleted.get(&shard_index);
             for (ordinal, row) in rows.enumerate() {
+                if super::masks::deleted(deleted, row) {
+                    continue;
+                }
                 if ordinal % 128 == 0 {
                     cancel.check()?;
                 }
@@ -620,7 +624,11 @@ impl Catalog {
                     }
                     None => super::bitmap::Rows::Range(first_row..last_row),
                 };
+                let deleted = self.deleted.get(&shard_index);
                 for (ordinal, row) in rows.enumerate() {
+                    if super::masks::deleted(deleted, row) {
+                        continue;
+                    }
                     if ordinal % 128 == 0 {
                         cancel.check()?;
                     }

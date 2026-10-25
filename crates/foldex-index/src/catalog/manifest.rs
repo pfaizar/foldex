@@ -11,7 +11,7 @@ use std::{
 };
 
 const APP_ID: i64 = 0x4649_4c43;
-const FORMAT: i64 = 5;
+const FORMAT: i64 = 6;
 static NEXT: AtomicU64 = AtomicU64::new(1);
 const SCHEMA: &str = "
 CREATE TABLE manifest(single INTEGER PRIMARY KEY CHECK(single=1),schema_version INTEGER NOT NULL,
@@ -21,9 +21,12 @@ CREATE TABLE manifest(single INTEGER PRIMARY KEY CHECK(single=1),schema_version 
  scope_modified INTEGER,synthetic INTEGER NOT NULL);
 CREATE TABLE chunks(ordinal INTEGER PRIMARY KEY,first_id INTEGER NOT NULL,count INTEGER NOT NULL CHECK(count BETWEEN 1 AND 4096),
  bytes INTEGER NOT NULL CHECK(bytes BETWEEN 64 AND 2097152),checksum INTEGER NOT NULL);
+CREATE TABLE traversal_policy(single INTEGER PRIMARY KEY CHECK(single=1),directory_only INTEGER NOT NULL CHECK(directory_only IN(0,1)));
+INSERT INTO traversal_policy VALUES(1,0);
+CREATE TABLE deleted(ordinal INTEGER PRIMARY KEY,bits BLOB NOT NULL CHECK(length(bits) BETWEEN 1 AND 512));
 ";
 
-type Saved = (u64, u64, u64, u64, u64, u64, i64, bool);
+type Saved = (u64, u64, u64, u64, u64, u64, i64, bool, bool);
 fn saved(status: &IndexStatus) -> Saved {
     (
         status.entries,
@@ -34,6 +37,7 @@ fn saved(status: &IndexStatus) -> Saved {
         status.excluded_cache,
         status.state.code(),
         status.synthetic,
+        status.directory_only,
     )
 }
 
@@ -77,6 +81,7 @@ impl Manifest {
     pub fn create(
         cache_dir: &Path,
         scope: &Path,
+        directory_only: bool,
         cancel: &Cancellation,
     ) -> Result<(Self, Catalog)> {
         cancel.check()?;
@@ -126,6 +131,7 @@ impl Manifest {
             source_root_modified_secs,
             from_cache: false,
             synthetic: false,
+            directory_only,
         };
         connection.execute(
             "INSERT INTO manifest VALUES(1,2,?1,?2,?3,0,?4,0,0,0,0,0,0,0,?5,?5,?6,0)",
@@ -138,8 +144,16 @@ impl Manifest {
                 source_root_modified_secs
             ],
         )?;
+        connection.execute(
+            "UPDATE traversal_policy SET directory_only=?1 WHERE single=1",
+            params![directory_only],
+        )?;
         let catalog = Catalog::create(&data_root(&status.database_path)?)?;
-        store::write_pointer(&cache_dir, "building-native.index", &status.database_path)?;
+        super::cleanup::publish_pointer(
+            &cache_dir,
+            "building-native.index",
+            &status.database_path,
+        )?;
         let saved = saved(&status);
         Ok((
             Self {
@@ -232,11 +246,48 @@ impl Manifest {
                     .checked_add(length as u64)
                     .ok_or_else(|| Error::InvalidIndex("catalog byte count overflow".into()))?;
             }
+            let mut deleted = std::collections::HashMap::new();
+            let mut masked = 0u64;
+            let mut mask_bytes = 0usize;
+            let mut lookup_masks = connection.prepare("SELECT ordinal,bits FROM deleted")?;
+            let mut masks = lookup_masks.query([])?;
+            while let Some(row) = masks.next()? {
+                let ordinal: i64 = row.get(0)?;
+                let shard = usize::try_from(ordinal)
+                    .ok()
+                    .and_then(|index| shards.get(index))
+                    .ok_or_else(|| Error::InvalidIndex("invalid deletion mask shard".into()))?;
+                let bits = row.get_ref(1)?.as_blob().map_err(rusqlite::Error::from)?;
+                if bits.len() != shard.count.div_ceil(8)
+                    || bits.is_empty()
+                    || shard.count % 8 != 0
+                        && bits.last().unwrap() & !((1u8 << (shard.count % 8)) - 1) != 0
+                {
+                    return Err(Error::InvalidIndex(
+                        "invalid deletion mask length or tail".into(),
+                    ));
+                }
+                mask_bytes = mask_bytes.saturating_add(bits.len() + 64);
+                if mask_bytes > super::masks::MASK_BUDGET {
+                    return Err(Error::InvalidIndex(
+                        "deletion masks exceed their memory budget".into(),
+                    ));
+                }
+                masked += bits
+                    .iter()
+                    .map(|byte| u64::from(byte.count_ones()))
+                    .sum::<u64>();
+                deleted.insert(ordinal as usize, bits.to_vec());
+            }
             if expected - 1 != status.entries
-                || status.files.checked_add(status.folders) != Some(status.entries)
+                || status
+                    .files
+                    .checked_add(status.folders)
+                    .and_then(|live| live.checked_add(masked))
+                    != Some(status.entries)
             {
                 return Err(Error::InvalidIndex(
-                    "catalog manifest totals do not match chunks".into(),
+                    "catalog live/deleted totals do not match chunks".into(),
                 ));
             }
             status.from_cache = true;
@@ -250,6 +301,8 @@ impl Manifest {
                 natural_scratch: Vec::new(),
                 signature_scratch: format::Signature::default(),
                 substring_safe: false,
+                deleted,
+                masked,
             };
             Ok((status, catalog))
         })();
@@ -301,6 +354,13 @@ impl Manifest {
                     shard.checksum
                 ])?;
             }
+            self.connection.execute("DELETE FROM deleted", [])?;
+            let mut masks = self
+                .connection
+                .prepare_cached("INSERT INTO deleted VALUES(?1,?2)")?;
+            for (ordinal, bits) in &catalog.deleted {
+                masks.execute(params![*ordinal as i64, bits])?;
+            }
             store::write_status(&self.connection, &status)?;
             Ok(())
         })();
@@ -316,7 +376,7 @@ impl Manifest {
     }
 
     pub fn publish_current(&self) -> Result<()> {
-        store::write_pointer(
+        super::cleanup::publish_pointer(
             &self.cache_dir,
             "current-native.index",
             &self.status.database_path,

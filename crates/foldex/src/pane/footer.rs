@@ -447,7 +447,7 @@ impl Pane {
                 );
             }
             if status.from_cache {
-                return format!("{} matches · checking saved results…", self.view_len());
+                return format!("{} matches · updating results…", self.view_len());
             }
             if self.scanning {
                 return format!(

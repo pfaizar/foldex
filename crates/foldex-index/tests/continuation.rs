@@ -194,3 +194,182 @@ fn different_subscriber_queries_reuse_independent_heads_with_a_combined_budget()
     index.release_query_cache();
     assert_eq!(index.retained_query_bytes(), 0);
 }
+
+fn filesystem_index(fixture: &Fixture, directory_only: bool) -> foldex_index::catalog::NativeIndex {
+    let cancel = Cancellation::new();
+    let mut builder = NativeIndexBuilder::create_with_options(
+        &fixture.0.join("cache"),
+        &fixture.0.join("scope"),
+        &BuildOptions {
+            directory_only,
+            ..Default::default()
+        },
+        &cancel,
+    )
+    .unwrap();
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !builder.scan_step(256, &cancel, &|| {}).unwrap().done {
+        assert!(std::time::Instant::now() < until);
+    }
+    builder.finish(true).unwrap()
+}
+#[test]
+fn immutable_file_reconciliation_reads_one_changed_entry_and_preserves_old_rows() {
+    let fixture = Fixture::new();
+    let scope = fixture.0.join("scope");
+    fs::write(scope.join("report.txt"), b"a").unwrap();
+    fs::write(scope.join("kept.txt"), b"b").unwrap();
+    let cancel = Cancellation::new();
+    let mut old = filesystem_index(&fixture, false);
+    let original = old.query(&QuerySpec::default(), 0, 256, &cancel).unwrap();
+    let before = fs::metadata(scope.join("report.txt"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    fs::write(scope.join("report.txt"), b"updated").unwrap();
+    fs::OpenOptions::new()
+        .write(true)
+        .open(scope.join("report.txt"))
+        .unwrap()
+        .set_times(fs::FileTimes::new().set_modified(before))
+        .unwrap();
+    let updated = foldex_index::catalog::NativeIndex::reconcile(
+        &old.status().database_path,
+        &["report.txt".into()],
+        &BuildOptions::default(),
+        &cancel,
+    )
+    .unwrap();
+    assert_eq!(updated.metrics.metadata_reads, 1);
+    assert_eq!(updated.metrics.enumerated_entries, 0);
+    assert_eq!(updated.metrics.retired_rows, 1);
+    assert!(updated.metrics.reused_shards > 0 || updated.metrics.copied_bytes > 0);
+    let mut new = updated.index;
+    assert_ne!(new.status().generation, old.status().generation);
+    let rows = new.query(&QuerySpec::default(), 0, 256, &cancel).unwrap();
+    assert_eq!(new.status().entries, 3);
+    assert_eq!(new.status().files, 2);
+    assert_eq!(
+        rows.rows
+            .iter()
+            .find(|row| row.name == "report.txt")
+            .unwrap()
+            .size,
+        7
+    );
+    let unchanged = old.query(&QuerySpec::default(), 0, 256, &cancel).unwrap();
+    assert_eq!(
+        unchanged
+            .rows
+            .iter()
+            .find(|row| row.name == "report.txt")
+            .unwrap()
+            .size,
+        1
+    );
+    assert_eq!(
+        unchanged.rows.iter().map(|row| row.id).collect::<Vec<_>>(),
+        original.rows.iter().map(|row| row.id).collect::<Vec<_>>()
+    );
+    let reopened = foldex_index::catalog::NativeIndex::open(&fixture.0.join("cache")).unwrap();
+    assert_eq!(reopened.status().generation, new.status().generation);
+}
+#[test]
+fn subtree_rename_and_removal_reconcile_descendants_and_parent_metadata() {
+    let fixture = Fixture::new();
+    let scope = fixture.0.join("scope");
+    fs::create_dir_all(scope.join("old/sub")).unwrap();
+    fs::write(scope.join("old/sub/deep.txt"), b"a").unwrap();
+    fs::write(scope.join("kept.txt"), b"b").unwrap();
+    let cancel = Cancellation::new();
+    let old = filesystem_index(&fixture, false);
+    fs::rename(scope.join("old"), scope.join("new")).unwrap();
+    fs::remove_file(scope.join("kept.txt")).unwrap();
+    fs::write(scope.join("new/sub/added.txt"), b"cc").unwrap();
+    let updated = foldex_index::catalog::NativeIndex::reconcile(
+        &old.status().database_path,
+        &[
+            "old".into(),
+            "new".into(),
+            "new/sub/added.txt".into(),
+            "kept.txt".into(),
+        ],
+        &BuildOptions::default(),
+        &cancel,
+    )
+    .unwrap();
+    assert_eq!(updated.metrics.metadata_reads, 3);
+    assert_eq!(updated.metrics.enumerated_entries, 3);
+    let mut renamed = updated.index;
+    let page = renamed
+        .query(&QuerySpec::default(), 0, 256, &cancel)
+        .unwrap();
+    assert_eq!(page.rows.len(), 4);
+    assert!(
+        page.rows
+            .iter()
+            .all(|row| row.relative_path.starts_with("new"))
+    );
+    fs::remove_dir_all(scope.join("new/sub")).unwrap();
+    let mut removed = foldex_index::catalog::NativeIndex::reconcile(
+        &renamed.status().database_path,
+        &["new/sub".into()],
+        &BuildOptions::default(),
+        &cancel,
+    )
+    .unwrap()
+    .index;
+    let page = removed
+        .query(&QuerySpec::default(), 0, 256, &cancel)
+        .unwrap();
+    assert_eq!(page.rows.len(), 1);
+    assert_eq!(page.rows[0].relative_path, PathBuf::from("new"));
+    assert_eq!(removed.status().files, 0);
+    assert_eq!(removed.status().folders, 1);
+}
+#[test]
+fn shallow_reconciliation_rejects_a_different_traversal_policy_and_never_descends() {
+    let fixture = Fixture::new();
+    let scope = fixture.0.join("scope");
+    fs::create_dir_all(scope.join("child")).unwrap();
+    fs::write(scope.join("child/deep.txt"), b"a").unwrap();
+    let cancel = Cancellation::new();
+    let old = filesystem_index(&fixture, true);
+    assert!(old.status().directory_only);
+    assert!(matches!(
+        foldex_index::catalog::NativeIndex::reconcile(
+            &old.status().database_path,
+            &["child".into()],
+            &BuildOptions::default(),
+            &cancel
+        ),
+        Err(foldex_index::Error::WrongMode)
+    ));
+    let result = foldex_index::catalog::NativeIndex::reconcile(
+        &old.status().database_path,
+        &["child".into()],
+        &BuildOptions {
+            directory_only: true,
+            ..Default::default()
+        },
+        &cancel,
+    )
+    .unwrap();
+    assert_eq!(result.metrics.enumerated_entries, 0);
+    assert!(result.index.status().directory_only);
+    assert_eq!(result.index.status().files, 0);
+    assert_eq!(result.index.status().folders, 1);
+    cancel.cancel();
+    assert!(matches!(
+        foldex_index::catalog::NativeIndex::reconcile(
+            &old.status().database_path,
+            &["child".into()],
+            &BuildOptions {
+                directory_only: true,
+                ..Default::default()
+            },
+            &cancel
+        ),
+        Err(foldex_index::Error::Cancelled)
+    ));
+}

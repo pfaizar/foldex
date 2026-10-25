@@ -117,6 +117,7 @@ impl BuildState {
 
 #[derive(Clone, Debug)]
 pub struct IndexStatus {
+    pub directory_only: bool,
     pub generation: String,
     pub revision: u64,
     pub scope: PathBuf,

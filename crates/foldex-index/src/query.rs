@@ -139,7 +139,8 @@ impl Index {
             self.status = load_status(&self.connection, &self.status.database_path)?;
             self.status.from_cache = from_cache;
             if let Some(boundary) = boundary {
-                if boundary.generation != self.status.generation
+                if boundary.directory_only != self.status.directory_only
+                    || boundary.generation != self.status.generation
                     || boundary.scope != self.status.scope
                     || boundary.entries > self.status.entries
                     || boundary.revision > self.status.revision

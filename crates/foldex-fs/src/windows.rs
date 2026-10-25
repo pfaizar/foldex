@@ -356,3 +356,51 @@ impl Reader {
 fn filetime_secs(value: u64) -> i64 {
     ((i128::from(value) - 116_444_736_000_000_000i128).div_euclid(10_000_000)) as i64
 }
+
+/// Find metadata for exactly one name, retaining its actual directory spelling.
+pub(super) fn stat(path: &Path) -> io::Result<Entry> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Expected a filename"))?;
+    if name.encode_wide().any(|unit| matches!(unit, 42 | 63)) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Wildcard metadata paths are not supported",
+        ));
+    }
+    let path = wide_path(path)?;
+    let mut data = WIN32_FIND_DATAW::default();
+    // The exact, NUL-terminated path and output record outlive this call. No
+    // content handle is opened and symbolic-link metadata is not followed.
+    let raw = unsafe {
+        FindFirstFileExW(
+            path.as_ptr(),
+            FindExInfoBasic,
+            (&mut data as *mut WIN32_FIND_DATAW).cast(),
+            FindExSearchNameMatch,
+            ptr::null(),
+            0,
+        )
+    };
+    if raw == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+    let _guard = FindHandle(raw);
+    let length = data
+        .cFileName
+        .iter()
+        .position(|unit| *unit == 0)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Unterminated filename"))?;
+    let ticks = |time: windows_sys::Win32::Foundation::FILETIME| {
+        (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime)
+    };
+    Ok(Entry {
+        name: OsString::from_wide(&data.cFileName[..length]),
+        attributes: data.dwFileAttributes,
+        size: (u64::from(data.nFileSizeHigh) << 32) | u64::from(data.nFileSizeLow),
+        modified_secs: filetime_secs(ticks(data.ftLastWriteTime)),
+        created_secs: Some(filetime_secs(ticks(data.ftCreationTime))),
+        accessed_secs: Some(filetime_secs(ticks(data.ftLastAccessTime))),
+        metadata_known: true,
+    })
+}

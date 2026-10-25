@@ -6,6 +6,9 @@ mod cleanup;
 mod format;
 mod index;
 mod manifest;
+mod masks;
+mod reconcile;
+pub use reconcile::{ReconcileMetrics, Reconciled};
 mod rows;
 mod spool;
 pub use index::{NativeIndex, NativeQueryTiming};
@@ -15,6 +18,7 @@ mod search;
 use crate::{Cancellation, Error, IndexRecord, IndexRow, Result, codec};
 pub use search::{CatalogQuery, Hit, SearchResult};
 use std::{
+    collections::HashMap,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -33,6 +37,8 @@ pub struct Catalog {
     natural_scratch: Vec<u8>,
     signature_scratch: format::Signature,
     substring_safe: bool,
+    deleted: HashMap<usize, Vec<u8>>,
+    masked: u64,
 }
 
 impl Catalog {
@@ -52,6 +58,8 @@ impl Catalog {
             natural_scratch: Vec::new(),
             signature_scratch: format::Signature::default(),
             substring_safe: false,
+            deleted: HashMap::new(),
+            masked: 0,
         })
     }
 
@@ -233,6 +241,9 @@ impl Catalog {
     }
 
     pub fn relative_path(&self, hit: &Hit) -> Result<PathBuf> {
+        if self.masked(hit.shard, hit.row) {
+            return Err(Error::InvalidCursor);
+        }
         let shard = self.shards.get(hit.shard).ok_or(Error::InvalidCursor)?;
         let view = format::View::open(shard)?;
         let record = view.record(hit.row)?;
@@ -245,6 +256,9 @@ impl Catalog {
         use std::collections::BTreeMap;
         let mut groups = BTreeMap::<usize, Vec<(usize, usize)>>::new();
         for (position, hit) in hits.iter().enumerate() {
+            if self.masked(hit.shard, hit.row) {
+                return Err(Error::InvalidCursor);
+            }
             groups
                 .entry(hit.shard)
                 .or_default()
@@ -330,6 +344,9 @@ impl Catalog {
                 continue;
             }
             let hit = hit_at(position);
+            if self.masked(hit.shard, hit.row) {
+                return Err(Error::InvalidCursor);
+            }
             let shard = self.shards.get(hit.shard).ok_or(Error::InvalidCursor)?;
             if hit.id != shard.first_id.saturating_add(hit.row as u64) {
                 return Err(Error::InvalidCursor);

@@ -72,6 +72,27 @@ fn complete(client: &SearchClient, id: u64, total: usize) -> Arc<SearchWindow> {
     })
 }
 
+#[cfg(windows)]
+#[test]
+fn shared_catalog_keeps_each_subscribers_requested_root_spelling() {
+    let fixture = Fixture::new();
+    fixture.file("report.txt", b"a");
+    let alias = fixture.root().with_file_name("SCOPE");
+    // A case-sensitive Windows directory must not be assumed to have this alias.
+    if !alias.exists() {
+        return;
+    }
+    let hub = SearchHub::new(fixture.cache(), Arc::new(|| {})).unwrap();
+    let first = hub.client();
+    let second = hub.client();
+    let one = complete(&first, first.request(fixture.root(), query(), 0, false), 1);
+    let two = complete(&second, second.request(alias.clone(), query(), 0, false), 1);
+    assert_eq!(one.status.generation, two.status.generation);
+    assert_eq!(two.snapshot.path, alias);
+    assert_eq!(two.snapshot.entries[0].raw_name, "report.txt");
+    hub.shutdown();
+}
+
 #[test]
 fn directory_and_recursive_subscribers_use_distinct_catalogs_for_the_same_root() {
     let fixture = Fixture::new();
