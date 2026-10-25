@@ -180,6 +180,11 @@ impl Pane {
         actions: &mut Vec<Action>,
     ) {
         let recycle_bin = self.is_recycle_bin();
+        let accessible = ui
+            .ctx()
+            .accesskit_node_builder(self.listing_focus_id(), |_| ())
+            .is_some();
+        let mut accessible_rows = Vec::new();
         self.focus_visual = None;
         let keyboard_cues = foldex_ui::focus::keyboard_visible(ui.ctx());
         let restore_reveal = !keyboard_cues && self.focused.is_none();
@@ -462,17 +467,7 @@ impl Pane {
                             continue;
                         };
                         // Raw identity survives reordering, refresh and lossy Unicode display names.
-                        let identity = if recycle_bin {
-                            self.recycle_model
-                                .as_ref()
-                                .and_then(|model| model.items.get(idx as usize))
-                                .map_or_else(
-                                    || Id::new((self.id, "recycle-row", idx)),
-                                    |item| Id::new((self.id, "recycle-row", &item.id)),
-                                )
-                        } else {
-                            Id::new((self.id, &s.path, &e.raw_name, &e.relative_path))
-                        };
+                        let identity = self.row_identity(s, idx, e);
                         let revision = columns::EntryRevision::of(e);
                         if presented.len() < RETAINED_ROWS {
                             presented.insert(identity, revision);
@@ -505,6 +500,16 @@ impl Pane {
                         {
                             self.focus_listing_from_pointer(ui);
                             listing_focused = true;
+                        }
+                        if accessible
+                            && rect.intersects(body)
+                            && accessible_rows.len() < accessibility::ROW_LIMIT
+                        {
+                            accessible_rows.push(accessibility::AccessibleRow {
+                                row,
+                                id: identity,
+                                rect: Some(rect.intersect(body)),
+                            });
                         }
                         let selected = self.selected.contains(&(row as u32));
                         let focus = self.focused == Some(row) && active && listing_focused;
@@ -1095,6 +1100,9 @@ impl Pane {
         self.listing_appearing = 0;
         pending.finish(ui.ctx(), pending_numeric);
         self.ensure_window(self.visible_rows.clone());
+        if accessible {
+            self.accessible_listing(ui, body, accessible_rows, actions);
+        }
         if let Some((path, directory)) = double {
             actions.push(if directory {
                 Action::Navigate(path)

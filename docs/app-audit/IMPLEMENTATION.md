@@ -12,7 +12,7 @@ Each stage receives a focused implementation, edge-case tests, a diff review, an
 | 4 | Fair scheduling for visible searches and details | Complete; reviewed; 615 applicable app tests pass |
 | 5 | Complete large listings and predictable deep paging | Implemented and reviewed; integrated benchmarks pending |
 | 6 | Structured search and saved collections | Complete; reviewed; 627 applicable app tests pass |
-| 7 | Accessible virtual file listings | Pending |
+| 7 | Accessible virtual file listings | Complete; reviewed; 630 applicable app tests pass |
 | 8 | Shared cloud-aware filesystem capabilities | Pending |
 
 The implementation must preserve raw file identities, bounded worker and memory policies, latest-request cancellation, generation-pinned selections, native conflict handling, protected undo, and atomic settings writes. Tests cover failure and recovery paths as well as successful actions.
@@ -98,3 +98,13 @@ Search is a serializable navigation route, retaining its scope, conditions and d
 Review fixed catalog reuse after changing exclusions, source-policy validation, relative-date restoration, filter changes updating the current route, traversal-mode toggles retaining structured conditions, and the new footer Tab order. Regression tests compare in-memory, native and legacy results across matching modes, metadata sorts, exact totals, deep pages and cursors; another checks real traversal pruning and switching between shared pruned/unpruned scopes. History, workspace serialization, editor validation, shared collection storage and rendering are covered.
 
 Validation: **627 applicable app tests passed**, the core/index/query library suites passed, Windows GNU application/test compilation passed, and formatting/diff checks passed. Integrated timings and Windows runtime CI are recorded separately.
+
+## Stage 7: accessible virtual rows
+
+The listing now exposes a multiselect list with filename, file/folder role, selection, global position/extent, parent path, size, modification time, hidden/link state, and its active descendant. Semantic identity uses the same raw path identity as painting, including non-Unicode names and distinct recycle-bin IDs. Reordering or metadata changes do not replace the identity. Visible rows (up to 512) and one loaded offscreen focused row receive semantics; the full directory is never materialized for accessibility. No row metadata is prepared when AccessKit is disabled.
+
+Assistive actions focus the existing keyboard composite, toggle selection, reveal offscreen rows, open through the normal file action path, and request the existing context menu. Selection and Open remain separate: Windows list selection maps to Click; Enter opens the focused item, and an explicit Open custom action is also exposed for adapters supporting custom actions. Recycle-bin activation retains Properties behavior. Stale results disable actions, and repeated egui passes cannot execute an action or toggle selection twice. Bounds follow the painted viewport; unloaded rows do not invent filenames.
+
+Tests verify names, metadata, selected state, active descendant, valid single-parent ancestry, bounded semantics for 10,000 rows, raw-name collisions, reordering, offscreen focus/reveal, keyboard/custom activation, stale-result rejection and repeated render passes. Review caught an intermediate generic container in egui's parent hierarchy and clipped overscan bounds; the tests now validate actual ancestry and expose only intersecting rows.
+
+Validation: **630 applicable app tests passed**, Windows GNU compilation passed, and formatting/diff checks passed. Actual Narrator/NVDA behavior and provider integration still need manual Windows acceptance; headless tree/action tests do not establish spoken output quality.

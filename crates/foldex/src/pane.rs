@@ -1,3 +1,4 @@
+mod accessibility;
 use crate::search::{
     MAX_ACTION_PATHS, SearchClient, SearchEvent, SearchWindow, WINDOW_LEAD_ROWS, WINDOW_ROWS,
 };
