@@ -87,34 +87,37 @@ fn read_windows(path: &Path, follow: bool) -> io::Result<Stamp> {
         {
             return Err(io::Error::last_os_error());
         }
-        let hash = if tag.ReparseTag & 0x2000_0000 != 0 {
-            // Read bounded opaque metadata without traversing the link target.
-            let mut buffer = vec![0u8; MAXIMUM_REPARSE_DATA_BUFFER_SIZE as usize];
-            let mut count = 0u32;
-            if unsafe {
-                DeviceIoControl(
-                    raw,
-                    FSCTL_GET_REPARSE_POINT,
-                    ptr::null(),
-                    0,
-                    buffer.as_mut_ptr().cast(),
-                    buffer.len() as u32,
-                    &mut count,
-                    ptr::null_mut(),
-                )
-            } == 0
+        let hash =
+            if foldex_fs::capabilities::Capabilities::new(tag.FileAttributes, Some(tag.ReparseTag))
+                .redirects()
             {
-                return Err(io::Error::last_os_error());
-            }
-            if count as usize > buffer.len() {
-                return Err(io::Error::other("Invalid reparse metadata length"));
-            }
-            let mut hash = DefaultHasher::new();
-            hash.write(&buffer[..count as usize]);
-            hash.finish()
-        } else {
-            0
-        }; // Cloud/provider state is not a namespace-link target.
+                // Read bounded opaque metadata without traversing the link target.
+                let mut buffer = vec![0u8; MAXIMUM_REPARSE_DATA_BUFFER_SIZE as usize];
+                let mut count = 0u32;
+                if unsafe {
+                    DeviceIoControl(
+                        raw,
+                        FSCTL_GET_REPARSE_POINT,
+                        ptr::null(),
+                        0,
+                        buffer.as_mut_ptr().cast(),
+                        buffer.len() as u32,
+                        &mut count,
+                        ptr::null_mut(),
+                    )
+                } == 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+                if count as usize > buffer.len() {
+                    return Err(io::Error::other("Invalid reparse metadata length"));
+                }
+                let mut hash = DefaultHasher::new();
+                hash.write(&buffer[..count as usize]);
+                hash.finish()
+            } else {
+                0
+            }; // Cloud/provider state is not a namespace-link target.
         Some((tag.ReparseTag, hash))
     } else {
         None

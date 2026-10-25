@@ -12,6 +12,7 @@ use worker::{ColumnService, Submission, ViewInput, ViewOutput};
 /// invalidate the very folder values being presented. Explicit refresh renews it.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(super) struct EntryRevision {
+    availability: foldex_fs::capabilities::Availability,
     is_dir: bool,
     symlink: bool,
     hidden: bool,
@@ -23,6 +24,7 @@ pub(super) struct EntryRevision {
 impl EntryRevision {
     pub(super) fn of(entry: &Entry) -> Self {
         Self {
+            availability: entry.availability,
             is_dir: entry.is_dir,
             symlink: entry.symlink,
             hidden: entry.hidden,

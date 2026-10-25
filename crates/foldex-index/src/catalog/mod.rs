@@ -100,13 +100,14 @@ impl Catalog {
             self.prepare_name(&entry.name.to_string_lossy());
             self.push_named(
                 format::Metadata {
+                    availability: entry.capabilities().availability(),
                     size: if entry.is_dir() { 0 } else { entry.size },
                     modified_secs: entry.modified_secs,
                     created_secs: entry.created_secs,
                     accessed_secs: entry.accessed_secs,
                     is_dir: entry.is_dir(),
                     hidden: entry.is_hidden(),
-                    symlink: entry.is_reparse(),
+                    symlink: entry.is_opaque(),
                 },
                 entry.name.as_encoded_bytes(),
                 &parent,
@@ -452,6 +453,10 @@ impl Catalog {
             .map_err(|_| Error::InvalidIndex("catalog lowercase is not UTF-8".into()))?;
         let is_dir = record.flags & 1 != 0;
         Ok(IndexRow {
+            availability: foldex_fs::capabilities::Availability::from_code(
+                ((record.flags >> 4) & 7) as u8,
+            )
+            .ok_or_else(|| Error::InvalidIndex("invalid availability".into()))?,
             id: hit.id,
             path: scope.join(&relative_path),
             relative_path,

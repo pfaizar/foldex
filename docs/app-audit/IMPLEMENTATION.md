@@ -13,7 +13,7 @@ Each stage receives a focused implementation, edge-case tests, a diff review, an
 | 5 | Complete large listings and predictable deep paging | Implemented and reviewed; integrated benchmarks pending |
 | 6 | Structured search and saved collections | Complete; reviewed; 627 applicable app tests pass |
 | 7 | Accessible virtual file listings | Complete; reviewed; 630 applicable app tests pass |
-| 8 | Shared cloud-aware filesystem capabilities | Pending |
+| 8 | Shared cloud-aware filesystem capabilities | Complete; reviewed; 630 applicable app tests pass |
 
 The implementation must preserve raw file identities, bounded worker and memory policies, latest-request cancellation, generation-pinned selections, native conflict handling, protected undo, and atomic settings writes. Tests cover failure and recovery paths as well as successful actions.
 
@@ -108,3 +108,15 @@ Assistive actions focus the existing keyboard composite, toggle selection, revea
 Tests verify names, metadata, selected state, active descendant, valid single-parent ancestry, bounded semantics for 10,000 rows, raw-name collisions, reordering, offscreen focus/reveal, keyboard/custom activation, stale-result rejection and repeated render passes. Review caught an intermediate generic container in egui's parent hierarchy and clipped overscan bounds; the tests now validate actual ancestry and expose only intersecting rows.
 
 Validation: **630 applicable app tests passed**, Windows GNU compilation passed, and formatting/diff checks passed. Actual Narrator/NVDA behavior and provider integration still need manual Windows acceptance; headless tree/action tests do not establish spoken output quality.
+
+## Stage 8: shared filesystem capabilities
+
+One metadata policy now distinguishes name-surrogate links/junctions, recognized cloud tags, hydrated content, offline/recall-required content, and unknown reparse items. Directory enumeration uses metadata capabilities separately from content reads. Known cloud directories can expose metadata without treating every reparse point as a link; opaque and recall-on-open directories remain closed. Background content is limited to fixed local drives. Network/removable browsing and explicit Shell Open remain available, while background preview/extraction stays conservative.
+
+Windows batches carry reparse tags through extended directory information; unsupported index/listing providers fall back to the existing standard reader with metadata-only tag checks for reparse entries. Ordinary listings and index walks share that reader/classification. Availability survives ordinary snapshots, native and legacy catalog rows, deep pages and cursors, and appears in row tooltips, accessibility descriptions and Inspector metadata. Native manifest/row formats advance to v8/v6; disposable legacy caches advance to v3. Verified obsolete legacy generations remain reclaimable.
+
+Inspector and preview workers check ancestors and content availability, and use no-follow/no-recall file-open flags. Online-only selections show metadata and an explicit Open action. Thumbnail factories use cache-only requests for recall-required items and allow configured extraction for hydrated local cloud files. Folder statistics use the same tag policy and count cached logical sizes of online/offline files without reading contents; inaccessible directories still report partial totals. Undo retains its existing identity, opaque-link hash and protected-journal checks while sharing name-surrogate classification.
+
+Review additionally protected shared catalogs from conflating differently cased roots in Windows case-sensitive directories: differently spelled aliases must have matching native directory IDs before sharing. Source-pinned readers receive the same check. Full relative-path predicates now include the filename as well as its parent. Resource accounting includes native reader buffers; a pressure-result test now waits for asynchronous descriptor retirement as well as zero charged model bytes. Special-file preview guards remain in place.
+
+Validation includes the complete portable app suite, **126 portable core/index/filesystem/asset/statistics tests**, and Windows GNU application/library test-source compilation. New tests cover cloud tag variants, recall flags, opaque/unknown tags, locality policy, native batch tag retention, directory identity, offline preview suppression, and availability across all query backends. Native provider behavior (including actual OneDrive hydration callbacks) and Narrator/NVDA remain manual acceptance work; classification tests and cross-compilation do not prove provider behavior.

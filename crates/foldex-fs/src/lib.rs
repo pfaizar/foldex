@@ -5,6 +5,7 @@ use std::{
     path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
+pub mod capabilities;
 mod parallel;
 mod queue;
 #[cfg(windows)]
@@ -16,6 +17,7 @@ pub const BUFFER_BYTES: usize = 64 * 1024;
 pub struct Entry {
     pub name: OsString,
     pub attributes: u32,
+    pub reparse_tag: Option<u32>,
     pub size: u64,
     pub modified_secs: i64,
     pub created_secs: Option<i64>,
@@ -28,6 +30,12 @@ impl Entry {
     }
     pub fn is_reparse(&self) -> bool {
         self.attributes & 0x400 != 0
+    }
+    pub fn capabilities(&self) -> capabilities::Capabilities {
+        capabilities::Capabilities::new(self.attributes, self.reparse_tag)
+    }
+    pub fn is_opaque(&self) -> bool {
+        self.capabilities().redirects() || self.capabilities().unknown_reparse()
     }
     pub fn is_hidden(&self) -> bool {
         self.attributes & 0x2 != 0
@@ -56,6 +64,7 @@ impl Entry {
             Ok(Self {
                 name,
                 attributes,
+                reparse_tag: metadata.is_symlink().then_some(0xa000_000c),
                 size: metadata.len(),
                 modified_secs: metadata.modified().map(unix_secs).unwrap_or(0),
                 created_secs: metadata.created().ok().map(unix_secs),
@@ -68,7 +77,7 @@ impl Entry {
     fn from_std(entry: fs::DirEntry) -> Self {
         let name = entry.file_name();
         let metadata = entry.metadata().ok();
-        let fallback = if metadata.is_none() {
+        let _fallback = if metadata.is_none() {
             entry.file_type().ok()
         } else {
             None
@@ -78,8 +87,8 @@ impl Entry {
             use std::os::windows::fs::MetadataExt;
             metadata.as_ref().map_or_else(
                 || {
-                    u32::from(fallback.is_some_and(|kind| kind.is_dir())) * 0x10
-                        | u32::from(fallback.is_some_and(|kind| kind.is_symlink())) * 0x400
+                    u32::from(_fallback.is_some_and(|kind| kind.is_dir())) * 0x10
+                        | u32::from(_fallback.is_some_and(|kind| kind.is_symlink())) * 0x400
                 },
                 |metadata| metadata.file_attributes(),
             )
@@ -93,9 +102,20 @@ impl Entry {
                     .is_some_and(|metadata| metadata.is_symlink()),
             ) * 0x400
             | u32::from(name.as_encoded_bytes().starts_with(b".")) * 0x2;
+        #[cfg(windows)]
+        let reparse_tag = if attributes & capabilities::REPARSE != 0 {
+            windows::probe(&entry.path())
+                .ok()
+                .and_then(|c| c.reparse_tag)
+        } else {
+            None
+        };
+        #[cfg(not(windows))]
+        let reparse_tag = (attributes & capabilities::REPARSE != 0).then_some(0xa000_000c);
         Self {
             name,
             attributes,
+            reparse_tag,
             size: metadata.as_ref().map_or(0, |metadata| metadata.len()),
             modified_secs: metadata
                 .as_ref()
@@ -160,22 +180,10 @@ impl ReadDir {
             Err(error) if matches!(error.raw_os_error(), Some(1 | 50 | 87 | 124)) => {}
             Err(error) => return Err(error),
         }
-        if no_follow
-            && fs::symlink_metadata(path).is_ok_and(|metadata| {
-                #[cfg(windows)]
-                {
-                    use std::os::windows::fs::MetadataExt;
-                    metadata.file_attributes() & 0x400 != 0
-                }
-                #[cfg(not(windows))]
-                {
-                    metadata.is_symlink()
-                }
-            })
-        {
+        if no_follow && !capabilities::probe(path)?.can_enumerate() {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
-                "Reparse directory excluded",
+                "Opaque or recall-on-open directory excluded",
             ));
         }
         Self::standard(path)

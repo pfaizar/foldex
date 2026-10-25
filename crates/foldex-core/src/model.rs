@@ -16,6 +16,7 @@ static NEXT_SNAPSHOT: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
+    pub availability: foldex_fs::capabilities::Availability,
     /// Display-only Unicode text. Use `raw_name` or `path` for filesystem actions.
     pub name: String,
     pub raw_name: OsString,
@@ -55,6 +56,7 @@ impl Entry {
             (lower != name).then(|| lower.into_boxed_str())
         };
         Self {
+            availability: Default::default(),
             hidden: name.starts_with('.'),
             name,
             raw_name,

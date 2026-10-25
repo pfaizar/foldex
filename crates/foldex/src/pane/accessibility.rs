@@ -182,7 +182,7 @@ impl Pane {
                             format_date(entry.modified_secs)
                         };
                         node.set_description(format!(
-                            "{}, {}. Modified {}. {}{}",
+                            "{}, {}. Modified {}. {}{}{}",
                             parent.display(),
                             if entry.is_dir {
                                 "Folder".into()
@@ -197,7 +197,8 @@ impl Pane {
                             },
                             modified,
                             if entry.hidden { "Hidden. " } else { "" },
-                            if entry.symlink { "Link. " } else { "" }
+                            if entry.symlink { "Link. " } else { "" },
+                            entry.availability.label()
                         ));
                         node.set_keyboard_shortcut(
                             "Enter opens; Space selects; Shift+F10 opens the context menu",

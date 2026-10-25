@@ -228,7 +228,7 @@ impl NativeIndexBuilder {
             for entry in &entries[..added] {
                 status.folders += u64::from(entry.is_dir());
                 status.files += u64::from(!entry.is_dir());
-                status.excluded_links += u64::from(entry.is_reparse());
+                status.excluded_links += u64::from(entry.is_opaque());
             }
             pending.next += added;
             remaining = remaining.saturating_sub(added);

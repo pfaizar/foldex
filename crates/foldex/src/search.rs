@@ -1099,7 +1099,7 @@ impl Context {
             boundary.directory_only != request.directory_only
                 || boundary.excluded_subtrees != request.query.conditions.excluded_subtrees
         }) || request.boundary.is_some()
-            && !crate::bookmarks::path_eq(source_root, &std::path::absolute(&request.root)?)
+            && !same_catalog_root(source_root, &std::path::absolute(&request.root)?)
         {
             return Err(foldex_index::Error::InvalidCursor);
         }
@@ -1768,6 +1768,12 @@ fn validate_ranges(ranges: &[(u32, u32)]) -> Result<usize, SelectionFailure> {
     Ok(count as usize)
 }
 
+fn same_catalog_root(left: &Path, right: &Path) -> bool {
+    left == right
+        || crate::bookmarks::path_eq(left, right)
+            && foldex_fs::capabilities::same_directory(left, right).unwrap_or(false)
+}
+
 fn scope_cache_base(base: &Path, directory_only: bool) -> PathBuf {
     if directory_only {
         base.join("directories")
@@ -2177,6 +2183,7 @@ fn snapshot<'a>(
                 row.modified_secs,
             );
             entry.relative_path = Some(row.relative_path.clone());
+            entry.availability = row.availability;
             entry.created_secs = row.created_secs;
             entry.accessed_secs = row.accessed_secs;
             entry.hidden = row.hidden;

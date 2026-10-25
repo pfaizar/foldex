@@ -32,7 +32,7 @@ workers keep browsing, icons and folder statistics out of the UI thread.
 | | What you can do |
 | :--- | :--- |
 | **A workspace that fits** | Browse with tabs and split panes. Reorder tabs or move a tab into its own window. Resize panels and keep the Inspector nearby for a closer look. |
-| **Find files in context** | Filter the current folder or search its descendants. Use fuzzy filename matching and type filters; see each result's parent path beside its name. |
+| **Find files in context** | Filter the current folder or search its descendants. Combine filename, path, size and date conditions, exclude subtrees, and save named search collections in the sidebar. |
 | **A launcher within reach** | Open apps, recent items and favorites from a global shortcut. Use Shift+Enter to reveal a file in Foldex. Type an equation to calculate, then copy the result. |
 | **A useful Home** | Pick up recent work and frequently used files. Filter Recent from the shared bottom bar and switch between detail, list, column and icon views. Keep bookmarks close and choose which sidebar sections and Places appear. |
 | **Windows doing Windows things** | Use native Properties, Folder Options, clipboard, drag and drop, New templates, compression and installed context-menu actions. Copy, move, rename and recycle with Windows conflict and progress dialogs. Browse the Recycle Bin, restore items or empty it with confirmation. Undo and redo compatible file operations. |
@@ -47,6 +47,22 @@ background workers. Large listings render visible rows rather than creating a
 widget for every file. Search publishes paged results, and caches have explicit
 limits. Foldex works locally. Installed copies keep preferences in your Windows
 user profile; portable copies keep them beside the executable.
+
+Limited directory listings offer **Load all items** through a paged catalog of
+direct children. Active search scopes share catalogs, observe external changes
+and retain selected results while unselected views update. **File Operations**
+shows queued/running work, progress, outcomes and cancellation controls.
+
+Use the search-conditions button beside the footer filter, or right-click the
+filter, to edit metadata conditions and save a collection. Collections preserve
+their scope through navigation and session restore; relative dates resolve when
+opened. Size ranges accept whole bytes and SI/binary units such as `MB` and `MiB`.
+Excluded subtrees use raw relative paths, one per line, and prune traversal.
+
+Listings expose visible file semantics to accessibility clients. Cloud files
+retain their availability state: metadata can be listed without reading file
+contents, while online-only previews require explicit **Open**. Background
+preview and thumbnail extraction remain limited to fixed local drives.
 
 ## Installation
 

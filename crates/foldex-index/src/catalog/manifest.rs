@@ -11,7 +11,7 @@ use std::{
 };
 
 const APP_ID: i64 = 0x4649_4c43;
-const FORMAT: i64 = 7;
+const FORMAT: i64 = 8;
 static NEXT: AtomicU64 = AtomicU64::new(1);
 const SCHEMA: &str = "
 CREATE TABLE manifest(single INTEGER PRIMARY KEY CHECK(single=1),schema_version INTEGER NOT NULL,
@@ -143,7 +143,7 @@ impl Manifest {
             excluded_subtrees: excluded_subtrees.to_vec(),
         };
         connection.execute(
-            "INSERT INTO manifest VALUES(1,2,?1,?2,?3,0,?4,0,0,0,0,0,0,0,?5,?5,?6,0)",
+            "INSERT INTO manifest VALUES(1,3,?1,?2,?3,0,?4,0,0,0,0,0,0,0,?5,?5,?6,0)",
             params![
                 codec::CODEC,
                 store::normalization(),

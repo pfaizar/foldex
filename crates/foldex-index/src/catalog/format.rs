@@ -3,7 +3,7 @@ use std::{fs, path::PathBuf};
 
 pub(super) const RECORD_BYTES: usize = 96;
 const HEADER_BYTES: usize = 64;
-const MAGIC: &[u8; 8] = b"FLDCAT05";
+const MAGIC: &[u8; 8] = b"FLDCAT06";
 
 /// Conservative fuzzy prefilter. ASCII membership is exact; non-ASCII hash
 /// collisions admit extra candidates. Digit counts saturate at seven.
@@ -77,6 +77,7 @@ impl Signature {
 }
 
 pub(super) struct Metadata {
+    pub availability: foldex_fs::capabilities::Availability,
     pub size: u64,
     pub modified_secs: i64,
     pub created_secs: Option<i64>,
@@ -88,6 +89,7 @@ pub(super) struct Metadata {
 impl From<&IndexRecord> for Metadata {
     fn from(record: &IndexRecord) -> Self {
         Self {
+            availability: record.availability,
             size: record.size,
             modified_secs: record.modified_secs,
             created_secs: record.created_secs,
@@ -209,7 +211,8 @@ impl Buffer {
         self.records.extend_from_slice(&record.size.to_le_bytes());
         self.records
             .extend_from_slice(&record.modified_secs.to_le_bytes());
-        let flags = u32::from(record.is_dir)
+        let flags = ((record.availability as u32) << 4)
+            | u32::from(record.is_dir)
             | (u32::from(record.hidden) << 1)
             | (u32::from(record.symlink) << 2)
             | (u32::from(substring_safe) << 3);

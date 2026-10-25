@@ -65,7 +65,7 @@ pub struct Walk {
 
 impl Walk {
     pub fn start(scope: PathBuf, options: WalkOptions) -> io::Result<Self> {
-        Self::start_with_reader(scope, options, ReaderKind::Standard)
+        Self::start_with_reader(scope, options, ReaderKind::Native)
     }
     pub fn start_with_reader(
         scope: PathBuf,
@@ -260,7 +260,7 @@ fn read_directory(
             if !entry.metadata_known {
                 batch.skipped += 1;
             }
-            if shared.options.recursive && entry.is_dir() && !entry.is_reparse() {
+            if shared.options.recursive && entry.capabilities().can_enumerate() {
                 let child = batch.parent.join(&entry.name);
                 shared
                     .queue
@@ -268,6 +268,13 @@ fn read_directory(
                     .unwrap()
                     .push(child, &shared.options.spool_root)?;
                 shared.ready.notify_one();
+            }
+            if shared.options.recursive
+                && entry.is_dir()
+                && !entry.is_opaque()
+                && !entry.capabilities().can_enumerate()
+            {
+                batch.skipped += 1;
             }
             let payload = entry.name.capacity();
             if !batch.entries.is_empty()

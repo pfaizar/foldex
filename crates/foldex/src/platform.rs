@@ -5,7 +5,7 @@
 //! preview and selecting many images cannot accumulate decoded buffers.
 
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::{self, Cursor, Read, Write},
     path::{Path, PathBuf},
     sync::{
@@ -900,17 +900,11 @@ fn validate_name(name: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn reject_reparse(metadata: &fs::Metadata) -> io::Result<()> {
-    #[cfg(windows)]
-    let is_reparse = {
-        use std::os::windows::fs::MetadataExt;
-        metadata.file_attributes() & 0x400 != 0
-    };
-    #[cfg(not(windows))]
-    let is_reparse = metadata.file_type().is_symlink();
-    if is_reparse || metadata.file_type().is_symlink() {
+fn reject_reparse(path: &Path, metadata: &fs::Metadata) -> io::Result<()> {
+    let caps = foldex_fs::capabilities::probe(path)?;
+    if caps.redirects() || caps.unknown_reparse() {
         return Err(invalid(
-            "Symbolic links and junctions are not traversed by file operations",
+            "Symbolic links, junctions and unknown reparse items are not traversed by file operations",
         ));
     }
     if !metadata.is_file() && !metadata.is_dir() {
@@ -921,7 +915,7 @@ fn reject_reparse(metadata: &fs::Metadata) -> io::Result<()> {
 
 fn ordinary_metadata(path: &Path) -> io::Result<fs::Metadata> {
     let metadata = fs::symlink_metadata(path).map_err(|error| contextual(path, error))?;
-    reject_reparse(&metadata).map_err(|error| contextual(path, error))?;
+    reject_reparse(path, &metadata).map_err(|error| contextual(path, error))?;
     Ok(metadata)
 }
 
@@ -1531,7 +1525,7 @@ pub(crate) fn atomic_save(path: &Path, bytes: &[u8]) -> io::Result<()> {
         .ok_or_else(|| invalid("Save path has no file name"))?;
     let target = parent.join(name);
     if let Ok(metadata) = fs::symlink_metadata(&target) {
-        reject_reparse(&metadata)?;
+        reject_reparse(&target, &metadata)?;
     }
     let mut temporary = None;
     for _ in 0..8 {
@@ -1572,21 +1566,30 @@ pub(crate) fn atomic_save(path: &Path, bytes: &[u8]) -> io::Result<()> {
     result.map_err(|error| contextual(path, error))
 }
 
-fn read_preview(path: &Path) -> io::Result<PreviewContent> {
+pub(crate) fn read_preview(path: &Path) -> io::Result<PreviewContent> {
     let metadata = fs::symlink_metadata(path).map_err(|error| contextual(path, error))?;
     let info = |message: String| PreviewContent::Info {
         bytes: metadata.len(),
         message,
     };
-    if reject_reparse(&metadata).is_err() {
+    if (!metadata.is_file() && !metadata.is_dir())
+        || foldex_fs::capabilities::background_path(path).is_err()
+    {
         return Ok(info(
-            "Link or special item. Open it with its associated app to inspect it.".into(),
+            "Open this item with its associated app to view its contents.".into(),
         ));
     }
     if metadata.is_dir() {
         return Ok(info("Folder. Open to browse its contents.".into()));
     }
-    let mut file = File::open(path).map_err(|error| contextual(path, error))?;
+    let caps = foldex_fs::capabilities::background_path(path)?;
+    if !caps.can_read_content() {
+        return Ok(info(
+            "Online-only or unavailable content. Open explicitly to download or view it.".into(),
+        ));
+    }
+    let mut file = foldex_fs::capabilities::open_background_content(path)
+        .map_err(|error| contextual(path, error))?;
     let mut bytes = Vec::with_capacity((metadata.len() as usize).min(TEXT_LIMIT + 4));
     Read::by_ref(&mut file)
         .take((TEXT_LIMIT + 4) as u64)

@@ -148,6 +148,7 @@ pub struct BuildProgress {
 
 #[derive(Clone, Debug)]
 pub struct IndexRecord {
+    pub availability: foldex_fs::capabilities::Availability,
     pub relative_path: PathBuf,
     pub raw_name: OsString,
     pub name: String,
@@ -176,6 +177,7 @@ impl IndexRecord {
         let lowercase = name.to_lowercase();
         let hidden = name.starts_with('.');
         Ok(Self {
+            availability: Default::default(),
             relative_path,
             raw_name,
             name,
@@ -199,6 +201,7 @@ impl IndexRecord {
 
 #[derive(Clone, Debug)]
 pub struct IndexRow {
+    pub availability: foldex_fs::capabilities::Availability,
     pub id: u64,
     pub path: PathBuf,
     pub relative_path: PathBuf,

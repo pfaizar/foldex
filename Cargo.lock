@@ -1105,6 +1105,7 @@ dependencies = [
  "foldex-assets",
  "foldex-core",
  "foldex-folder-stats",
+ "foldex-fs",
  "foldex-index",
  "foldex-match",
  "foldex-query",
@@ -1127,6 +1128,7 @@ dependencies = [
 name = "foldex-assets"
 version = "0.1.2"
 dependencies = [
+ "foldex-fs",
  "windows-sys 0.61.2",
 ]
 
@@ -1134,6 +1136,7 @@ dependencies = [
 name = "foldex-core"
 version = "0.1.0"
 dependencies = [
+ "foldex-fs",
  "foldex-match",
  "foldex-query",
  "serde",
@@ -1145,6 +1148,7 @@ dependencies = [
 name = "foldex-folder-stats"
 version = "0.1.2"
 dependencies = [
+ "foldex-fs",
  "windows-sys 0.61.2",
 ]
 

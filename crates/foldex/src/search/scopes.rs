@@ -523,7 +523,7 @@ impl Scopes {
         if let Some(scope) = self.values.iter_mut().find(|scope| {
             scope.exclusions == request.query.conditions.excluded_subtrees
                 && scope.directory_only == request.directory_only
-                && crate::bookmarks::path_eq(&scope.root, &request.root)
+                && same_catalog_root(&scope.root, &request.root)
         }) {
             if scope.catalog.borrow().backend.is_none() {
                 scope.cancel = Cancellation::new();

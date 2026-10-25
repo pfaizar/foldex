@@ -855,6 +855,7 @@ impl Pane {
                                     }
                                 } else {
                                     ui.label(e.path(s).to_string_lossy());
+                                    ui.label(e.availability.label());
                                 }
                             });
                         }

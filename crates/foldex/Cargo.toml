@@ -15,6 +15,8 @@ renderer-wgpu = ["eframe/wgpu_no_default_features", "dep:wgpu"]
 renderer-glow = ["eframe/glow"]
 
 [dependencies]
+foldex-fs = { path = "../foldex-fs" }
+
 foldex-query = { path = "../foldex-query" }
 foldex-core = { path = "../foldex-core" }
 foldex-ui = { path = "../foldex-ui" }

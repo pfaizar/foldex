@@ -1977,7 +1977,12 @@ mod tests {
         drop(second_snapshot);
         browser.cancel_navigation();
         let deadline = Instant::now() + Duration::from_secs(10);
-        while engine.managed_bytes() != 0 {
+        // A zero-entry pressure result can carry no model charge. Wait for
+        // cancellation to retire its descriptor as well as its reservations.
+        while engine.managed_bytes() != 0
+            || first_weak.upgrade().is_some()
+            || second_weak.upgrade().is_some()
+        {
             assert!(
                 Instant::now() < deadline,
                 "unpinned reservations were retained"

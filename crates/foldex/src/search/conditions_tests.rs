@@ -11,7 +11,7 @@ fn structured_conditions_agree_in_memory_native_and_legacy_with_deep_cursors() {
         LegacyBuilder::create(&fixture.cache().join("legacy"), &fixture.root(), &cancel).unwrap();
     let mut entries = Vec::new();
     for first in (0..4000).step_by(128) {
-        let records = (first..(first + 128).min(4000))
+        let mut records = (first..(first + 128).min(4000))
             .map(|i| {
                 let parent = if i % 3 == 0 { "build" } else { "docs/sub" };
                 IndexRecord::new(
@@ -23,6 +23,12 @@ fn structured_conditions_agree_in_memory_native_and_legacy_with_deep_cursors() {
                 .unwrap()
             })
             .collect::<Vec<_>>();
+        for (offset, record) in records.iter_mut().enumerate() {
+            record.availability = foldex_fs::capabilities::Availability::from_code(
+                ((first as usize + offset) % 5) as u8,
+            )
+            .unwrap();
+        }
         for record in &records {
             let mut entry = Entry::from_name(
                 record.raw_name.clone(),
@@ -30,6 +36,7 @@ fn structured_conditions_agree_in_memory_native_and_legacy_with_deep_cursors() {
                 record.size,
                 record.modified_secs,
             );
+            entry.availability = record.availability;
             entry.relative_path = Some(record.relative_path.clone());
             entries.push(entry);
         }
@@ -75,6 +82,19 @@ fn structured_conditions_agree_in_memory_native_and_legacy_with_deep_cursors() {
                 let b = legacy.query(&spec, offset, 100, &cancel).unwrap();
                 assert_eq!(a.total, Some(expected.len() as u64));
                 assert_eq!(b.total, a.total);
+                for row in a.rows.iter().chain(b.rows.iter()) {
+                    let number = row
+                        .name
+                        .trim_start_matches("report")
+                        .trim_end_matches(".txt")
+                        .parse::<usize>()
+                        .unwrap();
+                    assert_eq!(
+                        row.availability,
+                        foldex_fs::capabilities::Availability::from_code((number % 5) as u8)
+                            .unwrap()
+                    );
+                }
                 let end = expected.len().min(offset as usize + a.rows.len());
                 assert_eq!(
                     a.rows
@@ -113,6 +133,15 @@ fn structured_conditions_agree_in_memory_native_and_legacy_with_deep_cursors() {
             }
         }
     }
+    let spec = QuerySpec {
+        conditions: foldex_query::Conditions {
+            path_contains: "report1001".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    assert_eq!(native.query(&spec, 0, 100, &cancel).unwrap().total, Some(1));
+    assert_eq!(legacy.query(&spec, 0, 100, &cancel).unwrap().total, Some(1));
 }
 
 #[test]

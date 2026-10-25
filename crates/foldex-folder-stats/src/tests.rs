@@ -717,7 +717,7 @@ fn generated_junction_and_its_descendant_root_are_never_followed() {
 
 #[cfg(windows)]
 #[test]
-fn offline_file_is_counted_as_an_exclusion_without_reading_its_contents() {
+fn offline_file_contributes_cached_logical_size_without_reading_its_contents() {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::*;
     let fixture = Fixture::new();
@@ -736,9 +736,9 @@ fn offline_file_is_counted_as_an_exclusion_without_reading_its_contents() {
     let service = FolderStatsService::new(Arc::new(|| {})).unwrap();
     retry(|| service.set_requests(1, 1, &request(&root)));
     let result = receive_final(&service, 1, 1);
-    assert_eq!(result.stats.state, State::Partial);
-    assert_eq!(result.stats.issues.skipped_offline, 1);
-    assert_eq!((result.stats.files, result.stats.bytes), (1, 39));
+    assert_eq!(result.stats.state, State::Complete);
+    assert_eq!(result.stats.issues.skipped_offline, 0);
+    assert_eq!((result.stats.files, result.stats.bytes), (2, 4135));
     join(service);
     assert_ne!(unsafe { SetFileAttributesW(wide.as_ptr(), before) }, 0);
 }

@@ -83,7 +83,7 @@ fn append(
     for entry in entries {
         status.files += u64::from(!entry.is_dir());
         status.folders += u64::from(entry.is_dir());
-        status.excluded_links += u64::from(entry.is_reparse());
+        status.excluded_links += u64::from(entry.is_opaque());
     }
     Ok(())
 }
@@ -143,7 +143,7 @@ impl NativeIndex {
         for path in ancestors {
             cancel.check()?;
             let entry = metadata(&scope, &path, false, &mut metrics)?.unwrap();
-            if !entry.is_dir() || entry.is_reparse() {
+            if !entry.capabilities().can_enumerate() {
                 return Err(Error::WrongMode);
             }
             parent_metadata.insert(path, entry);
@@ -250,7 +250,7 @@ impl NativeIndex {
         }
         for (relative, entry) in replacements {
             let Some(entry) = entry else { continue };
-            let descend = entry.is_dir() && !entry.is_reparse() && !options.directory_only;
+            let descend = entry.is_dir() && !entry.is_opaque() && !options.directory_only;
             append(
                 &mut index,
                 relative.parent().unwrap_or(Path::new("")),

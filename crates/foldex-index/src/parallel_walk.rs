@@ -108,7 +108,8 @@ impl IndexBuilder {
                 entry.modified_secs,
             )?;
             record.hidden = entry.is_hidden();
-            record.symlink = entry.is_reparse();
+            record.availability = entry.capabilities().availability();
+            record.symlink = entry.is_opaque();
             let added = record.heap_bytes();
             if !batch.is_empty() && bytes.saturating_add(added) > MAX_PAGE_BYTES {
                 self.store_batch(&batch, &Cancellation::new(), false)?;

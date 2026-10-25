@@ -103,7 +103,8 @@ impl MatchPlan {
         rank: bool,
     ) -> Result<Option<Option<i32>>> {
         if !self.conditions.is_empty() {
-            let path = std::path::PathBuf::from(codec::decode(record.path())?);
+            let path = std::path::PathBuf::from(codec::decode(record.path())?)
+                .join(codec::decode(record.name())?);
             if !self
                 .conditions
                 .matches(&path, record.flags & 1 != 0, record.size, record.modified)

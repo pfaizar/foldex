@@ -52,9 +52,6 @@ mod imp {
             WindowsProgramming::{DRIVE_FIXED, DRIVE_RAMDISK},
         },
     };
-    const OFFLINE: u32 = FILE_ATTRIBUTE_OFFLINE
-        | FILE_ATTRIBUTE_RECALL_ON_OPEN
-        | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS;
     pub(crate) struct Reader {
         guard: OwnedHandle,
         buffer: Box<[u64; 512]>,
@@ -166,18 +163,30 @@ mod imp {
                     },
                 });
             }
-            if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            let caps = if attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                let ancestor = std::path::PathBuf::from(OsString::from_wide(&wide[..end]));
+                foldex_fs::capabilities::probe(&ancestor).map_err(|error| PolicyError {
+                    message: error.to_string(),
+                    issues: Issues {
+                        unreadable: 1,
+                        ..Default::default()
+                    },
+                })?
+            } else {
+                foldex_fs::capabilities::Capabilities::new(attributes, None)
+            };
+            if caps.redirects() || caps.unknown_reparse() {
                 return Err(PolicyError {
-                    message: "A reparse-point root or ancestor is excluded".into(),
+                    message: "A link or unknown reparse ancestor is excluded".into(),
                     issues: Issues {
                         skipped_reparse: 1,
                         ..Default::default()
                     },
                 });
             }
-            if attributes & OFFLINE != 0 {
+            if !caps.can_enumerate() {
                 return Err(PolicyError {
-                    message: "An offline or recall-on-access ancestor is excluded".into(),
+                    message: "A recall-on-open or unavailable ancestor is excluded".into(),
                     issues: Issues {
                         skipped_offline: 1,
                         ..Default::default()
@@ -215,23 +224,36 @@ mod imp {
                 return Err(io::Error::last_os_error());
             }
             let guard = unsafe { OwnedHandle::from_raw_handle(raw.cast()) };
-            let mut info = BY_HANDLE_FILE_INFORMATION::default();
-            if unsafe { GetFileInformationByHandle(raw, &mut info) } == 0 {
+            let mut info = FILE_ATTRIBUTE_TAG_INFO::default();
+            if unsafe {
+                GetFileInformationByHandleEx(
+                    raw,
+                    FileAttributeTagInfo,
+                    (&mut info as *mut FILE_ATTRIBUTE_TAG_INFO).cast(),
+                    std::mem::size_of_val(&info) as u32,
+                )
+            } == 0
+            {
                 return Err(io::Error::last_os_error());
             }
-            if info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            let caps = foldex_fs::capabilities::Capabilities::new(
+                info.FileAttributes,
+                (info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+                    .then_some(info.ReparseTag),
+            );
+            if caps.redirects() || caps.unknown_reparse() {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
                     Excluded::Reparse,
                 ));
             }
-            if info.dwFileAttributes & OFFLINE != 0 {
+            if !caps.can_enumerate() {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
                     Excluded::Offline,
                 ));
             }
-            if info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
+            if info.FileAttributes & FILE_ATTRIBUTE_DIRECTORY == 0 {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
                     "Expected a directory",
@@ -259,9 +281,9 @@ mod imp {
                 if self.offset.is_none() {
                     self.buffer.fill(0);
                     let class = if self.first {
-                        FileFullDirectoryRestartInfo
+                        FileIdExtdDirectoryRestartInfo
                     } else {
-                        FileFullDirectoryInfo
+                        FileIdExtdDirectoryInfo
                     };
                     self.first = false;
                     if unsafe {
@@ -285,9 +307,10 @@ mod imp {
                 }
                 let offset = self.offset.unwrap();
                 let capacity = self.buffer.len() * 8;
-                let header = std::mem::offset_of!(FILE_FULL_DIR_INFO, FileName);
+                let header = std::mem::offset_of!(FILE_ID_EXTD_DIR_INFO, FileName);
                 if offset % 8 != 0
-                    || offset.saturating_add(std::mem::size_of::<FILE_FULL_DIR_INFO>()) > capacity
+                    || offset.saturating_add(std::mem::size_of::<FILE_ID_EXTD_DIR_INFO>())
+                        > capacity
                 {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
@@ -299,7 +322,7 @@ mod imp {
                         .as_ptr()
                         .cast::<u8>()
                         .add(offset)
-                        .cast::<FILE_FULL_DIR_INFO>()
+                        .cast::<FILE_ID_EXTD_DIR_INFO>()
                 };
                 let record = unsafe { ptr::read(pointer) };
                 let length = record.FileNameLength as usize;
@@ -342,6 +365,11 @@ mod imp {
                 }
                 let attributes = record.FileAttributes;
                 let directory = attributes & FILE_ATTRIBUTE_DIRECTORY != 0;
+                let caps = foldex_fs::capabilities::Capabilities::new(
+                    attributes,
+                    (attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+                        .then_some(record.ReparsePointTag),
+                );
                 return Ok(Some(Entry {
                     name: if directory {
                         OsString::from_wide(name)
@@ -349,8 +377,8 @@ mod imp {
                         OsString::new()
                     },
                     directory,
-                    reparse: attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0,
-                    offline: attributes & OFFLINE != 0,
+                    reparse: caps.redirects() || caps.unknown_reparse(),
+                    offline: directory && !caps.can_enumerate(),
                     bytes: record.EndOfFile as u64,
                 }));
             }
@@ -362,9 +390,10 @@ mod imp {
         pub(crate) fn inject_reparse_fixture(&mut self, name: &str) {
             let wide: Vec<u16> = name.encode_utf16().collect();
             self.buffer.fill(0);
-            let record = self.buffer.as_mut_ptr().cast::<FILE_FULL_DIR_INFO>();
+            let record = self.buffer.as_mut_ptr().cast::<FILE_ID_EXTD_DIR_INFO>();
             unsafe {
                 (*record).FileAttributes = FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT;
+                (*record).ReparsePointTag = 0xa000_0003;
                 (*record).FileNameLength = (wide.len() * 2) as u32;
                 ptr::copy_nonoverlapping(
                     wide.as_ptr(),

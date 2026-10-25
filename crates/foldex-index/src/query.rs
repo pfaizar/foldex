@@ -1064,6 +1064,8 @@ fn decode_row(row: &rusqlite::Row<'_>, scope: &std::path::Path) -> Result<IndexR
     let name = raw_name.to_string_lossy().into_owned();
     let size: [u8; 8] = row.get(5)?;
     Ok(IndexRow {
+        availability: foldex_fs::capabilities::Availability::from_code(row.get(10)?)
+            .ok_or_else(|| Error::InvalidIndex("invalid availability".into()))?,
         id: row.get::<_, i64>(0)?.max(0) as u64,
         path: scope.join(&relative_path),
         relative_path,
