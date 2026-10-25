@@ -138,3 +138,59 @@ fn creation_and_access_date_order_agree_across_head_cursor_and_deep_seek() {
         }
     }
 }
+
+#[test]
+fn different_subscriber_queries_reuse_independent_heads_with_a_combined_budget() {
+    let fixture = Fixture::new();
+    let cancel = Cancellation::new();
+    let mut builder =
+        NativeIndexBuilder::create(&fixture.0.join("cache"), &fixture.0.join("scope"), &cancel)
+            .unwrap();
+    let rows = (0..256)
+        .map(|i| {
+            IndexRecord::new(format!("report{i:04}.txt").into(), false, i as u64, 100).unwrap()
+        })
+        .collect::<Vec<_>>();
+    builder.ingest_batch(&rows, &cancel).unwrap();
+    let mut index = builder.finish(true).unwrap();
+    let first = QuerySpec {
+        text: "report1".into(),
+        ..Default::default()
+    };
+    let second = QuerySpec {
+        text: "report2".into(),
+        ..Default::default()
+    };
+    let expected = index
+        .query(&first, 0, 32, &cancel)
+        .unwrap()
+        .rows
+        .iter()
+        .map(|row| row.id)
+        .collect::<Vec<_>>();
+    assert!(!index.last_query_timing().head_reused);
+    index.query(&second, 0, 32, &cancel).unwrap();
+    let returned = index.query(&first, 0, 32, &cancel).unwrap();
+    assert!(index.last_query_timing().head_reused);
+    assert_eq!(
+        returned.rows.iter().map(|row| row.id).collect::<Vec<_>>(),
+        expected
+    );
+    for query in 0..20 {
+        index
+            .query(
+                &QuerySpec {
+                    text: format!("report{query}"),
+                    ..Default::default()
+                },
+                0,
+                32,
+                &cancel,
+            )
+            .unwrap();
+        let metrics = index.metrics().unwrap();
+        assert!(metrics.rank_cache_used <= metrics.rank_cache_budget);
+    }
+    index.release_query_cache();
+    assert_eq!(index.retained_query_bytes(), 0);
+}

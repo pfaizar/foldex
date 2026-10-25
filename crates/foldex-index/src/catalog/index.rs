@@ -1,6 +1,7 @@
 use super::{Catalog, CatalogQuery, Hit, manifest::Manifest};
 use crate::{model::*, query::fingerprint};
 use std::{
+    collections::VecDeque,
     fs,
     path::Path,
     time::{Duration, Instant},
@@ -8,6 +9,7 @@ use std::{
 
 const HEAD_ROWS: usize = 1025;
 const HEAD_BYTES: usize = 2 * 1024 * 1024;
+const ARCHIVED_HEAD_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Clone, Copy, Default, Debug)]
 pub struct NativeQueryTiming {
@@ -17,6 +19,7 @@ pub struct NativeQueryTiming {
     pub cache_hits: usize,
     pub cache_misses: usize,
     pub chunks: usize,
+    pub head_reused: bool,
 }
 
 struct Head {
@@ -44,6 +47,7 @@ pub struct NativeIndex {
     // Manifest drops last: its SQLite handle protects the generation while data is in use.
     pub(super) data: Catalog,
     head: Option<Head>,
+    archived_heads: VecDeque<Head>,
     spool: Option<super::spool::Spool>,
     rows: super::rows::Rows,
     timing: NativeQueryTiming,
@@ -56,6 +60,7 @@ impl NativeIndex {
             manifest,
             data,
             head: None,
+            archived_heads: VecDeque::new(),
             spool: None,
             rows: super::rows::Rows::default(),
             timing: NativeQueryTiming::default(),
@@ -148,8 +153,29 @@ impl NativeIndex {
         )
     }
 
-    fn refresh_head(&mut self, spec: &QuerySpec, prefix: u64, cancel: &Cancellation) -> Result<()> {
+    fn refresh_head(
+        &mut self,
+        spec: &QuerySpec,
+        prefix: u64,
+        cancel: &Cancellation,
+    ) -> Result<bool> {
         let hash = fingerprint(spec, None);
+        if self.head.as_ref().is_none_or(|head| head.hash != hash) {
+            let saved = self
+                .archived_heads
+                .iter()
+                .position(|head| head.hash == hash)
+                .and_then(|index| self.archived_heads.remove(index));
+            if let Some(old) = self.head.take() {
+                self.archived_heads.push_front(old);
+            }
+            self.head = saved;
+            while self.archived_heads.len() > 4
+                || self.archived_heads.iter().map(Head::bytes).sum::<usize>() > ARCHIVED_HEAD_BYTES
+            {
+                self.archived_heads.pop_back();
+            }
+        }
         if self
             .spool
             .as_ref()
@@ -162,7 +188,7 @@ impl NativeIndex {
             .as_ref()
             .is_some_and(|head| head.hash == hash && head.prefix == prefix)
         {
-            return Ok(());
+            return Ok(true);
         }
         let old = self
             .head
@@ -209,7 +235,7 @@ impl NativeIndex {
         }
         head.keys.shrink_to_fit();
         self.head = Some(head);
-        Ok(())
+        Ok(false)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -247,7 +273,7 @@ impl NativeIndex {
         }
         self.rows.timing = super::rows::Timing::default();
         let head_started = Instant::now();
-        self.refresh_head(spec, source.entries, cancel)?;
+        let head_reused = self.refresh_head(spec, source.entries, cancel)?;
         let head_elapsed = head_started.elapsed();
         let head = self.head.as_ref().unwrap();
         let total = head.files + head.folders;
@@ -262,9 +288,7 @@ impl NativeIndex {
             } else {
                 usize::try_from(offset).ok()
             };
-            if let Some(start) = cached_start.filter(|start| {
-                *start < head.keys.len() && (head.complete() || head.keys.len() - *start >= limit)
-            }) {
+            if let Some(start) = cached_start.filter(|start| *start < head.keys.len()) {
                 rows = self.rows.page(
                     &self.data,
                     &head.keys[start..head.keys.len().min(start + limit)],
@@ -375,6 +399,7 @@ impl NativeIndex {
             cache_hits: self.rows.timing.hits,
             cache_misses: self.rows.timing.misses,
             chunks: self.data.shards.len(),
+            head_reused,
         };
         Ok(QueryPage {
             rows,
@@ -433,8 +458,10 @@ impl NativeIndex {
                     .spool
                     .as_ref()
                     .map_or(Ok(0), |spool| spool.cache_used())?,
-            rank_cache_budget: HEAD_BYTES + super::rows::BUDGET,
-            rank_cache_used: self.head.as_ref().map_or(0, Head::bytes) + self.rows.bytes(),
+            rank_cache_budget: HEAD_BYTES + ARCHIVED_HEAD_BYTES + super::rows::BUDGET,
+            rank_cache_used: self.head.as_ref().map_or(0, Head::bytes)
+                + self.archived_heads.iter().map(Head::bytes).sum::<usize>()
+                + self.rows.bytes(),
             sqlite_global_memory: sqlite_memory,
             database_bytes: self.data.bytes()
                 + fs::metadata(&self.status().database_path)?.len()
@@ -442,5 +469,30 @@ impl NativeIndex {
             sqlite_version: rusqlite::version().into(),
             fts5: false,
         })
+    }
+
+    /// Query-key/decoded-row allocations, including a conservative spool-cache
+    /// allowance. Immutable descriptors and ingestion have separate bounds.
+    pub fn retained_query_bytes(&self) -> usize {
+        self.head.as_ref().map_or(0, Head::bytes)
+            + self.archived_heads.iter().map(Head::bytes).sum::<usize>()
+            + self.rows.bytes()
+            + self.spool.as_ref().map_or(0, |_| super::spool::CACHE_BYTES)
+    }
+    pub fn cached_window(&self, spec: &QuerySpec, prefix: u64, offset: usize, size: usize) -> bool {
+        let hash = fingerprint(spec, None);
+        self.head.iter().chain(&self.archived_heads).any(|head| {
+            head.hash == hash
+                && head.prefix == prefix
+                && (head.complete() || offset.saturating_add(size) <= head.keys.len())
+        })
+    }
+    pub fn release_query_cache(&mut self) {
+        let baseline = self.rows.ordered_baseline;
+        self.head = None;
+        self.archived_heads.clear();
+        self.spool = None;
+        self.rows = super::rows::Rows::default();
+        self.rows.ordered_baseline = baseline;
     }
 }

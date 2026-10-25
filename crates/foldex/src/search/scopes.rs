@@ -256,6 +256,43 @@ mod tests {
             12
         );
         assert!(backends.iter().all(|backend| backend.status().files == 1));
+        let generations = backends
+            .iter()
+            .map(|backend| backend.status().generation)
+            .collect::<Vec<_>>();
+        for backend in &mut backends {
+            backend
+                .query(
+                    &QuerySpec::default(),
+                    0,
+                    PAGE_ROWS,
+                    &Cancellation::new(),
+                    None,
+                )
+                .unwrap();
+        }
+        assert!(
+            backends
+                .iter()
+                .map(Backend::retained_query_bytes)
+                .sum::<usize>()
+                > 0
+        );
+        scopes.trim_query_caches(0);
+        assert_eq!(
+            backends
+                .iter()
+                .map(Backend::retained_query_bytes)
+                .sum::<usize>(),
+            0
+        );
+        assert_eq!(
+            backends
+                .iter()
+                .map(|backend| backend.status().generation)
+                .collect::<Vec<_>>(),
+            generations
+        );
     }
 
     #[test]
@@ -361,6 +398,7 @@ impl Scopes {
             backend: Some(backend),
             stale: false,
             last_status,
+            last_query: Instant::now(),
         }));
         let now = Instant::now();
         self.values.push(Scope {
@@ -594,5 +632,34 @@ impl Scopes {
                     .map(Backend::database_path)
             })
             .collect()
+    }
+    pub fn trim_query_caches(&mut self, budget: usize) {
+        let mut usage = self
+            .values
+            .iter()
+            .enumerate()
+            .map(|(index, scope)| {
+                let catalog = scope.catalog.borrow();
+                (
+                    index,
+                    catalog.last_query,
+                    catalog
+                        .backend
+                        .as_ref()
+                        .map_or(0, Backend::retained_query_bytes),
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut total = usage.iter().map(|(_, _, bytes)| *bytes).sum::<usize>();
+        usage.sort_unstable_by_key(|(_, used, _)| *used);
+        for (index, _, bytes) in usage {
+            if total <= budget {
+                break;
+            }
+            if let Some(backend) = &mut self.values[index].catalog.borrow_mut().backend {
+                backend.release_query_cache();
+            }
+            total = total.saturating_sub(bytes);
+        }
     }
 }

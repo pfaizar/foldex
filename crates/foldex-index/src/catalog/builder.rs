@@ -64,7 +64,11 @@ impl NativeIndexBuilder {
             last_commit: Instant::now(),
             committed_entries: 0,
             directory_only: options.directory_only,
-            workers: std::thread::available_parallelism().map_or(1, |count| count.get().min(8)),
+            workers: if options.directory_only {
+                1
+            } else {
+                std::thread::available_parallelism().map_or(1, |count| count.get().min(8))
+            },
         })
     }
     pub fn status(&self) -> &IndexStatus {
@@ -72,6 +76,18 @@ impl NativeIndexBuilder {
     }
     pub fn ingestion_buffer_bytes(&self) -> usize {
         self.index.as_ref().unwrap().ingestion_buffer_bytes()
+    }
+    pub fn retained_query_bytes(&self) -> usize {
+        self.index.as_ref().unwrap().retained_query_bytes()
+    }
+    pub fn cached_window(&self, spec: &QuerySpec, prefix: u64, offset: usize, size: usize) -> bool {
+        self.index
+            .as_ref()
+            .unwrap()
+            .cached_window(spec, prefix, offset, size)
+    }
+    pub fn release_query_cache(&mut self) {
+        self.index.as_mut().unwrap().release_query_cache();
     }
     pub fn set_scan_workers(&mut self, workers: usize) -> Result<()> {
         if self.mode != Mode::None {

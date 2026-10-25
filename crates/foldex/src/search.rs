@@ -19,6 +19,7 @@ use std::{
 };
 #[cfg(test)]
 pub(crate) mod live_tests;
+mod paging;
 mod scopes;
 
 const MAX_CLIENTS: usize = 4096;
@@ -32,6 +33,7 @@ pub(crate) const WINDOW_ROWS: usize = WINDOW_PAGES * PAGE_ROWS;
 pub(crate) const WINDOW_LEAD_ROWS: usize = PAGE_ROWS / 2;
 const REFRESH_INTERVAL: Duration = Duration::from_millis(150);
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(80);
+const QUERY_CACHE_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_ACTION_PATHS: usize = 4096;
 const MAX_ACTION_BYTES: usize = 4 * 1024 * 1024;
 type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -325,6 +327,10 @@ impl Shared {
         interrupt.cancel();
         *interrupt = Cancellation::new();
         drop(interrupt);
+        self.work_ready();
+    }
+
+    fn work_ready(&self) {
         let mut changed = lock(&self.changed);
         *changed = changed.wrapping_add(1);
         self.ready.notify_one();
@@ -728,9 +734,48 @@ struct SharedCatalog {
     backend: Option<Backend>,
     stale: bool,
     last_status: IndexStatus,
+    last_query: Instant,
 }
 
 impl Backend {
+    fn cached_window(&self, spec: &QuerySpec, prefix: u64, start: usize) -> bool {
+        match self {
+            Self::Building(index) => index.cached_window(spec, prefix, start, WINDOW_ROWS),
+            Self::Cached(index) | Self::Complete(index) => {
+                index.cached_window(spec, prefix, start, WINDOW_ROWS)
+            }
+            Self::Shared(catalog) => catalog
+                .borrow()
+                .backend
+                .as_ref()
+                .is_some_and(|backend| backend.cached_window(spec, prefix, start)),
+            Self::Legacy(_) => false,
+        }
+    }
+    fn retained_query_bytes(&self) -> usize {
+        match self {
+            Self::Building(index) => index.retained_query_bytes(),
+            Self::Cached(index) | Self::Complete(index) => index.retained_query_bytes(),
+            Self::Shared(catalog) => catalog
+                .borrow()
+                .backend
+                .as_ref()
+                .map_or(0, Self::retained_query_bytes),
+            Self::Legacy(_) => 0,
+        }
+    }
+    fn release_query_cache(&mut self) {
+        match self {
+            Self::Building(index) => index.release_query_cache(),
+            Self::Cached(index) | Self::Complete(index) => index.release_query_cache(),
+            Self::Shared(catalog) => {
+                if let Some(index) = &mut catalog.borrow_mut().backend {
+                    index.release_query_cache();
+                }
+            }
+            Self::Legacy(_) => {}
+        }
+    }
     fn database_path(&self) -> PathBuf {
         match self {
             Self::Building(builder) => builder.status().database_path.clone(),
@@ -792,6 +837,27 @@ impl Backend {
             Index::open_database(path).map(Self::Legacy)
         }
     }
+    fn checkpoint_status(&mut self) -> foldex_index::Result<Option<IndexStatus>> {
+        match self {
+            Self::Building(builder) => builder.checkpoint().map(|progress| Some(progress.status)),
+            Self::Complete(index) | Self::Cached(index) => Ok(Some(index.status().clone())),
+            Self::Legacy(_) => Ok(None),
+            Self::Shared(catalog) => {
+                let mut catalog = catalog.borrow_mut();
+                let stale = catalog.stale;
+                let mut status = catalog
+                    .backend
+                    .as_mut()
+                    .ok_or_else(|| io::Error::other("Search scope is unavailable"))?
+                    .checkpoint_status()?;
+                if let Some(status) = &mut status {
+                    status.from_cache |= stale;
+                }
+                Ok(status)
+            }
+        }
+    }
+
     fn query(
         &mut self,
         spec: &QuerySpec,
@@ -802,6 +868,7 @@ impl Backend {
     ) -> foldex_index::Result<foldex_index::QueryPage> {
         if let Self::Shared(catalog) = self {
             let mut catalog = catalog.borrow_mut();
+            catalog.last_query = Instant::now();
             let mut page = catalog
                 .backend
                 .as_mut()
@@ -841,6 +908,7 @@ impl Backend {
     ) -> foldex_index::Result<foldex_index::QueryPage> {
         if let Self::Shared(catalog) = self {
             let mut catalog = catalog.borrow_mut();
+            catalog.last_query = Instant::now();
             let mut page = catalog
                 .backend
                 .as_mut()
@@ -886,6 +954,7 @@ impl Backend {
             Self::Legacy(_) => Ok(None),
             Self::Shared(catalog) => {
                 let mut catalog = catalog.borrow_mut();
+                catalog.last_query = Instant::now();
                 let mut batch = catalog
                     .backend
                     .as_mut()
@@ -937,6 +1006,8 @@ struct Context {
     last_progress: Instant,
     selection: Option<SelectionWork>,
     launcher: Option<LauncherWork>,
+    cursors: Vec<foldex_index::PageCursor>,
+    pending_page: Option<paging::Work>,
 }
 
 struct CountCache {
@@ -1095,11 +1166,26 @@ impl Context {
             last_progress: Instant::now(),
             selection: None,
             launcher: None,
+            cursors: Vec::new(),
+            pending_page: None,
         }
     }
 
     fn replace_request(&mut self, request: Request) {
         if self.request.id != request.id {
+            self.pending_page = None;
+            if self.request.query != request.query
+                || self.request.root != request.root
+                || request.refresh
+                || match (&self.request.boundary, &request.boundary) {
+                    (Some(a), Some(b)) => !same_result_prefix(a, b),
+                    (None, None) => false,
+                    _ => true,
+                }
+            {
+                self.cursors.clear();
+            }
+
             // Only a finished, unpinned native window can be replayed without
             // asking the backend to validate a new prefix or selection boundary.
             let replay = !self.query_dirty
@@ -1143,11 +1229,54 @@ impl Context {
         cleanup_allowed: bool,
         work_cancel: &Cancellation,
         priority_cancel: &Cancellation,
+        paging: Option<&paging::Pool>,
     ) -> foldex_index::Result<bool> {
         if work_cancel.is_cancelled() {
             return Ok(false);
         }
         if self.query_dirty {
+            if self.request.launcher.is_none()
+                && let Some(pool) = paging
+            {
+                if let Some(work) = &self.pending_page {
+                    let Some(page) = work.take() else {
+                        return Ok(false);
+                    };
+                    self.pending_page = None;
+                    self.accept_page(page?)?;
+                    return Ok(true);
+                }
+                if !self.backend.as_ref().is_some_and(Backend::legacy) {
+                    let source = self.backend.as_mut().unwrap().checkpoint_status()?.unwrap();
+                    let boundary = self.request.boundary.clone().unwrap_or(source);
+                    let cursor = self.nearby_cursor(&boundary);
+                    let spec = query_spec(&self.request.query, true);
+                    let cached = self.backend.as_ref().unwrap().cached_window(
+                        &spec,
+                        boundary.entries,
+                        self.request.start,
+                    );
+                    if !cached
+                        && (boundary.entries >= 50_000
+                            || self.request.start > 0 && cursor.is_none())
+                    {
+                        let counts = self
+                            .counts
+                            .as_ref()
+                            .filter(|cache| cache.matches(&self.request.query, &boundary))
+                            .map(|cache| (cache.kind_counts.0 as u64, cache.kind_counts.1 as u64));
+                        self.pending_page = pool.submit(
+                            boundary,
+                            spec,
+                            self.request.start,
+                            cursor,
+                            counts,
+                            &self.request.query_cancel,
+                        )?;
+                        return Ok(self.pending_page.is_some());
+                    }
+                }
+            }
             self.fetch_window(work_cancel)?;
             return Ok(true);
         }
@@ -1217,43 +1346,77 @@ impl Context {
         Ok(true)
     }
 
+    fn nearby_cursor(&self, status: &IndexStatus) -> Option<foldex_index::PageCursor> {
+        if !self
+            .window_status
+            .as_ref()
+            .is_some_and(|old| same_result_prefix(old, status))
+        {
+            return None;
+        }
+        self.cursors
+            .iter()
+            .filter(|cursor| {
+                cursor.next_offset() <= self.request.start as u64
+                    && (self.request.start as u64 - cursor.next_offset()) <= WINDOW_ROWS as u64
+            })
+            .max_by_key(|cursor| cursor.next_offset())
+            .cloned()
+    }
+
     fn fetch_window(&mut self, cancel: &Cancellation) -> foldex_index::Result<()> {
         if let Some(explicit) = self.request.launcher {
             return self.fetch_launcher(explicit, cancel);
         }
-        let backend = self.backend.as_mut().expect("live backend");
-        // Native pages already compute exact counts while choosing their head.
-        // Carry that total on the first publication instead of temporarily
-        // advertising only the materialized window and counting again later.
-        let native = !backend.legacy();
-        let spec = query_spec(&self.request.query, native);
-        let first = backend.query(
-            &spec,
-            self.request.start as u64,
-            PAGE_ROWS,
-            cancel,
-            self.request.boundary.as_ref(),
-        )?;
-        let mut rows = first.rows;
-        let mut cursor = first.next;
-        let mut more = first.has_more;
-        let status = first.status;
+        let source = self
+            .backend
+            .as_mut()
+            .expect("live backend")
+            .checkpoint_status()?;
+        let boundary = self.request.boundary.clone().or(source);
+        let cursor = boundary
+            .as_ref()
+            .and_then(|source| self.nearby_cursor(source));
+        let backend = self.backend.as_mut().unwrap();
+        let spec = query_spec(&self.request.query, !backend.legacy());
+        let mut page = paging::collect(self.request.start, cursor, |offset, cursor, size| {
+            if cursor.is_some() {
+                backend.query_after(&spec, cursor, size, cancel, boundary.as_ref())
+            } else {
+                backend.query(&spec, offset, size, cancel, boundary.as_ref())
+            }
+        })?;
+        if self.request.query.kind != foldex_core::KindFilter::All {
+            page.kind_counts = None;
+        }
+        self.accept_page(page)
+    }
+
+    fn accept_page(&mut self, page: paging::Page) -> foldex_index::Result<()> {
+        let native = !self.backend.as_ref().is_some_and(Backend::legacy);
+        let paging::Page {
+            rows,
+            cursors,
+            total: first_total,
+            kind_counts: first_counts,
+            has_more: more,
+            status,
+        } = page;
         let kind_counts = self
             .counts
             .as_ref()
             .filter(|cache| native && cache.matches(&self.request.query, &status))
             .map(|cache| cache.kind_counts)
             .or_else(|| {
-                (native && self.request.query.kind == foldex_core::KindFilter::All)
-                    .then_some(first.kind_counts)
+                native
+                    .then_some(first_counts)
                     .flatten()
                     .and_then(|(folders, files)| Some((to_usize(folders)?, to_usize(files)?)))
             });
-        let total = first
-            .total
+        let total = first_total
             .and_then(to_usize)
             .or_else(|| kind_counts.map(|counts| filtered_total(&self.request.query, counts)));
-        let first_snapshot = snapshot(
+        let result = snapshot(
             &status.scope,
             rows.iter(),
             &status,
@@ -1265,7 +1428,7 @@ impl Context {
                 Arc::new(SearchWindow {
                     request: self.request.id,
                     start: self.request.start,
-                    snapshot: first_snapshot.clone(),
+                    snapshot: result.clone(),
                     total,
                     kind_counts,
                     has_more: more,
@@ -1274,45 +1437,7 @@ impl Context {
                 }),
             );
         }
-        let mut result = first_snapshot;
-        for _ in 1..WINDOW_PAGES {
-            if !more || cursor.is_none() {
-                break;
-            }
-            let page = backend.query_after(
-                &spec,
-                cursor.as_ref(),
-                PAGE_ROWS,
-                cancel,
-                self.request.boundary.as_ref(),
-            )?;
-            rows.extend(page.rows);
-            cursor = page.next;
-            more = page.has_more;
-        }
-        if rows.len() != result.entries.len() {
-            result = snapshot(
-                &status.scope,
-                rows.iter(),
-                &status,
-                self.request.started.elapsed(),
-            );
-            if let Some(client) = self.client.upgrade() {
-                client.window(
-                    &self.request,
-                    Arc::new(SearchWindow {
-                        request: self.request.id,
-                        start: self.request.start,
-                        snapshot: result.clone(),
-                        total,
-                        kind_counts,
-                        has_more: more,
-                        status: status.clone(),
-                        elapsed: self.request.started.elapsed(),
-                    }),
-                );
-            }
-        }
+        self.cursors = cursors;
         self.window = Some(result);
         self.window_status = Some(status.clone());
         self.window_has_more = more;
@@ -1683,6 +1808,7 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
     }
     let mut contexts = Vec::<Context>::with_capacity(8);
     let mut scopes = scopes::Scopes::new(shared.clone(), cache_base.clone());
+    let paging = paging::Pool::new(shared.clone()).ok();
     let mut cleanup = Vec::<(PathBuf, PathBuf)>::with_capacity(8);
     let mut reconciled = None;
     let mut next_context = 0usize;
@@ -1794,8 +1920,13 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
                 .request
                 .query_cancel
                 .linked(&priority_cancel);
-            match contexts[index].step(&cache_base, cleanup_allowed, &work_cancel, &priority_cancel)
-            {
+            match contexts[index].step(
+                &cache_base,
+                cleanup_allowed,
+                &work_cancel,
+                &priority_cancel,
+                paging.as_ref(),
+            ) {
                 Ok(work) => {
                     if work {
                         turns += 1;
@@ -1851,6 +1982,8 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
                         if update.refetch {
                             context.query_dirty = true;
                             context.count_dirty = false;
+                            context.pending_page = None;
+                            context.cursors.clear();
                         }
                         if let Some(client) = context.client.upgrade() {
                             client.progress(&context.request, status.clone());
@@ -1866,6 +1999,32 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
             }
         }
         did_work |= scopes.busy();
+        scopes.trim_query_caches(QUERY_CACHE_BYTES);
+        let mut pinned = contexts
+            .iter()
+            .enumerate()
+            .filter_map(|(index, context)| {
+                let backend = context.backend.as_ref()?;
+                (!matches!(backend, Backend::Shared(_))).then_some((
+                    index,
+                    context.last_window,
+                    backend.retained_query_bytes(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        let mut pinned_bytes = pinned.iter().map(|(_, _, bytes)| *bytes).sum::<usize>();
+        pinned.sort_unstable_by_key(|(_, used, _)| *used);
+        for (index, _, bytes) in pinned {
+            if pinned_bytes <= QUERY_CACHE_BYTES {
+                break;
+            }
+            contexts[index]
+                .backend
+                .as_mut()
+                .unwrap()
+                .release_query_cache();
+            pinned_bytes = pinned_bytes.saturating_sub(bytes);
+        }
         for (cache_dir, scope) in cleanup.drain(..) {
             let mut active: Vec<_> = contexts
                 .iter()
@@ -1917,6 +2076,7 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
             cleanup.push(identity);
         }
     }
+    drop(paging);
     for (cache_dir, scope) in cleanup {
         cleanup_cache(&cache_dir, &scope, &[]);
     }
@@ -2260,7 +2420,7 @@ mod tests {
         let cancel = Cancellation::new();
         let deadline = Instant::now() + Duration::from_secs(10);
         while context
-            .step(&fixture.cache(), false, &cancel, &cancel)
+            .step(&fixture.cache(), false, &cancel, &cancel, None)
             .unwrap()
         {
             assert!(Instant::now() < deadline);

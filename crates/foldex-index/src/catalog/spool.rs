@@ -19,6 +19,7 @@ impl rusqlite::ToSql for Primary<'_> {
 
 static NEXT: AtomicU64 = AtomicU64::new(1);
 pub(super) const CACHE_BYTES: usize = 1536 * 1024;
+const FLAT_BYTES: u64 = 64 * 1024 * 1024;
 
 pub(super) struct Spool {
     connection: Option<Connection>,
@@ -68,7 +69,7 @@ impl Spool {
         )?);
         let connection = spool.connection.as_ref().unwrap();
         // This cache is thrown away on interruption/error; no recovery journal.
-        connection.execute_batch("PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; PRAGMA cache_size=-1024; PRAGMA cache_spill=ON; PRAGMA temp_store=FILE; PRAGMA temp.cache_size=-512; PRAGMA mmap_size=0; PRAGMA trusted_schema=OFF; PRAGMA threads=0;")?;
+        connection.execute_batch("PRAGMA page_size=4096; PRAGMA max_page_count=65536; PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; PRAGMA cache_size=-1024; PRAGMA cache_spill=ON; PRAGMA temp_store=FILE; PRAGMA temp.cache_size=-512; PRAGMA mmap_size=0; PRAGMA trusted_schema=OFF; PRAGMA threads=0;")?;
         let direction = if spec.descending { "DESC" } else { "ASC" };
         spool.order = format!(
             "folder DESC,rank DESC,p {direction},natural {direction},raw {direction},id {direction}"
@@ -140,6 +141,9 @@ impl Spool {
             ])?;
             Ok(())
         })?;
+        if self.total.saturating_add(added).saturating_mul(12) > FLAT_BYTES {
+            return Err(Error::InvalidIndex("ordered result cache exceeds its disk budget; narrow the query or continue with sequential pages".into()));
+        }
         drop(insert);
         cancel.check()?;
         transaction.commit()?;
