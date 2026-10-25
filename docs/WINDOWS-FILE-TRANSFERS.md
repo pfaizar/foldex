@@ -67,6 +67,35 @@ References: [SHDoDragDrop](https://learn.microsoft.com/en-us/windows/win32/api/s
 [IShellItem::BindToHandler](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-ishellitem-bindtohandler),
 [IDropTarget](https://learn.microsoft.com/en-us/windows/win32/api/oleidl/nn-oleidl-idroptarget).
 
+## Drag feedback
+
+The source initializes the Windows drag-image manager through
+`IDragSourceHelper2`. The translucent preview has a shadow, up to three stacked
+items, and a count badge for multiple selections. It uses images already in the
+Shell's memory cache and falls back to a file glyph without reading file contents
+or starting a thumbnail extractor during the drag.
+
+`IDropTargetHelper` keeps both Foldex and Explorer drag images visible over the
+window. `CFSTR_DROPDESCRIPTION` supplies the native action label: **Move to**,
+**Copy to**, or **Create link in**, followed by the destination name. Its action
+comes from the destination's negotiated Shell effect, so modifier changes and
+cross-volume defaults agree with the operation. Rejected targets show **Can't
+drop here** and have no destination highlight.
+
+Folder rows, icon tiles, sidebar folders and breadcrumb segments receive an
+accent outline and translucent fill. Pane backgrounds receive an outline only.
+The highlight is a single input-transparent, non-activating owned layered window,
+positioned from the clipped hit target with the current DPI scale. This allows it
+to update inside the native OLE loop while an originating egui frame is paused;
+it does not redraw or reenter the application's UI. It disappears on leaving a
+target, cancellation, drop and teardown. Shell interfaces are released before
+uninitializing their COM apartment.
+
+References: [IDragSourceHelper::InitializeFromBitmap](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-idragsourcehelper-initializefrombitmap),
+[IDropTargetHelper](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nn-shobjidl_core-idroptargethelper),
+[DROPDESCRIPTION](https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/ns-shlobj_core-dropdescription),
+[layered windows](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features#layered-windows).
+
 ## Broader workflow assessment
 
 The repository already implements navigation history, tabs and splits, filename
@@ -111,3 +140,19 @@ Windows desktop smoke checks:
 
 These interactive checks require a Windows desktop; cross-compilation does not
 establish visual behavior or compatibility with every third-party drop handler.
+
+Additional drag-feedback checks (details and icon views):
+
+1. Drag one item, then a multiple selection: the preview follows the cursor with
+   a shadow; multiple items have a stack and the correct count.
+2. Hover a folder row, sidebar folder, breadcrumb and inactive split pane. Check
+   that the actual destination is highlighted and named in the action label;
+   empty pane space should outline the pane rather than tint the whole listing.
+3. While hovering, press/release Ctrl, Shift and Ctrl+Shift. Check Copy, Move and
+   Create link feedback against the resulting operation. Also check the default
+   effect between different drives when available.
+4. Drag into and out of Explorer. Its drag image should remain visible and the
+   target label should update as folders change.
+5. Cancel with Escape, leave the window, and complete a drop. No highlight or
+   preview should remain, and another drag should work immediately. Check an
+   invalid destination, both color modes, and non-default display scaling.

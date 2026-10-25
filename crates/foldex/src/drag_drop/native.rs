@@ -32,6 +32,8 @@ use windows_sys::{
     core::GUID,
 };
 
+mod visuals;
+
 const IID_UNKNOWN: GUID = GUID::from_u128(0x00000000_0000_0000_c000_000000000046);
 const IID_TARGET: GUID = GUID::from_u128(0x00000122_0000_0000_c000_000000000046);
 const IID_DATA: GUID = GUID::from_u128(0x0000010e_0000_0000_c000_000000000046);
@@ -172,6 +174,8 @@ struct Session {
     data: Option<Com>,
     target: Option<(PathBuf, Com)>,
     allowed: u32,
+    image_entered: bool,
+    description: Option<(Option<PathBuf>, u32)>,
 }
 struct Shared {
     owner: HWND,
@@ -180,9 +184,10 @@ struct Shared {
     own_source: RefCell<Option<(Com, Vec<PathBuf>)>>,
     drops: RefCell<VecDeque<DropRequest>>,
     changed: Cell<bool>,
+    visuals: visuals::Feedback,
 }
 impl Shared {
-    fn path_at(&self, point: POINTL) -> Option<PathBuf> {
+    fn target_at(&self, point: POINTL) -> Option<Destination> {
         let mut client = POINT {
             x: point.x,
             y: point.y,
@@ -191,19 +196,21 @@ impl Shared {
             return None;
         }
         let scale = self.ctx.pixels_per_point();
-        destination(
+        destination_at(
             &self.ctx,
             Pos2::new(client.x as f32 / scale, client.y as f32 / scale),
         )
     }
     fn route(&self, session: &mut Session, keys: u32, point: POINTL, effect: &mut u32) -> i32 {
-        let path = self.path_at(point);
-        if session.target.as_ref().map(|(path, _)| path) != path.as_ref() {
+        let hit = self.target_at(point);
+        let path = hit.as_ref().map(|target| &target.path);
+        let changed = session.target.as_ref().map(|(path, _)| path) != path;
+        let result = if changed {
             if let Some((_, target)) = session.target.take() {
                 unsafe { (target.vtable::<TargetVtable>().leave)(target.0) };
             }
             if let (Some(path), Some(data)) = (path, session.data.as_ref()) {
-                if let Ok(target) = folder_target(&path) {
+                if let Ok(target) = folder_target(path) {
                     *effect = session.allowed;
                     let result = unsafe {
                         (target.vtable::<TargetVtable>().enter)(
@@ -211,27 +218,57 @@ impl Shared {
                         )
                     };
                     if result >= 0 {
-                        session.target = Some((path, target));
+                        session.target = Some((path.clone(), target));
                     } else {
                         *effect = DROPEFFECT_NONE;
                     }
-                    return result;
+                    result
+                } else {
+                    *effect = DROPEFFECT_NONE;
+                    0
                 }
+            } else {
+                *effect = DROPEFFECT_NONE;
+                0
             }
-        }
-        if let Some((_, target)) = &session.target {
+        } else if let Some((_, target)) = &session.target {
             *effect = session.allowed;
             unsafe { (target.vtable::<TargetVtable>().over)(target.0, keys, point, effect) }
         } else {
             *effect = DROPEFFECT_NONE;
             0
+        };
+        if result < 0 {
+            *effect = DROPEFFECT_NONE;
         }
+        let effect = *effect & (DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK);
+        if let Some(data) = &session.data {
+            let description = (path.cloned(), effect);
+            if session.description.as_ref() != Some(&description) {
+                visuals::describe(data, path.map(PathBuf::as_path), effect);
+                session.description = Some(description);
+            }
+            self.visuals.update(
+                data,
+                point,
+                effect,
+                !session.image_entered || changed,
+                hit.as_ref().filter(|_| effect != DROPEFFECT_NONE),
+                self.ctx.pixels_per_point(),
+            );
+            session.image_entered = true;
+        }
+        result
     }
     fn leave(&self) {
         let session = self.session.take();
         if let Some((_, target)) = session.target {
             unsafe { (target.vtable::<TargetVtable>().leave)(target.0) };
         }
+        if let Some(data) = &session.data {
+            visuals::clear_description(data);
+        }
+        self.visuals.leave();
         self.ctx.request_repaint();
     }
 }
@@ -344,6 +381,9 @@ unsafe extern "system" fn drop_files(
     let mut chosen = 0;
     let result = shared.route(&mut session, keys, point, &mut chosen);
     chosen &= DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
+    // A delegated Shell drop can display a conflict/progress dialog before it
+    // returns. The destination must stop looking hovered as soon as we drop.
+    shared.visuals.hide_highlight();
     unsafe {
         *effect = DROPEFFECT_NONE;
     }
@@ -351,6 +391,7 @@ unsafe extern "system" fn drop_files(
         if let Some((_, target)) = session.target.take() {
             unsafe { (target.vtable::<TargetVtable>().leave)(target.0) };
         }
+        shared.visuals.leave();
         return result;
     }
     if let Some((destination, target)) = session.target.take() {
@@ -371,6 +412,8 @@ unsafe extern "system" fn drop_files(
                 });
             }
             unsafe { (target.vtable::<TargetVtable>().leave)(target.0) };
+            // The transfer is deferred, but its native feedback must finish now.
+            shared.visuals.finish(data, point, chosen);
             shared.ctx.request_repaint();
             return 0;
         }
@@ -379,10 +422,12 @@ unsafe extern "system" fn drop_files(
         }
         let result =
             unsafe { (target.vtable::<TargetVtable>().drop)(target.0, data, keys, point, effect) };
+        shared.visuals.finish(data, point, unsafe { *effect });
         shared.changed.set(result >= 0 && unsafe { *effect } != 0);
         shared.ctx.request_repaint();
         result
     } else {
+        shared.visuals.leave();
         0
     }
 }
@@ -405,6 +450,9 @@ pub struct Native {
 }
 impl Native {
     pub fn new(owner: isize, ctx: &Context) -> io::Result<Self> {
+        if owner != 0 {
+            check(unsafe { OleInitialize(ptr::null()) })?;
+        }
         let shared = Rc::new(Shared {
             owner: owner as HWND,
             ctx: ctx.clone(),
@@ -412,17 +460,16 @@ impl Native {
             own_source: RefCell::new(None),
             drops: RefCell::new(VecDeque::new()),
             changed: Cell::new(false),
+            visuals: visuals::Feedback::new(owner as HWND),
         });
         let mut result = Self {
             shared,
             target: None,
-            initialized: false,
+            initialized: owner != 0,
         };
         if owner == 0 {
             return Ok(result);
         }
-        check(unsafe { OleInitialize(ptr::null()) })?;
-        result.initialized = true;
         let target = Com(Box::into_raw(Box::new(Target {
             vtable: &TARGET_VTABLE,
             references: AtomicU32::new(1),
@@ -438,6 +485,9 @@ impl Native {
             return Err(io::Error::other("No Windows drag window"));
         }
         let data = data_object(paths)?;
+        // The Shell displays this image and its effect text even while its
+        // modal OLE loop has suspended egui's normal rendering.
+        let _image = visuals::source_image(&data, paths, self.shared.ctx.pixels_per_point());
         let identity = data.identity()?;
         self.shared
             .own_source
@@ -471,6 +521,8 @@ impl Drop for Native {
             self.shared.leave();
             self.target.take();
         }
+        // Release all Shell helper interfaces while their STA is initialized.
+        self.shared.visuals.shutdown();
         if self.initialized {
             unsafe { OleUninitialize() };
         }

@@ -251,7 +251,7 @@ impl Pane {
             .ctx()
             .options(|options| options.input_options.max_click_dist);
         if !self.is_virtual() {
-            crate::drag_drop::target(ui, body, self.path.clone());
+            crate::drag_drop::pane_target(ui, body, self.path.clone());
         }
         if snapshot.is_none() {
             if let Some(manager) = assets.as_deref_mut() {

@@ -10,13 +10,29 @@ mod native;
 pub use native::Native;
 
 #[derive(Clone, Default)]
-struct Targets(Arc<Vec<(Rect, PathBuf)>>);
+struct Targets(Arc<Vec<Destination>>);
+
+#[derive(Clone)]
+struct Destination {
+    rect: Rect,
+    path: PathBuf,
+    accent: [u8; 3],
+    pane: bool,
+}
 
 pub fn begin_frame(ctx: &Context) {
     ctx.data_mut(|data| data.insert_temp(Id::new("file-drop-targets"), Targets::default()));
 }
 
 pub fn target(ui: &Ui, rect: Rect, path: PathBuf) {
+    register_target(ui, rect, path, false);
+}
+
+pub fn pane_target(ui: &Ui, rect: Rect, path: PathBuf) {
+    register_target(ui, rect, path, true);
+}
+
+fn register_target(ui: &Ui, rect: Rect, path: PathBuf, pane: bool) {
     let rect = rect.intersect(ui.clip_rect());
     if !ui.is_enabled() || !rect.is_positive() {
         return;
@@ -25,19 +41,29 @@ pub fn target(ui: &Ui, rect: Rect, path: PathBuf) {
         let targets = data.get_temp_mut_or_default::<Targets>(Id::new("file-drop-targets"));
         // Only visible hit targets are retained, with a fixed per-frame bound.
         if targets.0.len() < 8192 {
-            Arc::make_mut(&mut targets.0).push((rect, path));
+            let accent = ui.visuals().selection.stroke.color;
+            Arc::make_mut(&mut targets.0).push(Destination {
+                rect,
+                path,
+                accent: [accent.r(), accent.g(), accent.b()],
+                pane,
+            });
         }
     });
 }
 
 pub fn destination(ctx: &Context, position: Pos2) -> Option<PathBuf> {
+    destination_at(ctx, position).map(|target| target.path)
+}
+
+fn destination_at(ctx: &Context, position: Pos2) -> Option<Destination> {
     ctx.data(|data| {
         data.get_temp::<Targets>(Id::new("file-drop-targets"))?
             .0
             .iter()
             .rev()
-            .find(|(rect, _)| rect.contains(position))
-            .map(|(_, path)| path.clone())
+            .find(|target| target.rect.contains(position))
+            .cloned()
     })
 }
 
