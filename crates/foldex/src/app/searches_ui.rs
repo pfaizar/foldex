@@ -3,10 +3,13 @@ use crate::navigation::{Route, SearchLocation};
 
 pub(super) struct SearchEditor {
     origin: u64,
+    scope: String,
     location: SearchLocation,
     min: String,
     max: String,
     days: String,
+    after: String,
+    before: String,
     exclusions: String,
     name: String,
     error: Option<String>,
@@ -23,7 +26,16 @@ impl SearchEditor {
         };
         let c = &location.query.conditions;
         Self {
+            after: c
+                .modified_after
+                .map(foldex_query::format_utc_date)
+                .unwrap_or_default(),
+            before: c
+                .modified_before
+                .map(foldex_query::format_utc_date)
+                .unwrap_or_default(),
             origin: pane.id,
+            scope: location.scope.to_string_lossy().into_owned(),
             min: c.min_bytes.map(|v| v.to_string()).unwrap_or_default(),
             max: c.max_bytes.map(|v| v.to_string()).unwrap_or_default(),
             days: c
@@ -43,9 +55,26 @@ impl SearchEditor {
     }
     fn build(&self) -> Result<SearchLocation, String> {
         let mut location = self.location.clone();
+        if self.scope != self.location.scope.to_string_lossy() {
+            location.scope = PathBuf::from(&self.scope);
+        }
         let c = &mut location.query.conditions;
         c.min_bytes = foldex_query::parse_bytes(&self.min)?;
         c.max_bytes = foldex_query::parse_bytes(&self.max)?;
+        if self.after
+            != c.modified_after
+                .map(foldex_query::format_utc_date)
+                .unwrap_or_default()
+        {
+            c.modified_after = foldex_query::parse_utc_date(&self.after, false)?;
+        }
+        if self.before
+            != c.modified_before
+                .map(foldex_query::format_utc_date)
+                .unwrap_or_default()
+        {
+            c.modified_before = foldex_query::parse_utc_date(&self.before, true)?;
+        }
         c.modified_within_days = if self.days.trim().is_empty() {
             None
         } else {
@@ -71,7 +100,7 @@ impl SearchEditor {
 }
 impl Foldex {
     pub(super) fn open_search_editor(&mut self) {
-        if !self.pane().is_virtual() {
+        if !self.pane().is_recycle_bin() {
             self.search_editor = Some(SearchEditor::new(self.pane()));
         }
     }
@@ -83,26 +112,21 @@ impl Foldex {
         let mut action = None;
         egui::Window::new("Search conditions").id(Id::new("search-conditions"))
             .open(&mut open).resizable(true).default_width(440.0).show(ctx, |ui| {
-            ui.label(format!("In {}", editor.location.scope.display()));
-            ui.label("Filename"); ui.text_edit_singleline(&mut editor.location.query.text);
+            ui.label("Folder scope");
+            ui.add(egui::TextEdit::singleline(&mut editor.scope).char_limit(32768));
+            ui.label("Filename"); ui.add(egui::TextEdit::singleline(&mut editor.location.query.text).char_limit(1024));
             ui.checkbox(&mut editor.location.directory_only, "Direct children only");
             let c = &mut editor.location.query.conditions;
-            ui.label("Relative path contains"); ui.text_edit_singleline(&mut c.path_contains);
+            ui.label("Relative path contains"); ui.add(egui::TextEdit::singleline(&mut c.path_contains).char_limit(4096));
             ui.horizontal(|ui| { ui.label("Minimum size"); ui.text_edit_singleline(&mut editor.min); });
             ui.horizontal(|ui| { ui.label("Maximum size"); ui.text_edit_singleline(&mut editor.max); });
             ui.label("Size units: B, KB, MB, GB, KiB, MiB, GiB. Size conditions include files.");
             ui.horizontal(|ui| { ui.label("Modified in the last days"); ui.text_edit_singleline(&mut editor.days); });
-            ui.horizontal(|ui| {
-                ui.label("Modified after / before (UTC Unix seconds)");
-                for value in [&mut c.modified_after, &mut c.modified_before] {
-                    let mut enabled = value.is_some();
-                    if ui.checkbox(&mut enabled, "").changed() { *value = enabled.then_some(0); }
-                    if let Some(value) = value { ui.add(egui::DragValue::new(value)); }
-                }
-            });
+            ui.horizontal(|ui| { ui.label("Modified on or after (UTC)"); ui.add(egui::TextEdit::singleline(&mut editor.after).hint_text("YYYY-MM-DD").char_limit(10)); });
+            ui.horizontal(|ui| { ui.label("Modified on or before (UTC)"); ui.add(egui::TextEdit::singleline(&mut editor.before).hint_text("YYYY-MM-DD").char_limit(10)); });
             ui.checkbox(&mut editor.location.query.show_hidden, "Include hidden items");
             ui.label("Exclude subtrees (one raw relative path per line)");
-            ui.add(egui::TextEdit::multiline(&mut editor.exclusions).desired_rows(3));
+            ui.add(egui::TextEdit::multiline(&mut editor.exclusions).desired_rows(3).char_limit(16384));
             ui.label("Excluded folders and their descendants are omitted from traversal. Other conditions use cached metadata.");
             ui.separator();
             ui.horizontal(|ui| { ui.label("Collection name"); ui.text_edit_singleline(&mut editor.name); });
@@ -114,6 +138,15 @@ impl Foldex {
         });
         if let Some(save) = action {
             let result = editor.build().and_then(|location| {
+                if !self.tabs.iter().any(|tab| {
+                    tab.left.id == editor.origin
+                        || tab
+                            .right
+                            .as_ref()
+                            .is_some_and(|pane| pane.id == editor.origin)
+                }) {
+                    return Err("The originating pane was closed; reopen the search editor".into());
+                }
                 if save {
                     let name = editor.name.trim();
                     if name.is_empty() || name.len() > 96 {
@@ -166,6 +199,7 @@ mod tests {
         assert!(app.popup_active());
         let mut editor = app.search_editor.take().unwrap();
         editor.location.scope = root.clone();
+        editor.scope = root.to_string_lossy().into_owned();
         editor.min = "2 MiB".into();
         editor.max = "3 MB".into();
         editor.days = "7".into();
@@ -193,5 +227,10 @@ mod tests {
         assert!(matches!(app.pane().route(), Route::Search(_)));
         app.action(Action::RemoveSearch("Reports".into()));
         assert!(app.saved_searches.is_empty());
+        app.search_editor = None;
+        app.pane_mut().navigate_home(true);
+        app.open_search_editor();
+        let editor = app.search_editor.as_ref().unwrap();
+        assert!(!editor.scope.is_empty());
     }
 }

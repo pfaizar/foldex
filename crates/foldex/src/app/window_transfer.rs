@@ -14,7 +14,7 @@ use std::{
 };
 
 const VERSION: u32 = 1;
-const MAX_BYTES: usize = 256 * 1024;
+const MAX_BYTES: usize = crate::persistence::MAX_SESSION_BYTES;
 const TIMEOUT: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(30);
 
@@ -275,7 +275,7 @@ impl Ticket {
                     if bytes.len() > MAX_BYTES {
                         ticket.clean_control_files();
                         return Err(io::Error::other(
-                            "Tab state exceeds the 256 KiB transfer budget",
+                            "Tab state exceeds the 4 MiB transfer budget",
                         ));
                     }
                     if let Err(error) = write_once(&ticket.directory.join("request.json"), &bytes) {
@@ -1174,6 +1174,55 @@ mod tests {
         second.decide(Decision::Commit).unwrap();
         assert!(second.decide(Decision::Cancel).is_err());
         assert!(second.decision() == Some(Decision::Commit));
+    }
+
+    #[test]
+    fn large_saved_collection_preferences_survive_tab_handoff() {
+        let mut payload = payload();
+        for n in 0..32 {
+            payload
+                .session
+                .saved_searches
+                .push(crate::navigation::SavedSearch {
+                    name: format!("collection{n}"),
+                    location: crate::navigation::SearchLocation {
+                        scope: std::env::temp_dir(),
+                        directory_only: true,
+                        query: foldex_core::Query {
+                            conditions: foldex_query::Conditions {
+                                excluded_subtrees: (0..16)
+                                    .map(|i| {
+                                        PathBuf::from(format!(
+                                            "folder{i}/{}/{}",
+                                            "x".repeat(245),
+                                            "y".repeat(245)
+                                        ))
+                                    })
+                                    .collect(),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        },
+                    },
+                });
+        }
+        let ticket = Ticket::create(payload).unwrap();
+        let _cleanup = Cleanup(ticket.directory.clone());
+        assert!(
+            fs::metadata(ticket.directory.join("request.json"))
+                .unwrap()
+                .len()
+                > 256 * 1024
+        );
+        assert_eq!(
+            read_startup(&args(&ticket))
+                .unwrap()
+                .unwrap()
+                .session
+                .saved_searches
+                .len(),
+            32
+        );
     }
 
     #[test]

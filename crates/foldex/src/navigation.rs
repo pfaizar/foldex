@@ -21,7 +21,11 @@ pub struct SearchLocation {
 }
 impl SearchLocation {
     pub fn validate(&self) -> Result<(), String> {
-        if !self.scope.is_absolute() || self.query.text.len() > 1024 {
+        if !self.scope.is_absolute()
+            || self.scope.as_os_str().len() > 128 * 1024
+            || self.scope.as_os_str().as_encoded_bytes().contains(&0)
+            || self.query.text.len() > 1024
+        {
             return Err(
                 "Search needs an absolute folder and a filename query within 1024 bytes".into(),
             );

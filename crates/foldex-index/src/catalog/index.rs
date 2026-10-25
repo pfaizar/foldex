@@ -22,10 +22,25 @@ pub struct NativeQueryTiming {
     pub head_reused: bool,
 }
 
+struct Tail {
+    offset: u64,
+    keys: Vec<Hit>,
+}
+impl Tail {
+    fn bytes(&self) -> usize {
+        self.keys.capacity() * std::mem::size_of::<Hit>()
+            + self
+                .keys
+                .iter()
+                .map(|key| key.bytes() - std::mem::size_of::<Hit>())
+                .sum::<usize>()
+    }
+}
 struct Head {
     hash: u64,
     prefix: u64,
     keys: Vec<Hit>,
+    tail: Option<Tail>,
     folders: u64,
     files: u64,
 }
@@ -37,6 +52,7 @@ impl Head {
                 .iter()
                 .map(|key| key.bytes() - std::mem::size_of::<Hit>())
                 .sum::<usize>()
+            + self.tail.as_ref().map_or(0, Tail::bytes)
     }
     fn complete(&self) -> bool {
         self.folders + self.files == self.keys.len() as u64
@@ -227,6 +243,7 @@ impl NativeIndex {
             hash,
             prefix,
             keys,
+            tail: None,
             folders,
             files,
         };
@@ -279,6 +296,7 @@ impl NativeIndex {
         let head_elapsed = head_started.elapsed();
         let head = self.head.as_ref().unwrap();
         let total = head.files + head.folders;
+        let kind_counts = (head.folders, head.files);
         let limit = size.min(MAX_PAGE_ROWS);
         let mut rows = Vec::new();
         if limit > 0 && offset < total {
@@ -290,7 +308,21 @@ impl NativeIndex {
             } else {
                 usize::try_from(offset).ok()
             };
-            if let Some(start) = cached_start.filter(|start| *start < head.keys.len()) {
+            let tail_start = head.tail.as_ref().and_then(|tail| {
+                offset
+                    .checked_sub(tail.offset)
+                    .and_then(|start| usize::try_from(start).ok())
+                    .filter(|start| *start < tail.keys.len())
+            });
+            if let Some(start) = tail_start {
+                let tail = head.tail.as_ref().unwrap();
+                rows = self.rows.page(
+                    &self.data,
+                    &tail.keys[start..tail.keys.len().min(start + limit)],
+                    &source.scope,
+                    cancel,
+                )?;
+            } else if let Some(start) = cached_start.filter(|start| *start < head.keys.len()) {
                 rows = self.rows.page(
                     &self.data,
                     &head.keys[start..head.keys.len().min(start + limit)],
@@ -364,15 +396,31 @@ impl NativeIndex {
                         spec: spec.clone(),
                         upper_id: Some(source.entries),
                         after,
-                        limit,
+                        limit: HEAD_ROWS,
                         workers: if source.entries < 50_000 { 1 } else { 8 },
                         ..CatalogQuery::default()
                     },
                     cancel,
                 )?;
-                rows = self
-                    .rows
-                    .page(&self.data, &next.hits, &source.scope, cancel)?;
+                rows = self.rows.page(
+                    &self.data,
+                    &next.hits[..next.hits.len().min(limit)],
+                    &source.scope,
+                    cancel,
+                )?;
+                let budget = HEAD_BYTES.saturating_sub(
+                    head.bytes()
+                        .saturating_sub(head.tail.as_ref().map_or(0, Tail::bytes)),
+                );
+                let mut tail = Tail {
+                    offset,
+                    keys: next.hits,
+                };
+                while tail.bytes() > budget && !tail.keys.is_empty() {
+                    tail.keys.pop();
+                }
+                tail.keys.shrink_to_fit();
+                self.head.as_mut().unwrap().tail = (!tail.keys.is_empty()).then_some(tail);
             }
         }
         let next_offset = offset.saturating_add(rows.len() as u64);
@@ -406,7 +454,7 @@ impl NativeIndex {
         Ok(QueryPage {
             rows,
             total: spec.include_total.then_some(total),
-            kind_counts: spec.include_total.then_some((head.folders, head.files)),
+            kind_counts: spec.include_total.then_some(kind_counts),
             offset,
             next_offset,
             has_more,
@@ -486,7 +534,13 @@ impl NativeIndex {
         self.head.iter().chain(&self.archived_heads).any(|head| {
             head.hash == hash
                 && head.prefix == prefix
-                && (head.complete() || offset.saturating_add(size) <= head.keys.len())
+                && (head.complete()
+                    || offset.saturating_add(size) <= head.keys.len()
+                    || head.tail.as_ref().is_some_and(|tail| {
+                        (offset as u64 >= tail.offset || tail.offset == head.keys.len() as u64)
+                            && (offset.saturating_add(size) as u64)
+                                <= tail.offset.saturating_add(tail.keys.len() as u64)
+                    }))
         })
     }
     pub fn release_query_cache(&mut self) {

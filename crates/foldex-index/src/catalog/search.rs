@@ -42,7 +42,7 @@ fn trim_unused(bytes: &mut Vec<u8>) {
 }
 
 struct MatchPlan {
-    conditions: foldex_query::Conditions,
+    conditions: Option<foldex_query::Conditions>,
     needle: String,
     points: Vec<u32>,
     matcher: foldex_match::Matcher,
@@ -82,7 +82,7 @@ impl MatchPlan {
             && (query.spec.match_mode == MatchMode::Fuzzy || literal_ascii))
             .then(|| format::Signature::of(&needle));
         Ok(Self {
-            conditions: query.spec.conditions.clone(),
+            conditions: (!query.spec.conditions.is_empty()).then(|| query.spec.conditions.clone()),
             points: needle.chars().map(u32::from).collect(),
             matcher: foldex_match::Matcher::new(&needle),
             needle,
@@ -102,14 +102,16 @@ impl MatchPlan {
         scorer: &mut crate::score_cache::ScoreMemo,
         rank: bool,
     ) -> Result<Option<Option<i32>>> {
-        if !self.conditions.is_empty() {
-            let path = std::path::PathBuf::from(codec::decode(record.path())?)
-                .join(codec::decode(record.name())?);
-            if !self
-                .conditions
-                .matches(&path, record.flags & 1 != 0, record.size, record.modified)
-            {
+        if let Some(conditions) = &self.conditions {
+            if !conditions.matches_metadata(record.flags & 1 != 0, record.size, record.modified) {
                 return Ok(None);
+            }
+            if conditions.needs_path() {
+                let path = std::path::PathBuf::from(codec::decode(record.path())?)
+                    .join(codec::decode(record.name())?);
+                if !conditions.matches_path(&path) {
+                    return Ok(None);
+                }
             }
         }
         if let Some(filter) = &self.type_filter {

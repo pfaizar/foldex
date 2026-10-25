@@ -376,3 +376,42 @@ fn shallow_reconciliation_rejects_a_different_traversal_policy_and_never_descend
         Err(foldex_index::Error::Cancelled)
     ));
 }
+
+#[test]
+fn sequential_continuation_is_cached_within_the_existing_head_budget() {
+    let fixture = Fixture::new();
+    let cancel = Cancellation::new();
+    let mut builder =
+        NativeIndexBuilder::create(&fixture.0.join("cache"), &fixture.0.join("scope"), &cancel)
+            .unwrap();
+    for first in (0..5000).step_by(256) {
+        let records = (first..(first + 256).min(5000))
+            .map(|i| IndexRecord::new(format!("report{i:05}.txt").into(), false, i, 100).unwrap())
+            .collect::<Vec<_>>();
+        builder.ingest_batch(&records, &cancel).unwrap();
+    }
+    let mut index = builder.finish(true).unwrap();
+    let spec = QuerySpec::default();
+    let mut page = index.query(&spec, 0, 256, &cancel).unwrap();
+    while page.next_offset < 1025 {
+        page = index
+            .query_after(&spec, page.next.as_ref(), 256, &cancel)
+            .unwrap();
+    }
+    let page = index
+        .query_after(&spec, page.next.as_ref(), 256, &cancel)
+        .unwrap();
+    assert_eq!(page.rows[0].name, "report01025.txt");
+    assert!(index.cached_window(&spec, 5000, 1281, 768));
+    let next = index.query(&spec, 1281, 256, &cancel).unwrap();
+    assert_eq!(next.rows[0].name, "report01281.txt");
+    assert_eq!(next.rows.len(), 256);
+    let metrics = index.metrics().unwrap();
+    assert!(metrics.rank_cache_used <= metrics.rank_cache_budget);
+    index.release_query_cache();
+    assert!(!index.cached_window(&spec, 5000, 1281, 768));
+    let resumed = index
+        .query_after(&spec, next.next.as_ref(), 256, &cancel)
+        .unwrap();
+    assert_eq!(resumed.rows[0].name, "report01537.txt");
+}

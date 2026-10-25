@@ -131,21 +131,26 @@ impl Index {
             rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC
                 | rusqlite::functions::FunctionFlags::SQLITE_INNOCUOUS,
             move |ctx| {
-                let raw = ctx.get_raw(0).as_blob()?;
-                let path = PathBuf::from(
-                    codec::decode(raw)
-                        .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?,
-                );
-                let bytes = ctx.get_raw(2).as_blob()?;
-                let bytes: [u8; 8] = bytes
+                let bytes: [u8; 8] = ctx
+                    .get_raw(2)
+                    .as_blob()?
                     .try_into()
                     .map_err(|_| rusqlite::Error::InvalidQuery)?;
-                Ok(conditions.matches(
-                    &path,
+                if !conditions.matches_metadata(
                     ctx.get::<bool>(1)?,
                     u64::from_be_bytes(bytes),
                     ctx.get(3)?,
-                ))
+                ) {
+                    return Ok(false);
+                }
+                if !conditions.needs_path() {
+                    return Ok(true);
+                }
+                let path = PathBuf::from(
+                    codec::decode(ctx.get_raw(0).as_blob()?)
+                        .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?,
+                );
+                Ok(conditions.matches_path(&path))
             },
         )?;
         let started = Instant::now();

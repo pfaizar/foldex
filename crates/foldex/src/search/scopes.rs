@@ -63,16 +63,29 @@ impl Signal {
             self.revision.load(Ordering::Acquire),
         )
     }
-    fn record(&self, root: &Path, excluded: &Path, event: notify::Result<notify::Event>) -> bool {
+    fn record(
+        &self,
+        root: &Path,
+        excluded: Option<&Path>,
+        event: notify::Result<notify::Event>,
+    ) -> bool {
+        let relative = |path: &Path| {
+            path.ancestors()
+                .find(|parent| crate::bookmarks::path_eq(parent, root))
+                .and_then(|parent| path.strip_prefix(parent).ok())
+                .map(Path::to_owned)
+        };
+        let internal = |path: &Path| {
+            excluded.is_some_and(|excluded| {
+                relative(path).is_some_and(|path| path.starts_with(excluded))
+            })
+        };
         match &event {
             Ok(event) if matches!(event.kind, EventKind::Access(_)) => return false,
             Ok(event)
                 if !event.need_rescan()
                     && !event.paths.is_empty()
-                    && event.paths.iter().all(|path| {
-                        path.ancestors()
-                            .any(|parent| crate::bookmarks::path_eq(parent, excluded))
-                    }) =>
+                    && event.paths.iter().all(|path| internal(path)) =>
             {
                 return false;
             }
@@ -99,10 +112,7 @@ impl Signal {
             Ok(event) if event.need_rescan() || event.paths.is_empty() => changes.require_full(),
             Ok(event) => {
                 for path in &event.paths {
-                    if path
-                        .ancestors()
-                        .any(|parent| crate::bookmarks::path_eq(parent, excluded))
-                    {
+                    if internal(path) {
                         continue;
                     }
                     if let Some(ancestor) = path
@@ -151,13 +161,23 @@ impl Monitor {
             changes: Mutex::new(Changes::default()),
             notified: AtomicBool::new(false),
         });
+        let excluded_relative = std::fs::canonicalize(root)
+            .ok()
+            .zip(std::fs::canonicalize(excluded).ok())
+            .and_then(|(root, excluded)| {
+                if root.starts_with(&excluded) {
+                    Some(PathBuf::new())
+                } else {
+                    excluded.strip_prefix(root).ok().map(Path::to_owned)
+                }
+            });
         let callback = || {
             let signal = signal.clone();
             let shared = shared.clone();
-            let excluded = excluded.to_owned();
+            let excluded = excluded_relative.clone();
             let root = std::path::absolute(root).unwrap_or_else(|_| root.to_owned());
             move |event: notify::Result<notify::Event>| {
-                if signal.record(&root, &excluded, event) {
+                if signal.record(&root, excluded.as_deref(), event) {
                     shared.notify();
                 }
             }
@@ -248,6 +268,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn cache_notifications_preserve_raw_case_sensitive_sibling_names() {
+        let fixture = Fixture::new();
+        let signal = Signal {
+            revision: AtomicU64::new(0),
+            healthy: AtomicBool::new(true),
+            changes: Mutex::new(Changes::default()),
+            notified: AtomicBool::new(false),
+        };
+        let event = |name: &str| {
+            Ok(
+                notify::Event::new(EventKind::Create(notify::event::CreateKind::File))
+                    .add_path(fixture.root().join(name)),
+            )
+        };
+        assert!(!signal.record(
+            &fixture.root(),
+            Some(Path::new("cache")),
+            event("cache/item")
+        ));
+        assert_eq!(signal.revision.load(Ordering::Acquire), 0);
+        assert!(signal.record(
+            &fixture.root(),
+            Some(Path::new("cache")),
+            event("Cache/item")
+        ));
+        assert_eq!(
+            signal.drain().0.paths,
+            HashSet::from([PathBuf::from("Cache/item")])
+        );
+    }
+
+    #[test]
     fn watcher_bursts_wake_once_per_batch_and_lost_coverage_always_wakes() {
         let fixture = Fixture::new();
         let signal = Signal {
@@ -260,7 +312,7 @@ mod tests {
         for number in 0..1000 {
             let event = notify::Event::new(EventKind::Create(notify::event::CreateKind::File))
                 .add_path(fixture.root().join(format!("file{number}.txt")));
-            wakes += usize::from(signal.record(&fixture.root(), &fixture.cache(), Ok(event)));
+            wakes += usize::from(signal.record(&fixture.root(), None, Ok(event)));
         }
         assert_eq!(wakes, 1);
         let (batch, revision) = signal.drain();
@@ -269,10 +321,10 @@ mod tests {
         assert!(!batch.full);
         let event = notify::Event::new(EventKind::Modify(notify::event::ModifyKind::Any))
             .add_path(fixture.root().join("file.txt"));
-        assert!(signal.record(&fixture.root(), &fixture.cache(), Ok(event)));
+        assert!(signal.record(&fixture.root(), None, Ok(event)));
         assert!(signal.record(
             &fixture.root(),
-            &fixture.cache(),
+            None,
             Err(notify::Error::generic("watch lost"))
         ));
         assert!(!signal.healthy.load(Ordering::Acquire));
@@ -300,7 +352,7 @@ mod tests {
         std::fs::write(fixture.root().join("report.txt"), b"updated").unwrap();
         scopes.values[0].monitor.signal.record(
             &fixture.root(),
-            &fixture.cache(),
+            None,
             Ok(
                 notify::Event::new(EventKind::Modify(notify::event::ModifyKind::Any))
                     .add_path(fixture.root().join("report.txt")),
