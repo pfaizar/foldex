@@ -73,6 +73,7 @@ fn run_inner(args: &[OsString]) -> io::Result<()> {
     let visible_minimized_root = args.iter().any(|arg| arg == "--visible-minimized-root");
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
+            .with_drag_and_drop(!cfg!(windows))
             .with_title(format!("Foldex Lifecycle Probe · {}", std::process::id()))
             .with_inner_size([960.0, 640.0])
             .with_active(false),

@@ -239,6 +239,25 @@ impl Pane {
         let mut row_pointer_clicked = false;
         let mut context = None;
         let mut selection_context = None;
+        let press_position = ui.input(|input| {
+            input.events.iter().find_map(|event| match event {
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    ..
+                } => Some(*pos),
+                _ => None,
+            })
+        });
+        let mut pressed_on_item = false;
+        let mut dragged_row = None;
+        let drag_distance = ui
+            .ctx()
+            .options(|options| options.input_options.max_click_dist);
+        if !self.is_virtual() {
+            crate::drag_drop::pane_target(ui, body, self.path.clone());
+        }
         if snapshot.is_none() {
             if let Some(manager) = assets.as_deref_mut() {
                 let signature = crate::assets::ViewportSignature {
@@ -407,6 +426,8 @@ impl Pane {
                         });
                         let Some((s, idx, e)) = loaded else {
                             let rect = grid.rect_for(row).translate(origin);
+                            pressed_on_item |= press_position
+                                .is_some_and(|point| rect.intersect(body).contains(point));
                             let response = ui.interact(
                                 rect,
                                 Id::new((self.id, "pending-row", row)),
@@ -491,8 +512,30 @@ impl Pane {
                         // Existing identities still animate reflow and reordering.
                         let placement = self.listing_motion.place(motion_id, target, false);
                         let rect = placement.rect.translate(origin);
+                        pressed_on_item |= press_position
+                            .is_some_and(|point| rect.intersect(body).contains(point));
+                        if !recycle_bin && e.is_dir {
+                            crate::drag_drop::target(ui, rect.intersect(body), e.path(s));
+                        }
                         let response =
                             ui.interact(rect, identity.with("hit"), Sense::CLICK | Sense::DRAG);
+                        let batched_drag = ui.input(|input| {
+                            input.pointer.primary_released()
+                                && press_position.is_some_and(|press| {
+                                    rect.intersect(body).contains(press)
+                                        && input.pointer.interact_pos().is_some_and(|point| {
+                                            point.distance(press) > drag_distance
+                                        })
+                                })
+                        });
+                        if !recycle_bin
+                            && (response.drag_started_by(egui::PointerButton::Primary)
+                                || batched_drag)
+                        {
+                            dragged_row = Some(row);
+                            self.marquee = None;
+                            self.listing_clicks.clear();
+                        }
                         if response.clicked()
                             || response.secondary_clicked()
                             || response.middle_clicked()
@@ -911,7 +954,7 @@ impl Pane {
                 })
             });
             if let Some((point, modifiers)) = press.filter(|(point, _)| {
-                out.inner_rect.contains(*point)
+                !pressed_on_item && out.inner_rect.contains(*point)
                     && ui.ctx().layer_id_at(*point) == Some(ui.layer_id())
                     // Floating bars overlap inner_rect. Use egui's full hit target,
                     // including the track and its animated hover width.
@@ -1066,6 +1109,24 @@ impl Pane {
             self.focused = Some(row);
             self.last_selection = self.primary_selected_path();
             ui.ctx().request_repaint();
+        }
+        if let Some(row) = dragged_row {
+            self.keyboard.cancel_range();
+            if !self.selected.contains(&(row as u32)) {
+                self.selected.clear();
+                self.selected.insert(row as u32);
+                self.anchor = Some(row);
+            }
+            self.focused = Some(row);
+            self.sync_selection();
+            let paths = self.selected_paths();
+            if paths.is_empty() {
+                actions.push(Action::Notify(
+                    "Wait for the selected files to finish loading before dragging".into(),
+                ));
+            } else {
+                actions.push(Action::DragFiles(paths));
+            }
         }
         self.sync_selection();
         if listing_focused
@@ -1429,6 +1490,150 @@ mod tests {
             );
             self.draw(pane, vec![button(false)])
         }
+    }
+
+    #[test]
+    fn file_drags_preserve_the_selection_and_do_not_start_marquee_selection() {
+        let engine = Engine::new(Arc::new(|| {})).unwrap();
+        for zoom in [0.0, 1.0] {
+            for selected in [false, true] {
+                let mut pane = Pane::dormant(
+                    948,
+                    &engine,
+                    std::env::temp_dir().join("foldex-drag-fixture"),
+                );
+                pane.accept(Arc::new(Snapshot::from_entries(
+                    pane.path.clone(),
+                    vec![
+                        foldex_core::Entry::from_name("folder", true, 0, 0),
+                        foldex_core::Entry::from_name("a.txt", false, 0, 0),
+                        foldex_core::Entry::from_name("b.txt", false, 0, 0),
+                    ],
+                )));
+                pane.loading = false;
+                pane.zoom = zoom;
+                let mut input = ClickHarness::new(true);
+                input.draw(&mut pane, vec![]);
+                if selected {
+                    pane.selected.select(1, 2);
+                    pane.sync_selection();
+                }
+                let point = input.item_point(&pane, 1);
+                input.draw(
+                    &mut pane,
+                    vec![
+                        egui::Event::PointerMoved(point),
+                        egui::Event::PointerButton {
+                            pos: point,
+                            button: egui::PointerButton::Primary,
+                            pressed: true,
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                );
+                assert!(
+                    pane.marquee.is_none(),
+                    "an item press must not arm a selection rectangle"
+                );
+                let (actions, _) = input.draw(
+                    &mut pane,
+                    vec![egui::Event::PointerMoved(point + vec2(35.0, 12.0))],
+                );
+                assert!(pane.marquee.is_none());
+                let paths = actions
+                    .into_iter()
+                    .find_map(|action| match action {
+                        Action::DragFiles(paths) => Some(paths),
+                        _ => None,
+                    })
+                    .expect("dragging an item must produce a native file drag");
+                assert_eq!(paths.len(), if selected { 2 } else { 1 });
+                assert!(paths.iter().any(|path| path.ends_with("a.txt")));
+                assert_eq!(pane.selected.len(), if selected { 2 } else { 1 });
+            }
+        }
+    }
+
+    #[test]
+    fn a_complete_file_drag_in_one_input_batch_still_emits_a_transfer() {
+        let engine = Engine::new(Arc::new(|| {})).unwrap();
+        let mut pane = Pane::dormant(
+            950,
+            &engine,
+            std::env::temp_dir().join("foldex-fast-drag-fixture"),
+        );
+        pane.accept(Arc::new(Snapshot::from_entries(
+            pane.path.clone(),
+            vec![foldex_core::Entry::from_name("file.txt", false, 0, 0)],
+        )));
+        pane.loading = false;
+        let mut input = ClickHarness::new(true);
+        input.draw(&mut pane, vec![]);
+        let press = input.item_point(&pane, 0);
+        let release = pos2(600.0, 300.0);
+        let button = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let (actions, _) = input.draw(
+            &mut pane,
+            vec![
+                egui::Event::PointerMoved(press),
+                button(press, true),
+                egui::Event::PointerMoved(release),
+                button(release, false),
+            ],
+        );
+        assert_eq!(
+            actions
+                .iter()
+                .filter(|action| matches!(action, Action::DragFiles(_)))
+                .count(),
+            1
+        );
+        assert!(pane.marquee.is_none());
+    }
+
+    #[test]
+    fn dragging_blank_space_still_draws_a_selection_rectangle() {
+        let engine = Engine::new(Arc::new(|| {})).unwrap();
+        let mut pane = Pane::dormant(
+            949,
+            &engine,
+            std::env::temp_dir().join("foldex-marquee-fixture"),
+        );
+        pane.accept(Arc::new(Snapshot::from_entries(
+            pane.path.clone(),
+            vec![foldex_core::Entry::from_name("file.txt", false, 0, 0)],
+        )));
+        pane.loading = false;
+        let mut input = ClickHarness::new(true);
+        input.draw(&mut pane, vec![]);
+        let point = pos2(600.0, 300.0);
+        input.draw(
+            &mut pane,
+            vec![
+                egui::Event::PointerMoved(point),
+                egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        let (actions, _) = input.draw(
+            &mut pane,
+            vec![egui::Event::PointerMoved(point + vec2(20.0, 20.0))],
+        );
+        assert!(pane.marquee.as_ref().is_some_and(|drag| drag.active));
+        assert!(
+            !actions
+                .iter()
+                .any(|action| matches!(action, Action::DragFiles(_)))
+        );
     }
 
     #[test]

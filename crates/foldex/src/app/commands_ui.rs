@@ -499,6 +499,144 @@ mod tests {
     use super::*;
 
     #[test]
+    fn recording_owns_modifier_keys_before_root_navigation_and_restores_routing_on_cancel() {
+        use super::super::tests::key_event;
+        let (mut app, ctx, mut frame) = ready_fixture();
+        app.theme.reduced_motion = true;
+        app.execute_command(&ctx, Command::Hotkeys);
+        app.hotkeys.record(Command::Launcher);
+        for _ in 0..6 {
+            pump_events(&mut app, &ctx, frame, vec![]);
+            frame += 1;
+        }
+        let original = app.launcher.settings.hotkey.clone();
+        let capture = Id::new("hotkey-recording-capture");
+        assert_eq!(ctx.memory(|memory| memory.focused()), Some(capture));
+        let mut modifiers = Modifiers::NONE;
+        for key in [
+            Key::ControlLeft,
+            Key::ShiftLeft,
+            Key::SuperLeft,
+            Key::AltLeft,
+        ] {
+            match key {
+                Key::ControlLeft => {
+                    modifiers.ctrl = true;
+                    modifiers.command = true;
+                }
+                Key::ShiftLeft => modifiers.shift = true,
+                Key::SuperLeft => modifiers.mac_cmd = true,
+                Key::AltLeft => modifiers.alt = true,
+                _ => unreachable!(),
+            }
+            pump_events(
+                &mut app,
+                &ctx,
+                frame,
+                vec![
+                    key_event(key, modifiers),
+                    egui::Event::ModifiersChanged(modifiers),
+                ],
+            );
+            frame += 1;
+            assert!(app.hotkeys.is_recording());
+            assert!(!app.launcher_open);
+            assert_eq!(ctx.memory(|memory| memory.focused()), Some(capture));
+            assert!(ctx.input(|input| input.modifiers.is_none() && input.keys_down.is_empty()));
+            assert_eq!(app.hotkeys.recording_label().as_deref(), Some(""));
+        }
+        pump_events(&mut app, &ctx, frame, vec![key_event(Key::A, modifiers)]);
+        frame += 1;
+        assert_eq!(
+            app.hotkeys.recording_label().as_deref(),
+            Some(if cfg!(target_os = "macos") {
+                "Ctrl+Alt+Shift+Cmd+A"
+            } else {
+                "Ctrl+Alt+Shift+Win+A"
+            })
+        );
+        assert_eq!(app.launcher.settings.hotkey, original);
+        let mut releases = vec![];
+        for key in [
+            Key::A,
+            Key::AltLeft,
+            Key::SuperLeft,
+            Key::ShiftLeft,
+            Key::ControlLeft,
+        ] {
+            match key {
+                Key::AltLeft => modifiers.alt = false,
+                Key::SuperLeft => modifiers.mac_cmd = false,
+                Key::ShiftLeft => modifiers.shift = false,
+                Key::ControlLeft => {
+                    modifiers.ctrl = false;
+                    modifiers.command = false;
+                }
+                _ => {}
+            }
+            releases.push(egui::Event::Key {
+                key,
+                physical_key: Some(key),
+                pressed: false,
+                repeat: false,
+                modifiers,
+            });
+        }
+        releases.push(egui::Event::ModifiersChanged(Modifiers::NONE));
+        pump_events(&mut app, &ctx, frame, releases);
+        frame += 1;
+        pump_events(
+            &mut app,
+            &ctx,
+            frame,
+            vec![key_event(Key::Escape, Modifiers::NONE)],
+        );
+        frame += 1;
+        // The shared dialog retains its modal layer through the closing pass.
+        pump_events(
+            &mut app,
+            &ctx,
+            frame,
+            vec![egui::Event::Key {
+                key: Key::Escape,
+                physical_key: Some(Key::Escape),
+                pressed: false,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            }],
+        );
+        frame += 1;
+        assert!(!app.hotkeys.is_recording());
+        assert_eq!(app.launcher.settings.hotkey, original);
+        for _ in 0..5 {
+            pump_events(&mut app, &ctx, frame, vec![]);
+            frame += 1;
+        }
+        pump_events(
+            &mut app,
+            &ctx,
+            frame,
+            vec![key_event(Key::Escape, Modifiers::NONE)],
+        );
+        frame += 1;
+        for _ in 0..10 {
+            pump_events(&mut app, &ctx, frame, vec![]);
+            frame += 1;
+        }
+        assert!(!app.hotkeys_open);
+        pump_events(
+            &mut app,
+            &ctx,
+            frame,
+            vec![key_event(Key::F1, Modifiers::NONE)],
+        );
+        assert!(
+            app.keyboard_help,
+            "Ordinary shortcut routing must resume after recording closes"
+        );
+    }
+
+    #[test]
     fn launcher_binding_in_hotkeys_updates_registration_and_both_saved_settings() {
         let (mut app, _, _) = super::super::tests::fixture_app();
         let previous = app.hotkeys.bindings().to_vec();

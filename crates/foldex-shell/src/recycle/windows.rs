@@ -224,7 +224,7 @@ struct FileOperationVtable {
     unadvise: usize,
     set_operation_flags: unsafe extern "system" fn(*mut c_void, u32) -> HRESULT,
     set_progress_message: usize,
-    set_progress_dialog: usize,
+    set_progress_dialog: unsafe extern "system" fn(*mut c_void, *mut c_void) -> HRESULT,
     set_properties: usize,
     set_owner_window: unsafe extern "system" fn(*mut c_void, HWND) -> HRESULT,
     apply_properties_to_item: usize,
@@ -730,6 +730,12 @@ fn delete_items(bin: &Bin, selection: &[Pidl], owner: HWND) -> Result<(), String
     check(
         unsafe { (vtable.set_owner_window)(operation.0, owner) },
         "set deletion owner",
+    )?;
+    let progress = crate::progress::DelayedProgressDialog::new()
+        .map_err(|hr| failure("create delayed deletion progress", hr))?;
+    check(
+        unsafe { (vtable.set_progress_dialog)(operation.0, progress.as_raw()) },
+        "delay deletion progress",
     )?;
     // Explicitly replace IFileOperation's default ALLOWUNDO. Neither ALLOWUNDO
     // nor RECYCLEONDELETE is set. Keep confirmation, progress and errors enabled.

@@ -180,6 +180,10 @@ Record a combination with any modifiers, or keep pressing combinations to build
 a command sequence, then choose Assign. Menu navigation, selection, search
 results, Home and the launcher support keyboard use throughout.
 
+While recording, held modifiers appear immediately and Win/Alt combinations
+belong to the recorder instead of opening Windows menus. Press Escape to cancel,
+or Tab to review the recorder controls.
+
 File-operation history lasts for the current window session. Undo preserves
 edited files and refuses occupied restore destinations. Permanent deletion,
 overwrites, folder merges and actions performed by external shell extensions
@@ -219,6 +223,14 @@ cargo test --locked --workspace
 
 Native Shell and clipboard probes are explicitly ignored because they interact
 with Windows. The normal regression suite uses generated fixtures.
+
+File dragging supports folder rows, split panes, breadcrumb ancestors and sidebar
+folders, as well as Explorer and other Windows apps. Drag a selected item to move
+the entire selection; drag empty listing space to select a rectangle. Windows
+chooses the default transfer effect; Ctrl requests a copy and Shift requests a
+move. Quick managed file operations keep their progress dialog hidden; ongoing
+operations show native progress after one second. See the
+[file-transfer investigation and validation](docs/WINDOWS-FILE-TRANSFERS.md).
 
 An alternative OpenGL build is available for development:
 

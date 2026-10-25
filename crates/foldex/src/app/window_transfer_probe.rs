@@ -66,6 +66,7 @@ fn run_inner(args: &[OsString]) -> io::Result<()> {
     let directory = output.clone();
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
+            .with_drag_and_drop(!cfg!(windows))
             .with_title(format!(
                 "Foldex Tab Transfer Probe · {}",
                 std::process::id()
