@@ -9,6 +9,7 @@ impl Foldex {
     pub(super) fn popup_active(&self) -> bool {
         self.launcher_open
             || self.show_stats
+            || self.operations_open
             || self.keyboard_help
             || (self.inspector
                 && self
@@ -140,6 +141,7 @@ impl Foldex {
             Command::NextFocusRegion => self.cycle_focus_region(ctx, false),
             Command::PreviousFocusRegion => self.cycle_focus_region(ctx, true),
             Command::KeyboardHelp => self.keyboard_help = true,
+            Command::Operations => self.operations_open = true,
             Command::Commands => self.open_commands(),
             Command::Back => self.pane_mut().back(),
             Command::Forward => self.pane_mut().forward(),

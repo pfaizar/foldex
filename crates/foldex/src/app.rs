@@ -20,6 +20,7 @@ mod launcher_ui;
 pub(crate) mod lifecycle_probe;
 #[cfg(test)]
 mod lifecycle_tests;
+mod operations_ui;
 mod options_ui;
 #[cfg(test)]
 mod persistence_tests;
@@ -189,6 +190,7 @@ pub struct Foldex {
     first_frame: Option<f64>,
     frames: VecDeque<f64>,
     show_stats: bool,
+    operations_open: bool,
     keyboard_help: bool,
     pending_focus_exit: Option<(bool, u64)>,
     process_samples: Vec<ProcessSample>,
@@ -511,6 +513,7 @@ impl Foldex {
             first_frame: None,
             frames: VecDeque::with_capacity(240),
             show_stats: false,
+            operations_open: false,
             keyboard_help: false,
             pending_focus_exit: None,
             process_samples: vec![],
@@ -1783,6 +1786,26 @@ mod tests {
         }
         panic!("Generated input fixture did not load");
     }
+    #[test]
+    fn operations_command_opens_a_modal_with_a_bounded_history() {
+        let (mut app, ctx, frame) = ready_fixture();
+        app.execute_command(&ctx, crate::commands::Command::Operations);
+        assert!(app.operations_open && app.popup_active());
+        for index in 0..3 {
+            ctx.run_ui(
+                egui::RawInput {
+                    time: Some((frame + index) as f64 / 60.0),
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 760.0))),
+                    ..Default::default()
+                },
+                |ui| app.operations_ui(ui.ctx()),
+            )
+            .drop_without_applying_deltas();
+        }
+        app.operations_open = false;
+        assert!(!app.operations_open);
+    }
+
     #[test]
     fn root_panel_widths_advance_once_per_frame_and_later_resize_still_snaps() {
         for resize_on_second_pass in [false, true] {
@@ -3128,6 +3151,7 @@ impl eframe::App for Foldex {
             self.keyboard(&ctx, true);
         }
         self.dialogs(&ctx);
+        self.operations_ui(&ctx);
         if !self.popup_active() {
             self.updates.notification(&ctx, &self.theme);
         }

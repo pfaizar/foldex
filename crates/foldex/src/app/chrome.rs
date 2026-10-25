@@ -64,7 +64,7 @@ fn main_menu_entries(
     &'static str,
     Icon,
     bool,
-); 8] {
+); 9] {
     use crate::commands::Command;
     [
         (Command::GoTo, "GoTo", "Ctrl+P", Icon::Search, true),
@@ -76,6 +76,7 @@ fn main_menu_entries(
             true,
         ),
         (Command::Launcher, "Launcher", "", Icon::Window, true),
+        (Command::Operations, "File operations", "", Icon::Copy, true),
         (Command::LoadLayout, "Load layout", "", Icon::Split, layouts),
         (Command::SaveLayout, "Save layout", "", Icon::Save, true),
         (Command::Options, "Options", "Ctrl+,", Icon::Settings, true),
@@ -91,7 +92,7 @@ fn main_menu_entries(
 }
 const MAIN_MENU_SECTIONS: [foldex_ui::components::MenuSection<'static>; 2] = [
     foldex_ui::components::MenuSection::separator(3),
-    foldex_ui::components::MenuSection::separator(5),
+    foldex_ui::components::MenuSection::separator(6),
 ];
 impl MainMenu {
     pub(super) fn is_open(&self) -> bool {
@@ -110,7 +111,7 @@ impl MainMenu {
         layouts: bool,
     ) -> Option<crate::commands::Command> {
         let entries = main_menu_entries(layouts);
-        let items: [foldex_ui::components::MenuItem<'_>; 8] =
+        let items: [foldex_ui::components::MenuItem<'_>; 9] =
             std::array::from_fn(|i| foldex_ui::components::MenuItem {
                 id: i as u32,
                 label: entries[i].1,
@@ -465,17 +466,18 @@ mod tests {
     fn application_menu_groups_navigation_layouts_and_configuration() {
         use crate::commands::Command;
         let entries = main_menu_entries(false);
+        assert_eq!(entries[3].0, Command::Operations);
         assert!(matches!(entries[2].0, Command::Launcher));
-        assert!(matches!(entries[3].0, Command::LoadLayout));
-        assert!(matches!(entries[4].0, Command::SaveLayout));
-        assert!(matches!(entries[5].0, Command::Options));
-        assert!(!entries[3].4);
-        assert!(main_menu_entries(true)[3].4);
+        assert!(matches!(entries[4].0, Command::LoadLayout));
+        assert!(matches!(entries[5].0, Command::SaveLayout));
+        assert!(matches!(entries[6].0, Command::Options));
+        assert!(!entries[4].4);
+        assert!(main_menu_entries(true)[4].4);
         assert!(matches!(entries[1].3, Icon::Commands));
-        assert!(matches!(entries[4].3, Icon::Save));
-        assert!(matches!(entries[6].3, Icon::Keyboard));
-        assert!(matches!(entries[7].3, Icon::Help));
-        assert_eq!(MAIN_MENU_SECTIONS.map(|section| section.before), [3, 5]);
+        assert!(matches!(entries[5].3, Icon::Save));
+        assert!(matches!(entries[7].3, Icon::Keyboard));
+        assert!(matches!(entries[8].3, Icon::Help));
+        assert_eq!(MAIN_MENU_SECTIONS.map(|section| section.before), [3, 6]);
         assert!(
             MAIN_MENU_SECTIONS
                 .iter()

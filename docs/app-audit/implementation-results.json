@@ -47,6 +47,33 @@
         "windows_gnu_index_check": "passed",
         "windows_runtime": "pending"
       }
+    },
+    {
+      "stage": 3,
+      "name": "Independent Shell actions and operation history",
+      "before": {
+        "blocked_mutation_ms": 250,
+        "interactive_events_before_release": 0
+      },
+      "after": {
+        "interactive_event_before_release": true,
+        "observed_portable_open_ms": [
+          2.328,
+          2.553,
+          2.63
+        ],
+        "shell_workers": 2,
+        "retained_operation_records": 64,
+        "queued_and_running_cancellation": true,
+        "partial_completion_tracking": true
+      },
+      "timing_scope": "Linux dev-profile missing-file Open with the undo journal held; proves queue independence, not native application launch latency",
+      "validation": {
+        "app_tests_passed": 611,
+        "linux_platform_exclusions": 2,
+        "windows_gnu_app_and_test_check": "passed",
+        "windows_runtime": "pending"
+      }
     }
   ]
 }

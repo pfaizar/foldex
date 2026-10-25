@@ -1,6 +1,6 @@
 //! Bounded background I/O. The frame loop only submits work and drains results.
 //!
-//! File mutations and shell handlers have their own lane. Previews have one
+//! File mutations and interactive Shell handlers use independent lanes. Previews have one
 //! replaceable request/result, so an unresponsive shell handler cannot delay a
 //! preview and selecting many images cannot accumulate decoded buffers.
 
@@ -26,6 +26,7 @@ pub(crate) mod windows_ops;
 use crate::operation_history::{Direction, HistoryHandle, HistoryState, Mutation};
 #[path = "platform/folder_options.rs"]
 mod folder_options;
+pub(crate) mod operations;
 
 const JOB_CAPACITY: usize = 8;
 const EVENT_CAPACITY: usize = 8;
@@ -184,7 +185,8 @@ struct PathMailbox {
 pub struct Platform {
     history: HistoryHandle,
     properties: foldex_shell::Properties,
-    jobs: SyncSender<Job>,
+    jobs: SyncSender<OperationJob>,
+    shell_jobs: SyncSender<Job>,
     events: Receiver<Event>,
     preview_signal: SyncSender<()>,
     preview: Arc<PathMailbox>,
@@ -197,12 +199,20 @@ pub struct Platform {
     pending_jobs: Arc<AtomicU64>,
     launcher_busy: Arc<AtomicBool>,
     integration_wake: Wake,
+    operations: Arc<operations::Operations>,
+}
+
+struct OperationJob {
+    job: Job,
+    operation: Option<Arc<operations::Operation>>,
 }
 
 impl Platform {
     pub fn new(wake: Wake) -> io::Result<Self> {
         let properties = foldex_shell::Properties::new(wake.clone());
         let (jobs, job_rx) = mpsc::sync_channel(JOB_CAPACITY);
+        let (shell_jobs, shell_rx) = mpsc::sync_channel(JOB_CAPACITY);
+        let shell_rx = Arc::new(Mutex::new(shell_rx));
         let (event_tx, events) = mpsc::sync_channel(EVENT_CAPACITY);
         let integration_events = event_tx.clone();
         let integration_wake = wake.clone();
@@ -219,6 +229,27 @@ impl Platform {
         let worker_history = history.clone();
         let pending_jobs = Arc::new(AtomicU64::new(0));
         let worker_pending = pending_jobs.clone();
+        // Two independent STA-capable workers keep a modal Shell handler from
+        // blocking a second interactive request. Mutations and clipboard jobs
+        // retain their single FIFO, including immediate Copy -> Paste ordering.
+        for index in 0..2 {
+            let rx = shell_rx.clone();
+            let events = event_tx.clone();
+            let stop = stop.clone();
+            let wake = wake.clone();
+            let pending = pending_jobs.clone();
+            thread::Builder::new()
+                .name(format!("foldex-shell-{index}"))
+                .spawn(move || {
+                    loop {
+                        let job = { rx.lock().unwrap_or_else(|e| e.into_inner()).recv() };
+                        let Ok(job) = job else { break };
+                        run_shell_job(job, &events, &stop, &wake);
+                        pending.fetch_sub(1, Ordering::AcqRel);
+                        wake();
+                    }
+                })?;
+        }
         thread::Builder::new()
             .name("foldex-file-operations".into())
             .spawn(move || {
@@ -257,6 +288,7 @@ impl Platform {
             history,
             properties,
             jobs,
+            shell_jobs,
             events,
             preview_signal,
             preview,
@@ -269,6 +301,7 @@ impl Platform {
             pending_jobs,
             launcher_busy: Arc::new(AtomicBool::new(false)),
             integration_wake,
+            operations: Arc::new(operations::Operations::default()),
         })
     }
 
@@ -284,7 +317,7 @@ impl Platform {
         self.history.state()
     }
 
-    /// Count queued work too: a mutation waiting behind a slow shell handler
+    /// Count queued work too: a mutation waiting behind another operation
     /// must not disappear just because no history transaction has started yet.
     pub fn update_busy(&self) -> bool {
         self.pending_jobs.load(Ordering::Acquire) != 0
@@ -296,6 +329,10 @@ impl Platform {
     /// The batch planner shares the same serialized mutation history.
     pub fn history_handle(&self) -> HistoryHandle {
         self.history.clone()
+    }
+
+    pub fn operations(&self) -> &operations::Operations {
+        &self.operations
     }
 
     /// Never waits for disk access, an OS handler, or queue capacity.
@@ -397,19 +434,39 @@ impl Platform {
             }
             job => job,
         };
-        let tracked = !matches!(job, Job::Metrics { .. });
-        if tracked {
-            self.pending_jobs.fetch_add(1, Ordering::AcqRel);
+        self.pending_jobs.fetch_add(1, Ordering::AcqRel);
+        let result = if is_shell_job(&job) {
+            self.shell_jobs.try_send(job).map_err(|error| match error {
+                TrySendError::Full(_) => "Shell actions are busy; try again shortly".to_string(),
+                TrySendError::Disconnected(_) => "Shell worker is unavailable".into(),
+            })
+        } else {
+            match self.operations.track(&job, self.integration_wake.clone()) {
+                Err(error) => Err(error),
+                Ok(operation) => {
+                    self.jobs
+                        .try_send(OperationJob { job, operation })
+                        .map_err(|error| {
+                            let (full, envelope) = match error {
+                                TrySendError::Full(job) => (true, job),
+                                TrySendError::Disconnected(job) => (false, job),
+                            };
+                            if let Some(op) = envelope.operation {
+                                self.operations.remove(op.id);
+                            }
+                            if full {
+                                "File operations are busy; try again shortly".into()
+                            } else {
+                                "File worker is unavailable".into()
+                            }
+                        })
+                }
+            }
+        };
+        if result.is_err() {
+            self.pending_jobs.fetch_sub(1, Ordering::AcqRel);
         }
-        self.jobs.try_send(job).map_err(|error| {
-            if tracked {
-                self.pending_jobs.fetch_sub(1, Ordering::AcqRel);
-            }
-            match error {
-                TrySendError::Full(_) => "File operations are busy; try again shortly".into(),
-                TrySendError::Disconnected(_) => "File worker is unavailable".into(),
-            }
-        })
+        result
     }
 
     /// Preview results occupy one slot independently of operation messages.
@@ -455,6 +512,7 @@ impl Drop for Platform {
         // Dropping channel senders wakes idle workers. An in-progress OS handler
         // must never make closing the window wait indefinitely for a thread join.
         self.stop.store(true, Ordering::Release);
+        self.operations.cancel_all();
     }
 }
 
@@ -494,8 +552,83 @@ fn validate_job_size(job: &Job) -> io::Result<()> {
     Ok(())
 }
 
+fn is_shell_job(job: &Job) -> bool {
+    matches!(
+        job,
+        Job::Open(_)
+            | Job::Application(_)
+            | Job::Reveal(_)
+            | Job::FolderOptions
+            | Job::Explorer(_)
+            | Job::Console(_)
+            | Job::NewWindow(_)
+            | Job::NewHomeWindow
+            | Job::Metrics { .. }
+    )
+}
+
+fn run_shell_job(job: Job, events: &SyncSender<Event>, stop: &AtomicBool, wake: &Wake) {
+    if stop.load(Ordering::Acquire) {
+        return;
+    }
+    let event = match job {
+        Job::Open(path) => match native::open(&path) {
+            Ok(()) => Event::Opened(path),
+            Err(error) => Event::Failed(error.to_string()),
+        },
+        Job::Metrics { id } => match native::metrics() {
+            Ok(metrics) => Event::Metrics {
+                id,
+                private_bytes: metrics.private_bytes,
+                working_set_bytes: metrics.working_set_bytes,
+                handles: metrics.handles,
+                cpu_seconds: metrics.cpu_seconds,
+            },
+            Err(error) => Event::Failed(format!("Process diagnostics: {error}")),
+        },
+        job => {
+            let result = match job {
+                Job::Application(identifier) => native::application(&identifier),
+                Job::Reveal(path) => native::reveal(&path),
+                Job::FolderOptions => folder_options::open(),
+                Job::Explorer(path) => std::process::Command::new("explorer.exe")
+                    .arg(path)
+                    .spawn()
+                    .map(|_| ()),
+                Job::Console(path) => open_console(&path),
+                Job::NewWindow(path) => std::env::current_exe()
+                    .and_then(|exe| {
+                        std::process::Command::new(exe)
+                            .arg("--new-window")
+                            .arg(path)
+                            .spawn()
+                    })
+                    .map(|_| ()),
+                Job::NewHomeWindow => std::env::current_exe()
+                    .and_then(|exe| {
+                        std::process::Command::new(exe)
+                            .args(["--explorer", "--home", "--new-window"])
+                            .spawn()
+                    })
+                    .map(|_| ()),
+                _ => unreachable!("Only interactive Shell jobs enter this lane"),
+            };
+            match result {
+                Ok(()) => Event::Done {
+                    message: String::new(),
+                    refresh: false,
+                },
+                Err(error) => Event::Failed(error.to_string()),
+            }
+        }
+    };
+    if !stop.load(Ordering::Acquire) && events.send(event).is_ok() {
+        wake();
+    }
+}
+
 fn operation_worker(
-    jobs: Receiver<Job>,
+    jobs: Receiver<OperationJob>,
     events: SyncSender<Event>,
     stop: Arc<AtomicBool>,
     owner: Arc<AtomicIsize>,
@@ -503,7 +636,7 @@ fn operation_worker(
     history: HistoryHandle,
     pending: Arc<AtomicU64>,
 ) {
-    while let Ok(job) = jobs.recv() {
+    while let Ok(OperationJob { job, operation }) = jobs.recv() {
         struct Pending<'a> {
             count: &'a AtomicU64,
             wake: &'a Wake,
@@ -520,78 +653,35 @@ fn operation_worker(
         let _pending = Pending {
             count: &pending,
             wake: &wake,
-            tracked: !matches!(job, Job::Metrics { .. }),
+            tracked: true,
         };
         if stop.load(Ordering::Acquire) {
             break;
+        }
+        let _current = operations::Current::enter(operation.clone());
+        if let Some(op) = &operation {
+            if op.cancel.load(Ordering::Acquire) {
+                op.finish(&Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "Cancelled before starting",
+                )));
+                continue;
+            }
+            op.start();
         }
         let (result, refresh) = match job {
             Job::ExplorerIntegration { .. } | Job::Properties(_) | Job::Launcher { .. } => {
                 unreachable!("Independent on-demand shell work")
             }
-            Job::Metrics { id } => {
-                let event = match native::metrics() {
-                    Ok(metrics) => Event::Metrics {
-                        id,
-                        private_bytes: metrics.private_bytes,
-                        working_set_bytes: metrics.working_set_bytes,
-                        handles: metrics.handles,
-                        cpu_seconds: metrics.cpu_seconds,
-                    },
-                    Err(error) => Event::Failed(format!("Process diagnostics: {error}")),
-                };
-                if stop.load(Ordering::Acquire) || events.send(event).is_err() {
-                    break;
-                }
-                wake();
-                continue;
-            }
-            Job::Open(path) => {
-                let event = match native::open(&path) {
-                    Ok(()) => Event::Opened(path),
-                    Err(error) => Event::Failed(error.to_string()),
-                };
-                if stop.load(Ordering::Acquire) || events.send(event).is_err() {
-                    break;
-                }
-                wake();
-                continue;
-            }
-            Job::Application(identifier) => (
-                native::application(&identifier).map(|()| String::new()),
-                false,
-            ),
-            Job::Reveal(path) => (native::reveal(&path).map(|()| String::new()), false),
-            Job::FolderOptions => (folder_options::open().map(|()| String::new()), false),
-            Job::Explorer(path) => (
-                std::process::Command::new("explorer.exe")
-                    .arg(path)
-                    .spawn()
-                    .map(|_| String::new()),
-                false,
-            ),
-            Job::Console(path) => (open_console(&path).map(|()| String::new()), false),
-            Job::NewWindow(path) => (
-                std::env::current_exe()
-                    .and_then(|exe| {
-                        std::process::Command::new(exe)
-                            .arg("--new-window")
-                            .arg(path)
-                            .spawn()
-                    })
-                    .map(|_| String::new()),
-                false,
-            ),
-            Job::NewHomeWindow => (
-                std::env::current_exe()
-                    .and_then(|exe| {
-                        std::process::Command::new(exe)
-                            .args(["--explorer", "--home", "--new-window"])
-                            .spawn()
-                    })
-                    .map(|_| String::new()),
-                false,
-            ),
+            Job::Metrics { .. }
+            | Job::Open(_)
+            | Job::Application(_)
+            | Job::Reveal(_)
+            | Job::FolderOptions
+            | Job::Explorer(_)
+            | Job::Console(_)
+            | Job::NewWindow(_)
+            | Job::NewHomeWindow => unreachable!("Interactive Shell lane"),
             Job::NewFile { parent, name } => (
                 history.mutate("New File", || {
                     Mutation::created(new_file(&parent, &name), &parent.join(&name))
@@ -672,6 +762,9 @@ fn operation_worker(
                 unreachable!("Path work uses its own lane")
             }
         };
+        if let Some(op) = &operation {
+            op.finish(&result);
+        }
         if stop.load(Ordering::Acquire) {
             break;
         }
@@ -1140,7 +1233,7 @@ struct CopiedEntry {
 }
 
 fn check_stop(stop: &AtomicBool) -> io::Result<()> {
-    if stop.load(Ordering::Acquire) {
+    if stop.load(Ordering::Acquire) || operations::cancelled() {
         Err(io::Error::new(
             io::ErrorKind::Interrupted,
             "Operation stopped; any partial destination is preserved",
@@ -1213,6 +1306,7 @@ fn copy_items(
                 }
                 match native::move_no_replace(&source, &target) {
                     Ok(()) => {
+                        operations::changed();
                         claim_entry(&source, &mut stats)?;
                         return Ok(());
                     }
@@ -1298,6 +1392,7 @@ fn copy_tree(
         claim_entry(&source, stats)?;
         if metadata.is_dir() {
             fs::create_dir(&target).map_err(|error| contextual(&target, error))?;
+            operations::changed();
             if record_sources {
                 copied.push(CopiedEntry {
                     path: source.clone(),
@@ -1347,6 +1442,7 @@ fn copy_tree(
                 .create_new(true)
                 .open(&target)
                 .map_err(|error| contextual(&target, error))?;
+            operations::changed();
             loop {
                 check_stop(stop)?;
                 let count = input
@@ -1886,6 +1982,132 @@ mod native {
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+
+    #[test]
+    fn cancellation_skips_queued_jobs_and_jobs_waiting_for_the_journal() {
+        use std::time::{Duration, Instant};
+        let dir = TestDirectory::new("cancel-queue");
+        let platform = Platform::new(Arc::new(|| {})).unwrap();
+        let history = platform.history_handle();
+        let (entered, ready) = mpsc::sync_channel(1);
+        let (release, gate) = mpsc::sync_channel(1);
+        let holder = thread::spawn(move || {
+            history.mutate("Gate", || {
+                entered.send(()).unwrap();
+                gate.recv().unwrap();
+                Mutation {
+                    result: Ok(String::new()),
+                    steps: vec![],
+                    changed: false,
+                }
+            })
+        });
+        ready.recv_timeout(Duration::from_secs(5)).unwrap();
+        for name in ["first", "second"] {
+            platform
+                .try_submit(Job::NewFolder {
+                    parent: dir.0.clone(),
+                    name: name.into(),
+                })
+                .unwrap();
+        }
+        let until = Instant::now() + Duration::from_secs(5);
+        let records = platform.operations().snapshot();
+        while Instant::now() < until
+            && !records
+                .iter()
+                .any(|op| op.state() == operations::State::Running)
+        {
+            thread::sleep(Duration::from_millis(1));
+        }
+        platform.operations().cancel_all();
+        release.send(()).unwrap();
+        holder.join().unwrap().unwrap();
+        let until = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < until && records.iter().any(|op| op.state().active()) {
+            let _ = platform.try_recv();
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(
+            records
+                .iter()
+                .all(|op| op.state() == operations::State::Cancelled)
+        );
+        assert!(!dir.0.join("first").exists() && !dir.0.join("second").exists());
+        assert!(!platform.update_busy());
+    }
+
+    #[test]
+    fn failed_queue_submission_does_not_leave_an_operation_record() {
+        let (jobs, _rx) = mpsc::sync_channel(JOB_CAPACITY);
+        let mut platform = Platform::new(Arc::new(|| {})).unwrap();
+        platform.jobs = jobs; // A deterministic queue without a consumer.
+        for _ in 0..JOB_CAPACITY {
+            platform.try_submit(Job::Undo).unwrap();
+        }
+        assert!(platform.try_submit(Job::Undo).is_err());
+        assert_eq!(platform.operations().snapshot().len(), JOB_CAPACITY);
+        assert_eq!(
+            platform.pending_jobs.load(Ordering::Acquire),
+            JOB_CAPACITY as u64
+        );
+    }
+
+    #[test]
+    fn interactive_open_completes_while_mutation_history_is_locked() {
+        use std::time::{Duration, Instant};
+        let dir = TestDirectory::new("independent-shell");
+        let platform = Platform::new(Arc::new(|| {})).unwrap();
+        let history = platform.history_handle();
+        let (entered, ready) = mpsc::sync_channel(1);
+        let (release, gate) = mpsc::sync_channel(1);
+        let holder = thread::spawn(move || {
+            history.mutate("Test gate", || {
+                entered.send(()).unwrap();
+                gate.recv().unwrap();
+                Mutation {
+                    result: Ok(String::new()),
+                    steps: vec![],
+                    changed: false,
+                }
+            })
+        });
+        ready.recv_timeout(Duration::from_secs(5)).unwrap();
+        platform
+            .try_submit(Job::NewFolder {
+                parent: dir.0.clone(),
+                name: "queued".into(),
+            })
+            .unwrap();
+        let begin = Instant::now();
+        platform
+            .try_submit(Job::Open(dir.0.join("missing-file.txt")))
+            .unwrap();
+        let until = begin + Duration::from_secs(5);
+        let mut event = None;
+        while Instant::now() < until && event.is_none() {
+            event = platform.try_recv();
+            thread::sleep(Duration::from_millis(1));
+        }
+        // Always release the journal before asserting, including failure paths.
+        assert!(!dir.0.join("queued").exists());
+        release.send(()).unwrap();
+        holder.join().unwrap().unwrap();
+        assert!(
+            matches!(event, Some(Event::Failed(_))),
+            "Open must complete before the mutation is released: {event:?}"
+        );
+        println!(
+            "independent_shell_open_ms={:.3}",
+            begin.elapsed().as_secs_f64() * 1000.0
+        );
+        let until = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < until && !dir.0.join("queued").exists() {
+            let _ = platform.try_recv();
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(dir.0.join("queued").exists());
+    }
 
     static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
     struct TestDirectory(PathBuf);

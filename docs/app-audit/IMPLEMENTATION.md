@@ -8,8 +8,8 @@ Each stage receives a focused implementation, edge-case tests, a diff review, an
 | --- | --- | --- |
 | 1 | Shared preferences, independent window state, compact saved layouts, recoverable save limits | Complete; reviewed; 592 applicable app tests pass |
 | 2 | Shared live search catalogs, freshness, and catalog reuse | Complete; reviewed; 603 applicable app tests pass |
-| 3 | Independent interactive Shell actions and operation status | In progress |
-| 4 | Fair scheduling for visible searches and details | Pending |
+| 3 | Independent interactive Shell actions and operation status | Complete; reviewed; 611 applicable app tests pass |
+| 4 | Fair scheduling for visible searches and details | In progress |
 | 5 | Complete large listings and predictable deep paging | Pending |
 | 6 | Structured search and saved collections | Pending |
 | 7 | Accessible virtual file listings | Pending |
@@ -36,3 +36,13 @@ Selected generations reopen through independent read leases and remain immutable
 The external nested-create fixture published the changed result in **123.219 ms** on Linux (one observed run). Rename, deletion, and size changes with a preserved modification timestamp are covered. Four unchanged reactivations retained **one generation and zero additional scans**. Further tests cover independent cancellation, selection snapshots across a refresh, cache self-invalidation, symbolic links, file reads, watch-loss recovery, idle work, and scope eviction.
 
 Validation: **603 applicable app tests passed**; **34 index tests passed**, two opt-in index stress/microbenchmarks ignored. The Windows GNU index target also passed `cargo check`. Formatting and diff checks passed. Windows runtime and full native-application checks remain part of integrated validation.
+
+## Stage 3
+
+Interactive Open, application activation, Reveal, Folder Options, external windows, consoles, and metrics use two bounded Shell workers independently of the mutation FIFO. Native calls initialize their own apartments. Clipboard writes and pastes retain their original ordering, and mutations still share the protected undo journal with batch actions.
+
+The File Operations command and application-menu entry show a bounded 64-record history, queue/running/completion states, destination summaries, elapsed time, Windows estimated-work progress, per-operation cancellation, and clear-completed/cancel-all controls. Cancellation is checked before execution, after waiting for the journal, inside portable copy loops, and in native progress callbacks. Native callbacks retain a thread-safe operation token, so cancellation and progress do not rely on callback thread affinity. Confirmed child changes survive a failed parent outcome and are reported as partial completion; existing undo and native conflict/retry behavior remain authoritative. Operation history is intentionally local to the current window/process, not a durable recovery journal; batch rename retains its existing progress UI.
+
+The original blocked-mutation fixture delivered **0 interactive events in 250 ms**. Its regression now returns the Open error **before releasing the mutation**, observed at 2.328–2.630 ms in portable runs. This measures queue independence with a missing-file Open, not Windows application startup. Additional tests cover queued cancellation, journal-wait cancellation, queue rejection without phantom records, bounded history/UTF-8 messages, cancellation racing success, native callback ownership, and rendering the operation dialog. Review caught partial-child changes and an application-menu grouping expectation after the new entry.
+
+Validation: **611 applicable app tests pass**, formatting and diff checks pass. The full Windows GNU application and its test sources pass `cargo check`; native runtime interaction remains for Windows CI/manual acceptance. No runtime Windows latency is claimed.
