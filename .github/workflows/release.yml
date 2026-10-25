@@ -3,6 +3,8 @@ name: Release
 on:
   push:
     tags: ['v*']
+    branches: [main]
+    paths: ['docs/releases/v*.md']
   workflow_dispatch:
     inputs:
       tag:
@@ -14,7 +16,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
@@ -26,15 +28,26 @@ jobs:
       contents: write
     env:
       CARGO_TERM_COLOR: always
-      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      RELEASE_INPUT: ${{ inputs.tag }}
       GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
           persist-credentials: false
-      - name: Validate the release tag and notes
+      - name: Resolve the release version
+        shell: pwsh
+        run: |
+          $version = python -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version'])"
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read the release version.' }
+          $tag = if ($env:RELEASE_INPUT) { $env:RELEASE_INPUT } elseif ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "v$version" }
+          if ($tag -cne "v$version") { throw 'The release tag does not match the package version.' }
+          "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Validate the release version and notes
         run: python -B scripts/package_portable.py --tag "$env:RELEASE_TAG" --validate-only
+      - name: Check release tooling
+        run: python -B -m unittest discover -s scripts/tests -v
       - name: Install the pinned Rust toolchain
         shell: pwsh
         run: |
@@ -46,28 +59,99 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Test the Windows workspace
         run: cargo test --locked --workspace --target x86_64-pc-windows-msvc
-      - name: Check release tooling
-        run: python -B -m unittest discover -s scripts/tests -v
       - name: Install Inno Setup 6.7
         run: choco upgrade innosetup --version=6.7.0 --yes --no-progress --allow-downgrade
-      - name: Build the tagged application
+      - name: Build the installer smoke-test application
+        run: cargo build --locked --target x86_64-pc-windows-msvc -p foldex
+      - name: Exercise install, repair, upgrade, downgrade and uninstall
+        shell: pwsh
+        run: |
+          try {
+            ./scripts/test_installer.ps1 -Binary target/x86_64-pc-windows-msvc/debug/foldex.exe
+          } finally {
+            Get-ChildItem -LiteralPath $env:RUNNER_TEMP -Directory -Filter 'foldex-installer-*' | ForEach-Object {
+              Get-ChildItem -LiteralPath $_.FullName -File -Filter 'setup-*.log' | ForEach-Object {
+                Write-Host "Installer log: $($_.Name)"
+                Get-Content -LiteralPath $_.FullName
+              }
+            }
+          }
+      - name: Retain installer smoke-test logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: foldex-release-installer-smoke-logs
+          path: ${{ runner.temp }}/foldex-installer-*/setup-*.log
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Build the release application
         env:
           RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build --locked --release --target x86_64-pc-windows-msvc -p foldex
+      - name: Create or verify the release source tag
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $commit = (git rev-parse HEAD).Trim()
+          git show-ref --verify --quiet "refs/tags/$env:RELEASE_TAG"
+          if ($LASTEXITCODE -eq 1) {
+            gh api --method POST "repos/$env:GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$env:RELEASE_TAG" -f "sha=$commit"
+            if ($LASTEXITCODE -ne 0) { throw 'Could not create the release tag.' }
+            git fetch origin "refs/tags/$($env:RELEASE_TAG):refs/tags/$($env:RELEASE_TAG)"
+            if ($LASTEXITCODE -ne 0) { throw 'Could not fetch the release tag.' }
+          } elseif ($LASTEXITCODE -ne 0) {
+            throw 'Could not inspect the release tag.'
+          }
+          $tagCommit = (git rev-parse "$($env:RELEASE_TAG)^{commit}").Trim()
+          if ($LASTEXITCODE -ne 0 -or $tagCommit -cne $commit) { throw 'The release tag points to different source.' }
       - name: Package the portable ZIP and notices
         run: python -B scripts/package_portable.py --tag "$env:RELEASE_TAG"
       - name: Package the Windows installer
         run: python -B scripts/package_installer.py --tag "$env:RELEASE_TAG" --iscc "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-      - name: Retain the release artifacts
+      - name: Verify the published download inventory
+        shell: python
+        run: |
+          import json
+          from pathlib import Path
+          import tomllib
+          import zipfile
+
+          version = tomllib.loads(Path("Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
+          expected = {
+              f"Foldex-{version}-windows-x64-setup.exe",
+              f"Foldex-{version}-windows-x64-portable.zip",
+          }
+          actual = {path.name for path in Path("dist").iterdir() if path.is_file()}
+          if actual != expected:
+              raise ValueError(f"Unexpected release files: {sorted(actual)}")
+          with zipfile.ZipFile(Path("dist") / f"Foldex-{version}-windows-x64-portable.zip") as archive:
+              names = archive.namelist()
+              if any(Path(name).name == "BUILD-INFO.json" or "SHA256SUMS" in name for name in names):
+                  raise ValueError("The portable ZIP contains removed download metadata")
+          print(json.dumps({"downloads": sorted(actual), "portable_files": len(names)}))
+      - name: Retain the release downloads
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: foldex-windows-x64
           path: |
             dist/Foldex-*-windows-x64-portable.zip
             dist/Foldex-*-windows-x64-setup.exe
-            dist/Foldex-*-SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
+      - name: Remove the obsolete checksum attachment
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $legacyAssets = @(gh release view v0.1.0 --json assets --jq '.assets[].name')
+          if ($LASTEXITCODE -ne 0) { throw 'Could not inspect the previous release.' }
+          if ($legacyAssets -contains 'Foldex-0.1.0-SHA256SUMS.txt') {
+            gh release delete-asset v0.1.0 Foldex-0.1.0-SHA256SUMS.txt --yes
+            if ($LASTEXITCODE -ne 0) { throw 'Could not remove the obsolete checksum attachment.' }
+          }
+          gh release edit v0.1.0 --notes-file docs/releases/v0.1.0.md
+          if ($LASTEXITCODE -ne 0) { throw 'Could not update the previous release notes.' }
       - name: Publish the GitHub release
         shell: pwsh
         env:
@@ -76,8 +160,7 @@ jobs:
           $version = python -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version'])"
           $assets = @(
             "dist/Foldex-$version-windows-x64-portable.zip",
-            "dist/Foldex-$version-windows-x64-setup.exe",
-            "dist/Foldex-$version-SHA256SUMS.txt"
+            "dist/Foldex-$version-windows-x64-setup.exe"
           )
           $releaseArgs = @(
             'release', 'create', $env:RELEASE_TAG,
@@ -95,5 +178,4 @@ jobs:
             gh @releaseArgs @assets
           }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          # Expose the update only after every asset has uploaded successfully.
           gh release edit $env:RELEASE_TAG --draft=false

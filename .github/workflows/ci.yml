@@ -86,7 +86,7 @@ jobs:
         run: choco upgrade innosetup --version=6.7.0 --yes --no-progress --allow-downgrade
       - name: Build the PR application
         run: cargo build --locked --release --target x86_64-pc-windows-msvc -p foldex
-      - name: Package a test installer with notices and build provenance
+      - name: Package a test installer with license notices
         shell: python
         run: |
           import hashlib
@@ -119,27 +119,16 @@ jobs:
               readme = readme.replace("@SOURCE_ARCHIVE_URL@", source_archive)
               (stage / "README.md").write_text("PR TEST BUILD - not a published release.\n\n" + readme, encoding="utf-8")
               (stage / "foldex-installed.ini").write_text(f"[Installation]\nVersion={version}\n", encoding="utf-8")
-              info = {
-                  "version": version, "commit": commit, "build_kind": "pull-request-test",
-                  "target": portable.TARGET, "renderer": "DirectX 12",
-                  "license": "AGPL-3.0-only", "signed": False,
-                  "source": source, "source_archive": source_archive,
-                  "executable_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
-              }
-              (stage / "BUILD-INFO.json").write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
               portable.write_notices(stage, packages)
               subprocess.run([
                   r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
                   f"/DAppVersion={version}", f"/DSourceDir={stage}",
                   f"/DReleaseDir={output}", str(portable.ROOT / "packaging/windows/foldex.iss"),
               ], check=True)
-              shutil.copyfile(stage / "BUILD-INFO.json", output / "BUILD-INFO.json")
-              shutil.copyfile(stage / "README.md", output / "README-TESTING.txt")
           installer = output / f"Foldex-{version}-windows-x64-setup.exe"
           if not installer.is_file() or installer.stat().st_size < 1024:
               raise ValueError("Inno Setup did not produce a complete installer")
           digest = hashlib.sha256(installer.read_bytes()).hexdigest()
-          (output / "SHA256SUMS.txt").write_text(f"{digest}  {installer.name}\n", encoding="utf-8")
           print(json.dumps({"installer": installer.name, "sha256": digest, "commit": commit}))
       - name: Retain the downloadable test installer
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

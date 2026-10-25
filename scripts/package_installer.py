@@ -14,6 +14,11 @@ import package_portable as portable
 
 def extract_archive(archive: Path, destination: Path, version: str, commit: str) -> Path:
     prefix = f"Foldex-{version}-windows-x64-portable"
+    info = json.loads(archive.with_name(f".{archive.stem}.json").read_text(encoding="utf-8"))
+    if info["version"] != version or info["commit"] != commit or info["tag"] != f"v{version}":
+        raise ValueError("Portable archive does not match the checked-out release")
+    if hashlib.sha256(archive.read_bytes()).hexdigest() != info["archive_sha256"]:
+        raise ValueError("Portable archive differs from CI's validated package")
     with zipfile.ZipFile(archive) as zipped:
         names = zipped.namelist()
         if len(names) != len(set(names)):
@@ -23,13 +28,10 @@ def extract_archive(archive: Path, destination: Path, version: str, commit: str)
             if (path.is_absolute() or ".." in path.parts or "\\" in name or ":" in name
                     or not path.parts or path.parts[0] != prefix):
                 raise ValueError("Unsafe portable archive entry")
-        info = json.loads(zipped.read(f"{prefix}/BUILD-INFO.json"))
-        if info["version"] != version or info["commit"] != commit or info["tag"] != f"v{version}":
-            raise ValueError("Portable archive does not match the checked-out release")
         binary = zipped.read(f"{prefix}/Foldex.exe")
         portable.validate_x64(binary)
         if hashlib.sha256(binary).hexdigest() != info["executable_sha256"]:
-            raise ValueError("Portable executable checksum does not match BUILD-INFO")
+            raise ValueError("Portable executable checksum does not match the validated package")
         zipped.extractall(destination)
     return destination / prefix
 
@@ -62,10 +64,8 @@ def main() -> None:
             f"/DReleaseDir={output}", str(portable.ROOT / "packaging/windows/foldex.iss")], check=True)
     if not installer.is_file() or installer.stat().st_size < 1024:
         raise ValueError("Inno Setup did not produce a complete installer")
-    checksums = output / f"Foldex-{version}-SHA256SUMS.txt"
-    checksums.write_text("".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n"
-        for path in [archive, installer]), encoding="utf-8")
-    print(json.dumps({"installer": str(installer), "checksums": str(checksums)}))
+    archive.with_name(f".{archive.stem}.json").unlink()
+    print(json.dumps({"installer": str(installer)}))
 
 
 if __name__ == "__main__":

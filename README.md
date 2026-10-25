@@ -83,11 +83,12 @@ GitHub's **Source code** archives contain source files, not the Windows applicat
 The initial `0.x` releases are public previews with limited desktop hardware coverage.
 
 A portable folder contains `Foldex.exe`, the example `theme.toml`, `README.md`,
-`LICENSE`, `BUILD-INFO.json`, `THIRD-PARTY-NOTICES.md`, and the `licenses` directory.
+`LICENSE`, `THIRD-PARTY-NOTICES.md`, and the `licenses` directory.
 The generated `dist` directory is local build output and is not included in Git clones.
 
-The release includes SHA-256 checksums for both downloads. Builds are currently
-unsigned, so Windows may display a publisher or SmartScreen prompt.
+The release provides a Windows setup EXE and portable ZIP, alongside GitHub’s
+source archives. Builds are unsigned, so Windows may display a publisher or
+SmartScreen prompt.
 
 You can move the portable folder to a writable location of your choice. Preserve
 `theme.toml` and `foldex-session.json` when updating to keep your appearance,

@@ -1,77 +1,59 @@
 # Releasing Foldex
 
-Source code, the lockfiles, artwork, third-party patches, and release scripts are
-tracked in Git. `dist/`, local backups, generated files, and user state are ignored.
-Distribute Windows downloads as GitHub release assets instead of committing EXEs
-or ZIPs to the repository.
+Windows downloads are GitHub release assets. Generated files, user settings and
+build staging stay out of Git and out of the published downloads.
 
-## Prepare a version
+## Publish a version
 
-1. Update `workspace.package.version` in `Cargo.toml` and regenerate `Cargo.lock`.
-   Keep the three independently versioned workspace packages consistent if their
-   versions change.
-2. Add `docs/releases/vVERSION.md` with release notes and any changed requirements.
-3. Run the checks used by CI and review the changes. Do not include personal
-   sessions, caches, credentials, or local recovery backups.
-4. Commit and push `main`, then confirm that CI passed.
-5. Create an annotated tag matching Cargo's version and push that tag:
+1. Update `workspace.package.version` in `Cargo.toml` and the matching workspace
+   entries in `Cargo.lock`. Independently versioned library crates may retain
+   their own version.
+2. Add `docs/releases/vVERSION.md` with release notes.
+3. Commit and push the version and notes together to `main`.
 
-   ```powershell
-   git tag -a v0.1.0 -m "Foldex 0.1.0"
-   git push origin v0.1.0
-   ```
+A change to release notes on `main` starts the Release workflow. It checks the
+version, formatting, Windows tests, installer lifecycle and packaging tests;
+builds the application; creates the matching source tag if it does not exist;
+and publishes the setup EXE and portable ZIP. GitHub adds source ZIP and tar.gz
+links automatically.
 
-The Release workflow checks the tag/version and notes, runs the Windows tests,
-builds x64 from the tagged source, generates third-party notices, and publishes
-the Windows setup EXE, portable ZIP and SHA-256 checksum file. The release build
-statically links the Visual C++ runtime. Versions beginning with `0.` and
-versions containing a prerelease suffix are marked as GitHub prereleases.
+Published downloads contain no separate checksum file or `BUILD-INFO.json`.
+Portable downloads retain the stock theme, short README and required license
+notices. Internal packaging validation records are consumed inside CI and are
+not uploaded. The updater still verifies GitHub's SHA-256 asset digest.
 
-To start or retry a build of an existing tag without moving that tag, use the
-Release workflow's **Run workflow** button and supply the tag, or run:
+Versions beginning with `0.` and versions with a prerelease suffix are marked
+as GitHub prereleases. Numeric `0.x` versions remain in the normal update stream.
 
-```powershell
-gh workflow run release.yml --repo pfaizar/foldex --ref main -f tag=v0.1.0
-```
-
-Release tags identify published source and must not be moved to different commits.
-Fixes should receive a new version and tag.
+Existing tags also trigger the workflow when pushed. To retry an unpublished
+tag, use the Release workflow's **Run workflow** button and supply that tag.
+Published tags must not be moved, and published binary assets must not be replaced:
+fixes receive a new version and tag.
 
 ## Local packaging
 
-Python 3.11+, Inno Setup 6.7.0, and the pinned Rust/MSVC build environment are required. From a clean
-checkout of the release tag:
+For manual builds, Python 3.11+, Inno Setup 6.7.0 and the pinned Rust/MSVC
+environment are required. From a clean checkout of a release tag:
 
 ```powershell
 $env:RUSTFLAGS = '-C target-feature=+crt-static'
 cargo build --locked --release --target x86_64-pc-windows-msvc -p foldex
-python -B scripts/package_portable.py --tag v0.1.0
-python -B scripts/package_installer.py --tag v0.1.0 --iscc 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+python -B scripts/package_portable.py --tag v0.1.1
+python -B scripts/package_installer.py --tag v0.1.1 --iscc 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
 ```
 
-The portable script creates a fresh staging folder and copies only the compiled EXE, stock
-theme, README, license, build information, and generated dependency notices. It
-does not copy the contents of a live `dist/` folder. Missing license texts, an
-incorrect CPU architecture, a mismatched tag, and uncommitted source changes stop
-packaging. The source checkout and tag must remain available for AGPL recipients.
+The portable packager uses a clean staging folder. The installer packager checks
+the source version, archive and executable against CI's internal staging record,
+then consumes that record. It does not ship it. Both formats include required
+third-party notices and source links. Release builds statically link the Visual
+C++ runtime.
 
-The installer script validates that archive's version, tag, commit, architecture
-and executable checksum, extracts it into a separate staging folder, adds the
-installed-mode marker and README, and invokes Inno Setup. It then regenerates
-the checksum file to cover both artifacts. The EXE and ZIP are retained as
-workflow artifacts and uploaded together. Never change `AppId`, the installer
-mutex names, installed-mode marker, or asset naming without a migration plan.
+Keep the source tag available. Do not change the installer AppId, mutex names,
+installed-mode marker or asset naming without a migration plan. The updater
+requires the exact `Foldex-VERSION-windows-x64-setup.exe` asset under `vVERSION`.
 
-The updater queries the public GitHub releases API. Publish the exact
-`Foldex-VERSION-windows-x64-setup.exe` asset under `vVERSION`. GitHub supplies
-`digest: sha256:...` for uploaded assets; the updater refuses downloads without
-that digest. Do not replace assets under a published version; publish a new
-version instead. Numeric `0.x` preview releases remain in the normal update
-stream. SemVer prereleases require the user's prerelease setting.
+## Desktop checks
 
-## Before broader distribution
-
-Test on clean desktop Windows installations, including runtime prerequisites,
-graphics hardware, file operations, upgrade behavior, and user settings. The
-builds are unsigned. Windows desktop validation of the installer and updater is
-still required before broad distribution. See [the validation matrix and research](WINDOWS-UPDATES.md).
+Verify installation and updates on Windows desktop hardware, including graphics,
+file operations, saved settings, manual cancellation and update/restart. Builds
+are unsigned. See [the installer and updater validation notes](WINDOWS-UPDATES.md).

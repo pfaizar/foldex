@@ -183,7 +183,7 @@ def main() -> None:
     validate_x64(binary)
     label = f"Foldex-{package_version}-windows-x64-portable"
     archive = output / f"{label}.zip"
-    checksums = output / f"Foldex-{package_version}-SHA256SUMS.txt"
+    manifest = archive.with_name(f".{archive.stem}.json")
     with tempfile.TemporaryDirectory(prefix=".foldex-package-", dir=output) as temporary:
         stage = Path(temporary).resolve()
         if not stage.is_relative_to(output):
@@ -197,12 +197,6 @@ def main() -> None:
         readme = readme.replace("@VERSION@", package_version).replace("@SOURCE_URL@", f"{REPOSITORY}/tree/{commit}")
         readme = readme.replace("@SOURCE_ARCHIVE_URL@", f"{REPOSITORY}/archive/refs/tags/{args.tag}.zip")
         (folder / "README.md").write_text(readme, encoding="utf-8")
-        (folder / "BUILD-INFO.json").write_text(json.dumps({
-            "version": package_version, "tag": args.tag, "commit": commit,
-            "target": TARGET, "renderer": "DirectX 12", "license": "AGPL-3.0-only",
-            "source": f"{REPOSITORY}/tree/{commit}", "signed": False,
-            "executable_sha256": hashlib.sha256(binary).hexdigest(),
-        }, indent=2) + "\n", encoding="utf-8")
         notice_count = write_notices(folder, packages)
         with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=9) as zipped:
             for path in sorted(folder.rglob("*")):
@@ -215,8 +209,13 @@ def main() -> None:
             if set(zipped.namelist()) != expected:
                 raise ValueError("ZIP inventory differs from the clean staging folder")
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-    checksums.write_text(f"{digest}  {archive.name}\n", encoding="utf-8")
-    print(json.dumps({"archive": str(archive), "checksums": str(checksums), "sha256": digest,
+    # Only CI's installer packaging step consumes this record; it is not shipped.
+    manifest.write_text(json.dumps({
+        "version": package_version, "tag": args.tag, "commit": commit,
+        "archive_sha256": digest,
+        "executable_sha256": hashlib.sha256(binary).hexdigest(),
+    }) + "\n", encoding="utf-8")
+    print(json.dumps({"archive": str(archive),
                       "upstream_packages": notice_count, "commit": commit}))
 
 

@@ -28,12 +28,27 @@ if (Test-Path $sentinel) { throw 'The installer test sentinel already exists.' }
 function Assert-True([bool]$Condition, [string]$Message) {
     if (-not $Condition) { throw $Message }
 }
+function Wait-SetupIdle {
+    # Inno's uninstaller can keep its cleanup process alive after its parent exits.
+    # Wait for that process to release SetupMutex before starting the next setup.
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        [Threading.Mutex]$remaining = $null
+        if (-not [Threading.Mutex]::TryOpenExisting('Global\Foldex.Setup', [ref]$remaining)) { return }
+        $remaining.Dispose()
+        if ($timer.ElapsedMilliseconds -ge 15000) { throw 'Setup cleanup did not release its mutex.' }
+        Start-Sleep -Milliseconds 100
+    }
+}
 function Run-Setup([string]$Executable, [string[]]$Extra, [bool]$Success = $true) {
     $log = Join-Path $testRoot ('setup-' + [Guid]::NewGuid().ToString('N') + '.log')
     $arguments = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/SP-', '/NORESTART', "/LOG=`"$log`"") + $Extra
-    $process = Start-Process -FilePath $Executable -ArgumentList $arguments -PassThru
+    $process = Start-Process -FilePath $Executable -ArgumentList $arguments -WindowStyle Hidden -PassThru
     if (-not $process.WaitForExit(90000)) { throw "Setup timed out. Inspect $log" }
-    if ($Success) { Assert-True ($process.ExitCode -eq 0) "Setup failed with exit code $($process.ExitCode). Inspect $log" }
+    if ($Success) {
+        Assert-True ($process.ExitCode -eq 0) "Setup failed with exit code $($process.ExitCode). Inspect $log"
+        Wait-SetupIdle
+    }
     else { Assert-True ($process.ExitCode -ne 0) 'A blocked setup unexpectedly succeeded.' }
 }
 function Installed-Version {
@@ -60,7 +75,6 @@ try {
     Copy-Item packaging/windows/installed-README.md (Join-Path $stage 'README.md')
     Set-Content (Join-Path $stage 'THIRD-PARTY-NOTICES.md') 'Smoke test fixture; never distributed.'
     Set-Content (Join-Path $stage 'licenses\fixture.txt') 'Smoke test fixture'
-    Set-Content (Join-Path $stage 'BUILD-INFO.json') '{}'
     Set-Content (Join-Path $stage 'foldex-installed.ini') '[Installation]'
     $v1 = Build-Setup '91.0.0'
     $rc2 = Build-Setup '91.1.0-rc.2'

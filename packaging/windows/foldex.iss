@@ -56,7 +56,6 @@ Source: "{#SourceDir}\Foldex.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\theme.toml"; DestDir: "{app}"; DestName: "default-theme.toml"; Flags: ignoreversion
 Source: "{#SourceDir}\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
-Source: "{#SourceDir}\BUILD-INFO.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourceDir}\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#SourceDir}\foldex-installed.ini"; DestDir: "{app}"; Flags: ignoreversion

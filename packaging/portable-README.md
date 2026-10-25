@@ -25,12 +25,11 @@ If you enable **Default File Explorer** in Options, turn it off before moving or
 deleting the portable folder. This restores Windows folder and Win+E registrations.
 
 This build is unsigned. Windows may show an unknown-publisher or SmartScreen
-prompt. Download it from the project's GitHub release and verify its SHA-256
-checksum against the accompanying checksum file.
+prompt. Download it from the project's GitHub release.
 
 Copyright (c) 2026 Foldex contributors. Foldex is licensed under AGPL-3.0-only;
 see `LICENSE`. Third-party components retain their upstream licenses and notices.
 
 Corresponding source for this version: [browse the source](@SOURCE_URL@) or
 [download the source ZIP](@SOURCE_ARCHIVE_URL@). Build instructions are in that
-source tree's README. `BUILD-INFO.json` records the exact commit and build target.
+source tree's README.
