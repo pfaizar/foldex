@@ -298,7 +298,9 @@ fn main() -> eframe::Result {
         options.event_loop_builder = Some(Box::new(|builder| {
             builder.with_msg_hook(|raw| {
                 use windows_sys::Win32::UI::{
-                    Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_MENU, VK_SHIFT},
+                    Input::KeyboardAndMouse::{
+                        GetKeyState, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+                    },
                     WindowsAndMessaging::{
                         MSG, WM_KEYDOWN, WM_KILLFOCUS, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN,
                         WM_MBUTTONDBLCLK, WM_MBUTTONDOWN, WM_RBUTTONDBLCLK, WM_RBUTTONDOWN,
@@ -316,7 +318,8 @@ fn main() -> eframe::Result {
                         shift,
                         alt,
                         command: ctrl,
-                        mac_cmd: false,
+                        mac_cmd: unsafe { GetKeyState(VK_LWIN as i32) } < 0
+                            || unsafe { GetKeyState(VK_RWIN as i32) } < 0,
                     };
                     if native_keys::record(
                         msg.wParam as u32,

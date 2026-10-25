@@ -789,16 +789,18 @@ impl Foldex {
                 check(
                     run,
                     "launcher_settings_live_in_root_options",
-                    self.options
-                        && !self.launcher_open
-                        && self.options_popup.launcher_options_diagnostics().0,
+                    self.options && !self.launcher_open && self.options_popup.owns_navigation(ctx),
                 );
                 capture(ctx, run, "fix-refine-launcher-options", false);
                 run.phase = 2027;
             }
             2027 => {
                 run.shortcut_before = Some(self.launcher.settings.hotkey.clone());
-                self.options_popup.begin_launcher_shortcut_recording();
+                self.options_popup.close();
+                self.options = false;
+                self.hotkeys_open = true;
+                self.hotkeys.focus_editor();
+                self.hotkeys.record(crate::commands::Command::Launcher);
                 run.force_focus = true;
                 let modifiers = Modifiers::CTRL | Modifiers::ALT | Modifiers::SHIFT;
                 run.input.push(egui::Event::ModifiersChanged(modifiers));
@@ -816,11 +818,11 @@ impl Foldex {
                 run.phase = 2028;
             }
             2028 => {
-                let state = self.options_popup.launcher_options_diagnostics();
+                let label = self.hotkeys.recording_label();
                 check(
                     run,
                     "shortcut_recorder_previews_real_key_chord",
-                    state.1 && state.2.as_deref() == Some("Ctrl+Alt+Shift+F12"),
+                    self.hotkeys.is_recording() && label.as_deref() == Some("Ctrl+Alt+Shift+F12"),
                 );
                 capture(ctx, run, "fix-refine-shortcut-recording", false);
                 run.phase = 20281;
@@ -833,10 +835,14 @@ impl Foldex {
                 check(
                     run,
                     "cancel_shortcut_recording_preserves_working_binding",
-                    !self.options_popup.launcher_options_diagnostics().1
+                    !self.hotkeys.is_recording()
                         && run.shortcut_before.as_ref() == Some(&self.launcher.settings.hotkey),
                 );
-                self.options_popup.begin_launcher_shortcut_recording();
+                self.options_popup.close();
+                self.options = false;
+                self.hotkeys_open = true;
+                self.hotkeys.focus_editor();
+                self.hotkeys.record(crate::commands::Command::Launcher);
                 run.input.push(egui::Event::Key {
                     key: Key::A,
                     physical_key: None,
@@ -857,6 +863,8 @@ impl Foldex {
             2031 => {
                 run.force_focus = false;
                 self.options_popup.close();
+                self.hotkeys.cancel_recording();
+                self.hotkeys_open = false;
                 run.phase = 2032;
             }
             2032 if !self.options => {

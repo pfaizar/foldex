@@ -777,17 +777,17 @@ pub const COMMANDS: &[CommandEntry] = &[
     entry!(
         Launcher,
         "Launcher",
-        "Search apps, files and windows, calculate, or open clipboard history",
-        "",
+        "Open apps, files, calculator and clipboard history with a global shortcut",
+        "Ctrl+Alt+Space",
         "raycast apps files programs calculator clipboard switcher tray",
         true
     ),
     entry!(
         LauncherSettings,
         "Launcher settings",
-        "Configure the global shortcut, tray mode and clipboard history",
+        "Configure tray mode, clipboard history and launcher search folders",
         "",
-        "background shortcut hotkey tray clipboard",
+        "background tray clipboard search folders",
         true
     ),
     entry!(

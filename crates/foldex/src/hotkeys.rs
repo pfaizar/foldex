@@ -1,4 +1,4 @@
-//! Editable shortcuts with exact modifiers and bounded two-key sequences.
+//! Editable shortcuts with exact modifiers and variable-length key sequences.
 //! Defaults are source-style mappings; personal File Pilot config is not imported.
 use crate::commands::{COMMANDS, Command, Palette, SurfaceFocus};
 use egui::{Event, Id, Key, Modifiers, Rect, Sense, UiBuilder, pos2, vec2};
@@ -23,7 +23,7 @@ pub struct KeyStroke {
     pub alt: bool,
     #[serde(default)]
     pub shift: bool,
-    /// Physical Mac Command; egui's Windows `command == ctrl` alias is ignored.
+    /// Physical Super key (Windows or Mac Command), never the `command == ctrl` alias.
     #[serde(default)]
     pub cmd: bool,
 }
@@ -51,7 +51,11 @@ impl KeyStroke {
             label.push_str("Shift+");
         }
         if self.cmd {
-            label.push_str("Cmd+");
+            label.push_str(if cfg!(target_os = "macos") {
+                "Cmd+"
+            } else {
+                "Win+"
+            });
         }
         label.extend(name.chars().take(32));
         label
@@ -80,7 +84,7 @@ impl KeyStroke {
                 "Ctrl" => modifiers.ctrl = true,
                 "Alt" => modifiers.alt = true,
                 "Shift" => modifiers.shift = true,
-                "Cmd" => modifiers.mac_cmd = true,
+                "Cmd" | "Win" | "Super" => modifiers.mac_cmd = true,
                 _ => key = Key::from_name(part),
             }
         }
@@ -107,6 +111,46 @@ impl Binding {
             .collect::<Vec<_>>()
             .join(", ")
     }
+}
+
+fn launcher_shortcut(binding: &Binding) -> Option<String> {
+    if binding.sequence.len() != 1 {
+        return None;
+    }
+    let key = &binding.sequence[0];
+    let stroke = key.compile()?;
+    let name = match stroke.key {
+        Key::ArrowLeft => "ArrowLeft",
+        Key::ArrowRight => "ArrowRight",
+        Key::ArrowUp => "ArrowUp",
+        Key::ArrowDown => "ArrowDown",
+        Key::Plus => "Equals",
+        key => key.name(),
+    };
+    let mut shortcut = String::new();
+    for (held, modifier) in [
+        (key.ctrl, "Ctrl+"),
+        (key.alt, "Alt+"),
+        (key.shift, "Shift+"),
+        (key.cmd, "Win+"),
+    ] {
+        if held {
+            shortcut.push_str(modifier);
+        }
+    }
+    shortcut.push_str(name);
+    crate::launcher::native::parse_hotkey(&shortcut).map(|_| shortcut)
+}
+
+fn launcher_stroke(shortcut: &str) -> Option<KeyStroke> {
+    let (modifiers, virtual_key) = crate::launcher::native::parse_hotkey(shortcut)?;
+    Some(KeyStroke {
+        key: crate::native_keys::physical_key(virtual_key)?.name().into(),
+        ctrl: modifiers & 2 != 0,
+        alt: modifiers & 1 != 0,
+        shift: modifiers & 4 != 0,
+        cmd: modifiers & 8 != 0,
+    })
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConflictKind {
@@ -162,16 +206,15 @@ fn shortcut_key(key: Key, physical: Option<Key>, modifiers: Modifiers) -> Key {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Compiled {
     index: usize,
     command: Command,
-    first: Stroke,
-    second: Option<Stroke>,
+    sequence: Vec<Stroke>,
 }
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct Pending {
-    first: Stroke,
+    sequence: Vec<Stroke>,
     deadline: f64,
     fallback: Option<Command>,
     owner: Option<egui::Id>,
@@ -181,7 +224,11 @@ struct Recording {
     command: Command,
     replace: Option<usize>,
     strokes: Vec<KeyStroke>,
-    limit: usize,
+}
+
+struct LauncherChange {
+    requested: String,
+    bindings: Vec<Binding>,
 }
 
 #[derive(Clone)]
@@ -208,10 +255,9 @@ pub(crate) struct EditorProbe {
     pub body_clip: Rect,
     pub footer: Rect,
     pub content: Rect,
-    pub settings: [Rect; 2],
+    pub settings: Rect,
     pub separator: Rect,
     pub reset_all: Rect,
-    pub record_two: Rect,
     pub rows: Vec<EditorRowProbe>,
 }
 
@@ -279,11 +325,11 @@ pub struct Hotkeys {
     editor_motion: foldex_ui::motion::LayoutMotion,
     editor_scroll_reset: bool,
     recorded_frame: Option<u64>,
-    record_two: bool,
+    super_keys: [bool; 2],
+    launcher_change: Option<LauncherChange>,
     status: Option<String>,
     recording_return: Option<egui::Id>,
     recording_focus_capture: bool,
-    recording_focus_review: bool,
     recording_review_focus: bool,
     editor_selected: Option<Command>,
     editor_reveal: bool,
@@ -407,11 +453,11 @@ impl Hotkeys {
             editor_motion: Default::default(),
             editor_scroll_reset: true,
             recorded_frame: None,
-            record_two: false,
+            super_keys: [false; 2],
+            launcher_change: None,
             status: None,
             recording_return: None,
             recording_focus_capture: false,
-            recording_focus_review: false,
             recording_review_focus: false,
             editor_selected: None,
             editor_reveal: false,
@@ -431,6 +477,134 @@ impl Hotkeys {
     }
     pub fn bindings(&self) -> &[Binding] {
         &self.bindings
+    }
+    /// Keep Super separate from egui's Ctrl/Command alias. Windows reports it
+    /// as key events, so carry its state across frames and preserve event order.
+    pub fn prepare_input(&mut self, input: &mut egui::RawInput) {
+        if cfg!(target_os = "macos") {
+            return;
+        }
+        if !input.focused {
+            self.super_keys = [false; 2];
+            return;
+        }
+        for event in &mut input.events {
+            match event {
+                Event::Key {
+                    key,
+                    pressed,
+                    modifiers,
+                    ..
+                } => {
+                    match key {
+                        Key::SuperLeft => self.super_keys[0] = *pressed,
+                        Key::SuperRight => self.super_keys[1] = *pressed,
+                        _ => {}
+                    }
+                    modifiers.mac_cmd |= self.super_keys.iter().any(|down| *down);
+                }
+                Event::ModifiersChanged(modifiers) => {
+                    modifiers.mac_cmd |= self.super_keys.iter().any(|down| *down);
+                }
+                Event::WindowFocused(false) => self.super_keys = [false; 2],
+                _ => {}
+            }
+        }
+    }
+
+    /// Migrate the actual global shortcut into the same map used by the editor,
+    /// palette and persistence. The former unbound Launcher row has no separate map.
+    pub fn set_launcher_shortcut(&mut self, shortcut: &str) {
+        self.bindings
+            .retain(|binding| binding.command != Command::Launcher);
+        if let Some(stroke) = launcher_stroke(shortcut) {
+            self.bindings.insert(
+                0,
+                Binding {
+                    command: Command::Launcher,
+                    sequence: vec![stroke],
+                },
+            );
+        }
+        self.rebuild();
+    }
+
+    pub fn apply_launcher_change(
+        &mut self,
+        launcher: &mut crate::launcher::Launcher,
+        previous: Vec<Binding>,
+    ) {
+        let requested = self
+            .bindings
+            .iter()
+            .find(|binding| binding.command == Command::Launcher)
+            .and_then(launcher_shortcut)
+            .unwrap_or_default();
+        if crate::launcher::native::parse_hotkey(&requested)
+            == crate::launcher::native::parse_hotkey(&launcher.settings.hotkey)
+        {
+            return;
+        }
+        let bindings = std::mem::replace(&mut self.bindings, previous);
+        self.rebuild();
+        match launcher.apply_launcher_shortcut(&requested) {
+            Ok(()) => {
+                self.launcher_change = Some(LauncherChange {
+                    requested,
+                    bindings,
+                });
+                self.status = Some("Registering launcher shortcut…".into());
+                self.settle_launcher_change(launcher);
+            }
+            Err(error) => self.status = Some(error),
+        }
+    }
+
+    /// Do not publish or save the proposed map until native registration succeeds.
+    /// On conflict the old map, including any replaced bindings, stays intact.
+    pub fn settle_launcher_change(&mut self, launcher: &mut crate::launcher::Launcher) -> bool {
+        launcher.settle_launcher_shortcut();
+        self.finish_launcher_change(launcher.native.hotkey_feedback())
+    }
+    fn finish_launcher_change(
+        &mut self,
+        feedback: crate::launcher::native::HotkeyFeedback,
+    ) -> bool {
+        let Some(change) = self.launcher_change.as_ref() else {
+            return false;
+        };
+        if feedback.pending || feedback.requested != change.requested {
+            return false;
+        }
+        let change = self.launcher_change.take().unwrap();
+        if let Some(error) = feedback.error {
+            self.status = Some(error);
+        } else {
+            self.replace_bindings(change.bindings);
+            self.status = Some("Launcher shortcut saved".into());
+        }
+        true
+    }
+
+    pub fn record_active_launcher_shortcut(&mut self, ctx: &egui::Context, shortcut: &str) {
+        if self.is_recording()
+            && let Some(stroke) = launcher_stroke(shortcut)
+        {
+            self.dispatch_stroke(ctx, &stroke, false);
+        }
+    }
+
+    pub fn recording_label(&self) -> Option<String> {
+        self.recording.as_ref().map(|recording| {
+            Binding {
+                command: recording.command,
+                sequence: recording.strokes.clone(),
+            }
+            .label()
+        })
+    }
+    pub fn launcher_error(&mut self, error: String) {
+        self.status = Some(error);
     }
     pub fn replace_bindings(&mut self, bindings: Vec<Binding>) {
         self.bindings = bindings;
@@ -514,37 +688,30 @@ impl Hotkeys {
                 .push("Only the first 512 shortcut bindings were loaded".into());
         }
         for (index, binding) in self.bindings.iter_mut().enumerate() {
-            if !(1..=2).contains(&binding.sequence.len()) {
+            if binding.sequence.is_empty() {
                 self.diagnostics.push(format!(
-                    "Binding {} must contain one or two keys",
+                    "Binding {} must contain a key combination",
                     index + 1
                 ));
                 self.labels.push("Invalid sequence".into());
                 continue;
             }
-            let first = binding.sequence[0].compile();
-            let second = if binding.sequence.len() == 2 {
-                binding.sequence[1].compile()
-            } else {
-                None
-            };
-            if first.is_none() || (binding.sequence.len() == 2 && second.is_none()) {
-                self.diagnostics.push(format!(
-                    "Binding {} has an unknown or modifier-only key",
-                    index + 1
-                ));
-            } else {
-                let first = first.unwrap();
-                binding.sequence[0].key = first.key.name().into();
-                if let Some(second) = second {
-                    binding.sequence[1].key = second.key.name().into();
+            let sequence: Option<Vec<_>> =
+                binding.sequence.iter().map(KeyStroke::compile).collect();
+            if let Some(sequence) = sequence {
+                for (key, stroke) in binding.sequence.iter_mut().zip(&sequence) {
+                    key.key = stroke.key.name().into();
                 }
                 self.compiled.push(Compiled {
                     index,
                     command: binding.command,
-                    first,
-                    second,
+                    sequence,
                 });
+            } else {
+                self.diagnostics.push(format!(
+                    "Binding {} has an unknown or modifier-only key",
+                    index + 1
+                ));
             }
             let label = binding.label();
             self.labels.push(label.clone());
@@ -558,12 +725,11 @@ impl Hotkeys {
         }
         for (index, left) in self.compiled.iter().enumerate() {
             for right in &self.compiled[index + 1..] {
-                if left.first != right.first {
-                    continue;
-                }
-                let kind = if left.second == right.second {
+                let kind = if left.sequence == right.sequence {
                     Some(ConflictKind::Duplicate)
-                } else if left.second.is_none() || right.second.is_none() {
+                } else if left.sequence.starts_with(&right.sequence)
+                    || right.sequence.starts_with(&left.sequence)
+                {
                     Some(ConflictKind::Prefix)
                 } else {
                     None
@@ -583,16 +749,23 @@ impl Hotkeys {
         self.refilter_editor();
     }
     fn conflicting_indices(&self, binding: &Binding, ignore: Option<usize>) -> Vec<usize> {
-        let Some(first) = binding.sequence.first().and_then(KeyStroke::compile) else {
+        let Some(sequence) = binding
+            .sequence
+            .iter()
+            .map(KeyStroke::compile)
+            .collect::<Option<Vec<_>>>()
+        else {
             return vec![];
         };
-        let second = binding.sequence.get(1).and_then(KeyStroke::compile);
+        if sequence.is_empty() {
+            return vec![];
+        }
         self.compiled
             .iter()
             .filter(|existing| {
                 Some(existing.index) != ignore
-                    && existing.first == first
-                    && (existing.second == second || existing.second.is_none() || second.is_none())
+                    && (existing.sequence.starts_with(&sequence)
+                        || sequence.starts_with(&existing.sequence))
             })
             .map(|existing| existing.index)
             .collect()
@@ -606,13 +779,16 @@ impl Hotkeys {
         if replace.is_some_and(|index| index >= self.bindings.len()) {
             return Err("The binding to replace no longer exists".into());
         }
-        if !(1..=2).contains(&binding.sequence.len())
+        if binding.sequence.is_empty()
             || binding
                 .sequence
                 .iter()
                 .any(|stroke| stroke.compile().is_none())
         {
-            return Err("Choose one or two valid keys".into());
+            return Err("Choose a valid key combination or sequence".into());
+        }
+        if binding.command == Command::Launcher && launcher_shortcut(&binding).is_none() {
+            return Err("The global launcher shortcut needs one key combination with Ctrl, Alt, Shift or Win.".into());
         }
         let conflicts = self.conflicting_indices(&binding, replace);
         if !conflicts.is_empty() && !replace_conflicts {
@@ -625,7 +801,12 @@ impl Hotkeys {
             .bindings
             .iter()
             .enumerate()
-            .filter(|(index, _)| Some(*index) != replace && !conflicts.contains(index))
+            .filter(|(index, existing)| {
+                Some(*index) != replace
+                    && !conflicts.contains(index)
+                    && (binding.command != Command::Launcher
+                        || existing.command != Command::Launcher)
+            })
             .map(|(_, binding)| binding.clone())
             .collect();
         self.bindings.push(binding);
@@ -650,16 +831,17 @@ impl Hotkeys {
         // cancel it on an ownership transition, before delivering a timeout.
         // A stable non-text composite can still complete its own sequences.
         let focused = ctx.memory(|memory| memory.focused());
-        if self.pending.is_some_and(|pending| {
-            pending.first.unmodified_or_shift()
+        if self.pending.as_ref().is_some_and(|pending| {
+            pending.sequence[0].unmodified_or_shift()
                 && (pending.owner != focused || ctx.text_edit_focused())
         }) {
             self.pending = None;
         }
-        if let Some(pending) = self.pending {
+        if let Some(pending) = self.pending.as_ref() {
             if now >= pending.deadline {
+                let fallback = pending.fallback;
                 self.pending = None;
-                if let Some(command) = pending.fallback {
+                if let Some(command) = fallback {
                     self.enqueue(command, allow_file_ops);
                 }
             } else {
@@ -717,30 +899,39 @@ impl Hotkeys {
             if stroke.key == Key::Escape && stroke.bits == 0 {
                 return true;
             }
-            if let Some(command) = self
-                .compiled
-                .iter()
-                .find(|binding| {
-                    binding.first == pending.first
-                        && binding.second == Some(stroke)
-                        && allowed(binding.command, allow_file_ops)
-                })
-                .map(|binding| binding.command)
-            {
-                self.enqueue(command, allow_file_ops);
+            let mut sequence = pending.sequence;
+            sequence.push(stroke);
+            if self.feed_sequence(
+                sequence,
+                now,
+                allow_file_ops,
+                pending.owner,
+                pending.fallback,
+            ) {
                 return true;
             }
             if let Some(command) = pending.fallback {
                 self.enqueue(command, allow_file_ops);
             }
         }
+        self.feed_sequence(vec![stroke], now, allow_file_ops, owner, None)
+    }
+    fn feed_sequence(
+        &mut self,
+        sequence: Vec<Stroke>,
+        now: f64,
+        allow_file_ops: bool,
+        owner: Option<egui::Id>,
+        fallback: Option<Command>,
+    ) -> bool {
         let mut single = None;
         let mut prefix = false;
         for binding in &self.compiled {
-            if binding.first != stroke || !allowed(binding.command, allow_file_ops) {
+            if !binding.sequence.starts_with(&sequence) || !allowed(binding.command, allow_file_ops)
+            {
                 continue;
             }
-            if binding.second.is_some() {
+            if binding.sequence.len() > sequence.len() {
                 prefix = true;
             } else if single.is_none() {
                 single = Some(binding.command);
@@ -748,9 +939,9 @@ impl Hotkeys {
         }
         if prefix {
             self.pending = Some(Pending {
-                first: stroke,
+                sequence,
                 deadline: now + self.sequence_seconds,
-                fallback: single,
+                fallback: single.or(fallback),
                 owner,
             });
             true
@@ -799,7 +990,7 @@ impl Hotkeys {
                 self.seen_consumed[self.seen_len - 1] = true;
             }
         }
-        if let Some(pending) = self.pending {
+        if let Some(pending) = self.pending.as_ref() {
             ctx.request_repaint_after(Duration::from_secs_f64((pending.deadline - now).max(0.0)));
         }
         self.pop(allow_file_ops)
@@ -809,9 +1000,7 @@ impl Hotkeys {
         self.compiled
             .iter()
             .find(|binding| {
-                binding.first == stroke
-                    && binding.second.is_none()
-                    && allowed(binding.command, allow_file_ops)
+                binding.sequence == [stroke] && allowed(binding.command, allow_file_ops)
             })
             .map(|binding| binding.command)
     }
@@ -895,19 +1084,21 @@ impl Hotkeys {
                         continue;
                     }
                     let duplicate = self.native_duplicate(stroke);
-                    // A failed second key belongs to the UI opened by the
-                    // single-key fallback. Leave that key and its text intact.
+                    // A mismatched continuation belongs to the UI opened by the
+                    // prefix fallback. Leave that key and its text intact.
                     if !duplicate {
-                        if let Some(pending) = self.pending {
+                        if let Some(pending) = self.pending.as_ref() {
                             let cancels = stroke.key == Key::Escape && stroke.bits == 0;
+                            let mut sequence = pending.sequence.clone();
+                            sequence.push(stroke);
                             let completes = self.compiled.iter().any(|binding| {
-                                binding.first == pending.first
-                                    && binding.second == Some(stroke)
+                                binding.sequence.starts_with(&sequence)
                                     && allowed(binding.command, allow_file_ops)
                             });
                             if !cancels && !completes && pending.fallback.is_some() {
+                                let fallback = pending.fallback.unwrap();
                                 self.pending = None;
-                                self.enqueue(pending.fallback.unwrap(), allow_file_ops);
+                                self.enqueue(fallback, allow_file_ops);
                                 if !self.queue.is_empty() {
                                     break;
                                 }
@@ -934,7 +1125,7 @@ impl Hotkeys {
                 }
             });
         }
-        if let Some(pending) = self.pending {
+        if let Some(pending) = self.pending.as_ref() {
             ctx.request_repaint_after(Duration::from_secs_f64((pending.deadline - now).max(0.0)));
         }
         let command = self.pop(allow_file_ops);
@@ -959,37 +1150,44 @@ impl Hotkeys {
             return;
         }
         if let Some(recording) = self.recording.as_mut() {
-            if recording.strokes.len() < recording.limit {
-                recording.strokes.push(KeyStroke {
-                    key: stroke.key.name().into(),
-                    ctrl: stroke.bits & 1 != 0,
-                    alt: stroke.bits & 2 != 0,
-                    shift: stroke.bits & 4 != 0,
-                    cmd: stroke.bits & 8 != 0,
-                });
-                if recording.strokes.len() == recording.limit {
-                    self.recording_focus_review = true;
-                }
+            // The Windows global launcher registration is a chord. Ordinary
+            // command bindings keep every consecutive combination until Assign.
+            if recording.command == Command::Launcher {
+                recording.strokes.clear();
             }
+            recording.strokes.push(KeyStroke {
+                key: stroke.key.name().into(),
+                ctrl: stroke.bits & 1 != 0,
+                alt: stroke.bits & 2 != 0,
+                shift: stroke.bits & 4 != 0,
+                cmd: stroke.bits & 8 != 0,
+            });
         }
     }
-    pub fn record(&mut self, command: Command, two_keys: bool) {
-        self.start_recording(command, None, if two_keys { 2 } else { 1 });
+    pub fn record(&mut self, command: Command) {
+        self.start_recording(command, None);
     }
-    fn start_recording(&mut self, command: Command, replace: Option<usize>, limit: usize) {
+    fn start_recording(&mut self, command: Command, replace: Option<usize>) {
+        let replace = if command == Command::Launcher {
+            replace.or_else(|| {
+                self.bindings
+                    .iter()
+                    .position(|binding| binding.command == command)
+            })
+        } else {
+            replace
+        };
         self.cancel_pending();
         self.seen_len = 0;
         self.recorded_frame = None;
         self.recording_cancel = false;
         self.status = None;
         self.recording_focus_capture = true;
-        self.recording_focus_review = false;
         self.recording_review_focus = false;
         self.recording = Some(Recording {
             command,
             replace,
-            strokes: Vec::with_capacity(2),
-            limit: limit.clamp(1, 2),
+            strokes: Vec::new(),
         });
     }
     fn refilter_editor(&mut self) {
@@ -1040,10 +1238,12 @@ impl Hotkeys {
                 && self.recording.is_some()
                 && !self.recording_cancel
             {
-                let reviewing = self.recording.as_ref().is_some_and(|recording| recording.strokes.len() == recording.limit);
                 if matches!(input.events.get(index), Some(Event::Key { key, modifiers, .. })
                     if *key == Key::Tab && !modifiers.ctrl && !modifiers.alt && !modifiers.command && !modifiers.mac_cmd
-                    || (reviewing || self.recording_review_focus) && modifiers.is_none() && matches!(key, Key::Enter | Key::Space)) {
+                    || self.recording_review_focus && modifiers.is_none() && matches!(key, Key::Enter | Key::Space)) {
+                    if matches!(input.events.get(index), Some(Event::Key { key: Key::Tab, .. })) {
+                        self.recording_review_focus = true;
+                    }
                     index += 1;
                     continue;
                 }
@@ -1210,7 +1410,7 @@ impl Hotkeys {
         }
         self.editor_scope
             .update_animated(ctx, search_id, &members, self.editor_closing, false);
-        if !self.editor_closing && !child_open {
+        if !self.editor_closing && !child_open && self.launcher_change.is_none() {
             self.editor_scope.redirect_text(ctx, list_id, search_id);
             if self.editor_scope.tab(ctx, &members) {
                 self.editor_focus = false;
@@ -1261,7 +1461,7 @@ impl Hotkeys {
                         && let Some(command) = self.editor_selected
                     {
                         self.recording_return = Some(list_id);
-                        self.start_recording(command, None, if self.record_two { 2 } else { 1 });
+                        self.start_recording(command, None);
                         self.recorded_frame = Some(frame);
                     }
                 }
@@ -1330,10 +1530,9 @@ impl Hotkeys {
             body_clip: layout.body.intersect(outer).intersect(screen),
             footer: layout.footer,
             content: Rect::NOTHING,
-            settings: [Rect::NOTHING; 2],
+            settings: Rect::NOTHING,
             separator: Rect::NOTHING,
             reset_all: Rect::NOTHING,
-            record_two: Rect::NOTHING,
             rows: Vec::new(),
         };
         let mut changed = false;
@@ -1351,6 +1550,7 @@ impl Hotkeys {
                 ui.set_clip_rect(outer.intersect(screen));
                 ui.set_opacity(self.editor_opacity);
                 if self.editor_closing
+                    || self.launcher_change.is_some()
                     || self.recording.is_some()
                     || self.editor_confirmation.is_some()
                 {
@@ -1555,7 +1755,7 @@ impl Hotkeys {
                 )
             })
             .collect();
-        let height = 2.0 * setting_height
+        let height = setting_height
             + separator_height
             + if rows.is_empty() { setting_height } else { 0.0 }
             + rows.iter().map(|(_, row)| row.height).sum::<f32>();
@@ -1694,7 +1894,7 @@ impl Hotkeys {
             let settings = ui
                 .allocate_exact_size(vec2(width, content.setting_height), Sense::hover())
                 .0;
-            probe.settings[0] = settings;
+            probe.settings = settings;
             let reset_width = (ui
                 .painter()
                 .layout_no_wrap("Reset All".into(), theme.font(), theme.fg())
@@ -1735,41 +1935,6 @@ impl Hotkeys {
             if reset_button.clicked() {
                 reset_all = Some(reset_button.id);
             }
-            let settings = ui
-                .allocate_exact_size(vec2(width, content.setting_height), Sense::hover())
-                .0;
-            probe.settings[1] = settings;
-            let checkbox = Rect::from_center_size(
-                pos2(
-                    settings.right() - 12.0 * m.scale - m.control * 0.5,
-                    settings.center().y,
-                ),
-                vec2(m.control, m.control),
-            );
-            self.editor_text(
-                ui,
-                theme,
-                Rect::from_min_max(
-                    settings.min + vec2(12.0 * m.scale, 0.0),
-                    pos2(
-                        (checkbox.left() - m.gap).max(settings.left()),
-                        settings.bottom(),
-                    ),
-                ),
-                "Record two-key sequences",
-                "Assign two consecutive key combinations when adding a shortcut.",
-            );
-            // The row already owns its full height. A scope_builder would
-            // advance the parent cursor again to the shorter checkbox rect.
-            let mut control_ui = ui.new_child(
-                UiBuilder::new()
-                    .id_salt("hotkey-two-key-setting")
-                    .max_rect(checkbox),
-            );
-            let response = components::checkbox(&mut control_ui, theme, &mut self.record_two, "");
-            components::label_control(&response, "Record two-key sequences");
-            probe.record_two = response.rect;
-            self.editor_controls.push(response.id);
             self.editor_controls.push(list_id);
             probe.separator = ui
                 .allocate_exact_size(vec2(width, content.separator_height), Sense::hover())
@@ -1978,12 +2143,7 @@ impl Hotkeys {
                             if remove_button.clicked() {
                                 remove = Some((binding_index, remove_button.id));
                             } else if button.clicked() {
-                                edit = Some((
-                                    entry.command,
-                                    Some(binding_index),
-                                    self.bindings[binding_index].sequence.len(),
-                                    button.id,
-                                ));
+                                edit = Some((entry.command, Some(binding_index), button.id));
                             }
                             row_probe.bindings.push(EditorBindingProbe {
                                 index: binding_index,
@@ -2003,22 +2163,25 @@ impl Hotkeys {
                     row_probe.add,
                     Id::new(("hotkey-add", entry.command)),
                     theme,
-                    Icon::Plus,
+                    if entry.command == Command::Launcher {
+                        Icon::Keyboard
+                    } else {
+                        Icon::Plus
+                    },
                     false,
                 )
-                .on_hover_text("Assign another shortcut");
+                .on_hover_text(if entry.command == Command::Launcher {
+                    "Change the global launcher shortcut"
+                } else {
+                    "Assign another shortcut"
+                });
                 components::label_control(&add, &format!("Assign shortcut for {}", entry.title));
                 self.editor_controls.push(add.id);
                 if add.has_focus() {
                     ui.scroll_to_rect(rect, None);
                 }
                 if add.clicked() {
-                    edit = Some((
-                        entry.command,
-                        None,
-                        if self.record_two { 2 } else { 1 },
-                        add.id,
-                    ));
+                    edit = Some((entry.command, None, add.id));
                 }
                 probe.rows.push(row_probe);
             }
@@ -2070,9 +2233,9 @@ impl Hotkeys {
                 focus_cancel: true,
                 accepted: false,
             });
-        } else if let Some((command, index, limit, return_to)) = edit {
+        } else if let Some((command, index, return_to)) = edit {
             self.recording_return = Some(return_to);
-            self.start_recording(command, index, limit);
+            self.start_recording(command, index);
             self.recorded_frame = Some(ui.ctx().cumulative_frame_nr());
         }
         changed
@@ -2304,12 +2467,21 @@ impl Hotkeys {
                         capture.has_focus(),
                     );
                     ui.label(if recording.strokes.is_empty() {
-                        "Press a key combination…"
-                    } else if recording.strokes.len() < recording.limit {
-                        "Press the second key…"
+                        "Hold any modifiers and press a key."
+                    } else if recording.command == Command::Launcher {
+                        "This combination opens the launcher system-wide."
                     } else {
-                        "Review the binding, then assign it."
+                        "Keep pressing combinations to extend the sequence, then assign it."
                     });
+                    if recording.command == Command::Launcher
+                        && !recording.strokes.is_empty()
+                        && launcher_shortcut(&candidate).is_none()
+                    {
+                        ui.label(
+                            egui::RichText::new("Include Ctrl, Alt, Shift or Win with one key.")
+                                .color(Theme::color(theme.danger)),
+                        );
+                    }
                     for &index in &conflicts {
                         let binding = &self.bindings[index];
                         let name = COMMANDS
@@ -2323,7 +2495,9 @@ impl Hotkeys {
                     }
                     ui.horizontal_wrapped(|ui| {
                         self.recording_review_focus = false;
-                        let ready = recording.strokes.len() == recording.limit;
+                        let ready = !recording.strokes.is_empty()
+                            && (recording.command != Command::Launcher
+                                || launcher_shortcut(&candidate).is_some());
                         let assign_button = foldex_ui::components::text_button_enabled(
                             ui,
                             theme,
@@ -2331,10 +2505,6 @@ impl Hotkeys {
                             true,
                             ready && conflicts.is_empty(),
                         );
-                        if self.recording_focus_review && ready && conflicts.is_empty() {
-                            assign_button.request_focus();
-                            self.recording_focus_review = false;
-                        }
                         self.recording_review_focus |= assign_button.has_focus();
                         if assign_button.clicked() {
                             assign = Some(false);
@@ -2360,10 +2530,6 @@ impl Hotkeys {
                         }
                         let cancel_button =
                             foldex_ui::components::text_button(ui, theme, "Cancel", false);
-                        if self.recording_focus_review && ready && !conflicts.is_empty() {
-                            cancel_button.request_focus();
-                            self.recording_focus_review = false;
-                        }
                         self.recording_review_focus |= cancel_button.has_focus();
                         if cancel_button.clicked() {
                             ui.close();
@@ -2382,7 +2548,6 @@ impl Hotkeys {
                 if let Some(recording) = self.recording.as_mut() {
                     recording.strokes.clear();
                     self.recording_focus_capture = true;
-                    self.recording_focus_review = false;
                 }
             }
             if cancel {
@@ -2668,6 +2833,235 @@ mod tests {
         }
     }
 
+    #[test]
+    fn recorder_preserves_every_modifier_and_arbitrary_sequence_length() {
+        let ctx = egui::Context::default();
+        let mut hotkeys = Hotkeys::from_bindings(vec![]);
+        hotkeys.record(Command::Refresh);
+        let modifiers = Modifiers::CTRL | Modifiers::ALT | Modifiers::SHIFT;
+        // Exceed the per-frame event budget across frames: it must not impose
+        // a limit on a binding's total length. Include plain Enter and Space.
+        let keys: Vec<_> = (0..40)
+            .map(|at| [Key::A, Key::Enter, Key::Space, Key::B][at % 4])
+            .collect();
+        for (frame, &pressed) in keys.iter().enumerate() {
+            let mut events = vec![];
+            if frame == 0 {
+                events.push(key(Key::SuperLeft, Modifiers::NONE));
+            }
+            events.push(key(pressed, modifiers));
+            events.push(up(pressed, modifiers));
+            events.push(Event::Text("ignored".into()));
+            let mut input = raw(frame as f64 / 60.0, events);
+            hotkeys.prepare_input(&mut input);
+            let mut output = ctx.run_ui(input, |ui| hotkeys.poll_recording(ui.ctx()));
+            output.textures_delta.clear();
+        }
+        let captured = hotkeys.recording.as_ref().unwrap().strokes.clone();
+        assert_eq!(captured.len(), keys.len());
+        assert!(
+            captured
+                .iter()
+                .all(|stroke| stroke.ctrl && stroke.alt && stroke.shift && stroke.cmd)
+        );
+        assert!(captured[0].label().contains(if cfg!(target_os = "macos") {
+            "Cmd+"
+        } else {
+            "Win+"
+        }));
+        hotkeys
+            .assign(
+                Binding {
+                    command: Command::Refresh,
+                    sequence: captured,
+                },
+                None,
+                false,
+            )
+            .unwrap();
+        let saved = serde_json::to_string(hotkeys.bindings()).unwrap();
+        let mut restored = Hotkeys::from_bindings(serde_json::from_str(&saved).unwrap());
+        let mut modifiers = modifiers;
+        modifiers.mac_cmd = true;
+        for (at, &pressed) in keys.iter().enumerate() {
+            let commands = run(
+                &mut restored,
+                &ctx,
+                1.0 + at as f64 / 60.0,
+                vec![key(pressed, modifiers), up(pressed, modifiers)],
+                true,
+            );
+            assert_eq!(
+                commands,
+                if at + 1 == keys.len() {
+                    vec![Command::Refresh]
+                } else {
+                    vec![]
+                }
+            );
+        }
+        // Releasing one Super key must preserve the other; focus loss clears both.
+        let mut input = raw(
+            2.0,
+            vec![
+                key(Key::SuperRight, Modifiers::NONE),
+                up(Key::SuperLeft, Modifiers::NONE),
+                key(Key::A, Modifiers::NONE),
+            ],
+        );
+        hotkeys.prepare_input(&mut input);
+        assert!(
+            matches!(input.events.last(), Some(Event::Key { modifiers, .. }) if modifiers.mac_cmd)
+        );
+        input.focused = false;
+        hotkeys.prepare_input(&mut input);
+        let mut input = raw(2.1, vec![key(Key::A, Modifiers::NONE)]);
+        hotkeys.prepare_input(&mut input);
+        assert!(
+            matches!(input.events.last(), Some(Event::Key { modifiers, .. }) if !modifiers.mac_cmd)
+        );
+    }
+
+    #[test]
+    fn deep_sequence_conflicts_and_longest_prefix_fallback_are_exact() {
+        let bindings = vec![
+            sequence(Command::Back, &[Key::G]),
+            sequence(Command::Parent, &[Key::G, Key::H, Key::J]),
+            sequence(Command::Refresh, &[Key::G, Key::H, Key::J, Key::K]),
+            sequence(Command::Forward, &[Key::G, Key::H, Key::L, Key::K]),
+        ];
+        let mut hotkeys = Hotkeys::from_bindings(bindings);
+        assert_eq!(hotkeys.conflicts().len(), 4);
+        assert!(
+            hotkeys
+                .assign(
+                    sequence(Command::GoTo, &[Key::G, Key::H, Key::J]),
+                    None,
+                    false
+                )
+                .is_err()
+        );
+        let ctx = egui::Context::default();
+        assert!(
+            run(
+                &mut hotkeys,
+                &ctx,
+                0.0,
+                vec![
+                    key(Key::G, Modifiers::NONE),
+                    key(Key::H, Modifiers::NONE),
+                    key(Key::J, Modifiers::NONE)
+                ],
+                true
+            )
+            .is_empty()
+        );
+        assert_eq!(
+            run(&mut hotkeys, &ctx, 1.0, vec![], true),
+            [Command::Parent]
+        );
+        let events = [Key::G, Key::H, Key::J, Key::K]
+            .into_iter()
+            .flat_map(|pressed| [up(pressed, Modifiers::NONE), key(pressed, Modifiers::NONE)])
+            .collect();
+        assert_eq!(
+            run(&mut hotkeys, &ctx, 1.1, events, true),
+            [Command::Refresh]
+        );
+    }
+
+    #[test]
+    fn actual_launcher_shortcut_replaces_the_old_separate_command_binding() {
+        let mut hotkeys = Hotkeys::default();
+        hotkeys
+            .assign(
+                Binding::single(Command::Launcher, Key::K, Modifiers::CTRL),
+                None,
+                false,
+            )
+            .unwrap();
+        hotkeys.set_launcher_shortcut("Win+Ctrl+Shift+Alt+A");
+        let bindings: Vec<_> = hotkeys
+            .bindings()
+            .iter()
+            .filter(|binding| binding.command == Command::Launcher)
+            .collect();
+        assert_eq!(bindings.len(), 1);
+        let shortcut = launcher_shortcut(bindings[0]).unwrap();
+        assert_eq!(
+            crate::launcher::native::parse_hotkey(&shortcut),
+            Some((0x400f, b'A' as u32))
+        );
+        assert_eq!(hotkeys.display_for(Command::Launcher), bindings[0].label());
+        let mut palette = Palette::new();
+        hotkeys.update_palette(&mut palette);
+        for text in [
+            "win+control+ESC",
+            "alt+arrowleft",
+            "shift+f24",
+            "Ctrl+Comma",
+        ] {
+            hotkeys.set_launcher_shortcut(text);
+            let current = hotkeys
+                .bindings()
+                .iter()
+                .find(|binding| binding.command == Command::Launcher)
+                .unwrap();
+            assert_eq!(
+                crate::launcher::native::parse_hotkey(&launcher_shortcut(current).unwrap()),
+                crate::launcher::native::parse_hotkey(text)
+            );
+        }
+        hotkeys.set_launcher_shortcut("");
+        assert!(hotkeys.display_for(Command::Launcher).is_empty());
+        assert!(
+            !hotkeys
+                .bindings()
+                .iter()
+                .any(|binding| binding.command == Command::Launcher)
+        );
+    }
+
+    #[test]
+    fn launcher_registration_commits_the_whole_map_only_after_success() {
+        use crate::launcher::native::HotkeyFeedback;
+        let original = vec![
+            Binding::single(
+                Command::Launcher,
+                Key::Space,
+                Modifiers::CTRL | Modifiers::ALT,
+            ),
+            Binding::single(Command::Refresh, Key::K, Modifiers::CTRL),
+        ];
+        let proposed = vec![Binding::single(Command::Launcher, Key::K, Modifiers::CTRL)];
+        let mut hotkeys = Hotkeys::from_bindings(original.clone());
+        for error in [Some("Shortcut is in use".to_owned()), None] {
+            hotkeys.launcher_change = Some(LauncherChange {
+                requested: "Ctrl+K".into(),
+                bindings: proposed.clone(),
+            });
+            assert!(!hotkeys.finish_launcher_change(HotkeyFeedback {
+                requested: "Ctrl+K".into(),
+                pending: true,
+                ..Default::default()
+            }));
+            assert_eq!(hotkeys.bindings(), original);
+            assert!(hotkeys.finish_launcher_change(HotkeyFeedback {
+                requested: "Ctrl+K".into(),
+                error: error.clone(),
+                ..Default::default()
+            }));
+            assert_eq!(
+                hotkeys.bindings(),
+                if error.is_some() {
+                    &original
+                } else {
+                    &proposed
+                }
+            );
+        }
+    }
+
     fn editor_frame(
         hotkeys: &mut Hotkeys,
         ctx: &egui::Context,
@@ -2680,6 +3074,7 @@ mod tests {
         let mut open = true;
         let mut input = raw(frame as f64 / 60.0, events);
         input.screen_rect = Some(Rect::from_min_size(egui::Pos2::ZERO, size));
+        hotkeys.prepare_input(&mut input);
         let mut output = ctx.run_ui(input, |ui| {
             theme.apply(ui.ctx());
             changed |= hotkeys.editor_popup_ui(ui.ctx(), theme, &mut open);
@@ -2933,6 +3328,81 @@ mod tests {
     }
 
     #[test]
+    fn editor_keeps_recording_until_keyboard_review_assigns_the_whole_sequence() {
+        let ctx = egui::Context::default();
+        let theme = Theme {
+            reduced_motion: true,
+            ..Default::default()
+        };
+        let size = vec2(1000.0, 700.0);
+        let mut hotkeys = Hotkeys::from_bindings(vec![]);
+        hotkeys.benchmark_open_editor("Refresh");
+        let mut frame = 0;
+        editor_settle(&mut hotkeys, &ctx, &theme, &mut frame, size);
+        hotkeys.record(Command::Refresh);
+        editor_settle(&mut hotkeys, &ctx, &theme, &mut frame, size);
+        let modifiers = Modifiers::CTRL | Modifiers::ALT | Modifiers::SHIFT;
+        editor_frame(
+            &mut hotkeys,
+            &ctx,
+            &theme,
+            frame,
+            size,
+            vec![key(Key::SuperLeft, Modifiers::NONE)],
+        );
+        frame += 1;
+        for pressed in [Key::A, Key::B, Key::C] {
+            editor_frame(
+                &mut hotkeys,
+                &ctx,
+                &theme,
+                frame,
+                size,
+                vec![key(pressed, modifiers), up(pressed, modifiers)],
+            );
+            frame += 1;
+        }
+        let captured = hotkeys.recording.as_ref().unwrap().strokes.clone();
+        assert_eq!(captured.len(), 3);
+        assert!(
+            captured
+                .iter()
+                .all(|stroke| stroke.cmd && stroke.ctrl && stroke.alt && stroke.shift)
+        );
+        assert!(hotkeys.bindings().is_empty());
+        editor_frame(
+            &mut hotkeys,
+            &ctx,
+            &theme,
+            frame,
+            size,
+            vec![
+                up(Key::SuperLeft, Modifiers::NONE),
+                Event::ModifiersChanged(Modifiers::NONE),
+                key(Key::Tab, Modifiers::NONE),
+            ],
+        );
+        frame += 1;
+        let (changed, _) = editor_frame(
+            &mut hotkeys,
+            &ctx,
+            &theme,
+            frame,
+            size,
+            vec![key(Key::Enter, Modifiers::NONE)],
+        );
+        assert!(changed);
+        assert!(!hotkeys.is_recording());
+        assert_eq!(
+            hotkeys.bindings(),
+            &[Binding {
+                command: Command::Refresh,
+                sequence: captured
+            }]
+        );
+    }
+
+    #[test]
     fn editor_settings_separator_and_measured_rows_settle_at_supported_fonts_and_viewports() {
         for font_size in [10.0, 14.0, 17.0, 22.0, 24.0] {
             for size in [vec2(1200.0, 760.0), vec2(640.0, 360.0), vec2(380.0, 520.0)] {
@@ -2958,24 +3428,13 @@ mod tests {
                     );
                     assert_eq!(probe.body, probe.body_clip, "{case}");
                     assert!(
-                        probe.settings[0].contains_rect(probe.reset_all),
+                        probe.settings.contains_rect(probe.reset_all),
                         "{case}, settings={:?}, reset_all={:?}",
                         probe.settings,
                         probe.reset_all
                     );
                     assert!(
-                        probe.settings[1].contains_rect(probe.record_two),
-                        "{case}, settings={:?}, record_two={:?}",
-                        probe.settings,
-                        probe.record_two
-                    );
-                    assert!(
-                        probe.settings[0].bottom() <= probe.settings[1].top() + 0.1,
-                        "{case}, settings={:?}",
-                        probe.settings
-                    );
-                    assert!(
-                        probe.settings[1].bottom() <= probe.separator.top() + 0.1,
+                        probe.settings.bottom() <= probe.separator.top() + 0.1,
                         "{case}, settings={:?}, separator={:?}",
                         probe.settings,
                         probe.separator
@@ -3057,10 +3516,10 @@ mod tests {
                         }
                         previous_bottom = row.rect.bottom();
                     }
-                    let measured_height = probe.settings.iter().map(Rect::height).sum::<f32>()
+                    let measured_height = probe.settings.height()
                         + probe.separator.height()
                         + if probe.rows.is_empty() {
-                            probe.settings[0].height()
+                            probe.settings.height()
                         } else {
                             0.0
                         }
@@ -3105,7 +3564,7 @@ mod tests {
         assert_eq!(probe.rows.len(), COMMANDS.len());
         assert!(probe.rows.iter().all(|row| row.reset.is_none()));
         assert!(probe.reset_all.top() >= probe.header.bottom());
-        assert!(probe.record_two.top() > probe.reset_all.bottom());
+        assert!(probe.separator.top() >= probe.settings.bottom());
         assert!(
             ctx.read_response(Id::new("hotkeys-editor-window").with("close"))
                 .is_some()
@@ -3255,7 +3714,6 @@ mod tests {
         );
         let recording = hotkeys.recording.as_ref().unwrap();
         assert_eq!(recording.replace, Some(chip.index));
-        assert_eq!(recording.limit, 2);
         assert!(recording.strokes.is_empty());
         assert!(hotkeys.editor_confirmation.is_none());
         editor_frame(
@@ -3623,7 +4081,7 @@ mod tests {
     fn recorder_keeps_tab_and_review_activation_with_the_dialog_controls() {
         let ctx = egui::Context::default();
         let mut hotkeys = Hotkeys::default();
-        hotkeys.record(Command::Parent, false);
+        hotkeys.record(Command::Parent);
         for (frame, events, expected) in [
             (0, vec![key(Key::Tab, Modifiers::NONE)], 0),
             (1, vec![key(Key::K, Modifiers::CTRL)], 1),
@@ -4251,7 +4709,7 @@ mod tests {
     #[test]
     fn recording_deduplicates_native_logical_and_clipboard_events() {
         let mut hotkeys = Hotkeys::default();
-        hotkeys.record(Command::Parent, true);
+        hotkeys.record(Command::Parent);
         let ctx = egui::Context::default();
         let mut output = ctx.run_ui(
             raw(0.0, vec![key(Key::C, Modifiers::CTRL), Event::Copy]),
@@ -4313,7 +4771,7 @@ mod tests {
     #[test]
     fn recording_clears_previous_native_dedupe_when_regular_dispatch_is_paused() {
         let mut hotkeys = Hotkeys::default();
-        hotkeys.record(Command::Parent, true);
+        hotkeys.record(Command::Parent);
         let ctx = egui::Context::default();
         let mut first = ctx.run_ui(raw(0.0, vec![Event::Copy]), |ui| {
             hotkeys.dispatch_stroke(ui.ctx(), &KeyStroke::new(Key::C, Modifiers::CTRL), false);
@@ -4337,7 +4795,7 @@ mod tests {
     #[test]
     fn recording_keeps_logical_modifiers_when_clipboard_event_arrives_after_release() {
         let mut hotkeys = Hotkeys::default();
-        hotkeys.record(Command::Parent, true);
+        hotkeys.record(Command::Parent);
         let ctx = egui::Context::default();
         let mut output = ctx.run_ui(
             raw(
@@ -4519,7 +4977,7 @@ mod tests {
         output.textures_delta.clear();
         assert_eq!(command, None);
         assert!(hotkeys.pending.is_none());
-        hotkeys.record(Command::Back, true);
+        hotkeys.record(Command::Back);
         assert!(hotkeys.is_recording());
         hotkeys.cancel_recording();
         assert!(!hotkeys.is_recording());
@@ -4609,7 +5067,7 @@ mod tests {
     #[test]
     fn clipboard_repeat_does_not_complete_a_recorded_two_key_sequence() {
         let mut hotkeys = Hotkeys::default();
-        hotkeys.record(Command::Parent, true);
+        hotkeys.record(Command::Parent);
         let ctx = egui::Context::default();
         let mut first = ctx.run_ui(
             raw(0.0, vec![key(Key::C, Modifiers::CTRL), Event::Copy]),
@@ -4641,7 +5099,7 @@ mod tests {
             (Key::Delete, Modifiers::SHIFT, Event::Cut),
         ] {
             let mut hotkeys = Hotkeys::default();
-            hotkeys.record(Command::Parent, true);
+            hotkeys.record(Command::Parent);
             let ctx = egui::Context::default();
             let mut output = ctx.run_ui(raw(0.0, vec![key(keycode, modifiers), semantic]), |ui| {
                 hotkeys.editor_ui(ui);

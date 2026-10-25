@@ -289,12 +289,15 @@ impl Foldex {
     pub(super) fn commands_ui(&mut self, ctx: &egui::Context) {
         if self.hotkeys_open {
             let mut open = true;
+            let previous = self.hotkeys.bindings().to_vec();
             let changed = self.hotkeys.editor_popup_ui(ctx, &self.theme, &mut open);
             self.hotkeys_open = open;
             if !open {
                 self.hotkeys.cancel_recording();
             }
             if changed {
+                self.hotkeys
+                    .apply_launcher_change(&mut self.launcher, previous);
                 self.hotkeys.update_palette(&mut self.commands);
                 self.session_dirty = true;
                 self.save_due = Some(Instant::now() + Duration::from_millis(300));
@@ -491,6 +494,56 @@ fn folder_only(command: Command) -> bool {
 mod tests {
     use super::super::tests::{pump_events, ready_fixture};
     use super::*;
+
+    #[test]
+    fn launcher_binding_in_hotkeys_updates_registration_and_both_saved_settings() {
+        let (mut app, _, _) = super::super::tests::fixture_app();
+        let previous = app.hotkeys.bindings().to_vec();
+        let mut modifiers = Modifiers::CTRL | Modifiers::ALT | Modifiers::SHIFT;
+        modifiers.mac_cmd = true;
+        app.hotkeys
+            .assign(
+                crate::hotkeys::Binding::single(Command::Launcher, Key::A, modifiers),
+                None,
+                false,
+            )
+            .unwrap();
+        app.hotkeys
+            .apply_launcher_change(&mut app.launcher, previous);
+        app.hotkeys.settle_launcher_change(&mut app.launcher);
+        let saved = app.session_snapshot();
+        assert_eq!(saved.launcher.hotkey, "Ctrl+Alt+Shift+Win+A");
+        assert_eq!(
+            app.launcher.native.hotkey_feedback().requested,
+            saved.launcher.hotkey
+        );
+        let bindings: Vec<_> = saved
+            .hotkeys
+            .unwrap()
+            .into_iter()
+            .filter(|binding| binding.command == Command::Launcher)
+            .collect();
+        assert_eq!(bindings.len(), 1);
+        assert!(bindings[0].sequence[0].cmd);
+        // Removing the only Launcher binding disables the same native shortcut.
+        let previous = app.hotkeys.bindings().to_vec();
+        let index = previous
+            .iter()
+            .position(|binding| binding.command == Command::Launcher)
+            .unwrap();
+        app.hotkeys.remove(index);
+        app.hotkeys
+            .apply_launcher_change(&mut app.launcher, previous);
+        assert!(app.launcher.settings.hotkey.is_empty());
+        assert!(app.launcher.native.hotkey_feedback().requested.is_empty());
+        assert!(
+            !app.session_snapshot()
+                .hotkeys
+                .unwrap()
+                .iter()
+                .any(|binding| binding.command == Command::Launcher)
+        );
+    }
 
     #[test]
     fn hotkeys_invoked_from_commands_returns_focus_to_the_original_listing() {
