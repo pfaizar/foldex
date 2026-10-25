@@ -14,6 +14,8 @@ use std::{
 };
 
 mod builtin;
+#[cfg(any(windows, test))]
+pub mod progress;
 mod properties;
 pub mod recycle;
 mod signal;
