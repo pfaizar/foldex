@@ -4,7 +4,8 @@
 use super::*;
 use notify::{Config, EventKind, PollWatcher, RecommendedWatcher, RecursiveMode, Watcher};
 
-const MAX_SCOPES: usize = 8;
+const MAX_SCOPES: usize = MAX_SUBSCRIPTIONS;
+const IDLE_SCOPE_CACHE: usize = 8;
 const MAX_SCANS: usize = 2;
 const CHANGE_QUIET: Duration = Duration::from_millis(120);
 const WATCH_RETRY: Duration = Duration::from_secs(5);
@@ -216,6 +217,42 @@ mod tests {
         assert!(!scopes.busy());
     }
     #[test]
+    fn twelve_subscribed_scopes_finish_with_at_most_two_running_traversals() {
+        let fixture = Fixture::new();
+        let hub = SearchHub::unstarted_for_test();
+        let client = hub.client();
+        let mut scopes = Scopes::new(hub.shared.clone(), fixture.cache());
+        let mut roots = Vec::new();
+        let mut backends = Vec::new();
+        for n in 0..12 {
+            let root = fixture.root().join(format!("visible{n}"));
+            std::fs::create_dir(&root).unwrap();
+            std::fs::write(root.join("report.txt"), b"a").unwrap();
+            client.request(root.clone(), Query::default(), 0, false);
+            let (_, backend) = scopes.backend(&client.state.input().unwrap()).unwrap();
+            roots.push(root);
+            backends.push(backend);
+        }
+        let until = Instant::now() + Duration::from_secs(15);
+        while backends.iter().any(|backend| !backend.complete()) {
+            for update in scopes.advance(&roots) {
+                update.status.unwrap();
+            }
+            assert!(scopes.values.iter().filter(|scope| scope.running).count() <= MAX_SCANS);
+            assert!(
+                Instant::now() < until,
+                "waiting scope never acquired a traversal permit"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            scopes.values.iter().map(|scope| scope.scans).sum::<u64>(),
+            12
+        );
+        assert!(backends.iter().all(|backend| backend.status().files == 1));
+    }
+
+    #[test]
     fn unused_catalogs_and_watchers_are_retained_within_a_fixed_limit() {
         let fixture = Fixture::new();
         let hub = SearchHub::unstarted_for_test();
@@ -229,7 +266,7 @@ mod tests {
             settle(&mut scopes, &root, &backend);
             assert!(scopes.values.len() <= MAX_SCOPES);
         }
-        assert_eq!(scopes.values.len(), MAX_SCOPES);
+        assert_eq!(scopes.values.len(), IDLE_SCOPE_CACHE);
     }
 }
 impl Scopes {
@@ -264,9 +301,21 @@ impl Scopes {
                 Backend::Shared(scope.catalog.clone()),
             ));
         }
-        if self.values.len() == MAX_SCOPES {
-            let index=self.values.iter().enumerate().filter(|(_,scope)|Rc::strong_count(&scope.catalog)==1).min_by_key(|(_,scope)|scope.last_used).map(|(index,_)|index).ok_or_else(||foldex_index::Error::InvalidIndex("Search scopes are at capacity; a queued scope will resume when a slot is available".into()))?;
-            self.values.remove(index);
+        if self.values.len() >= IDLE_SCOPE_CACHE {
+            let unused = self
+                .values
+                .iter()
+                .enumerate()
+                .filter(|(_, scope)| Rc::strong_count(&scope.catalog) == 1)
+                .min_by_key(|(_, scope)| scope.last_used)
+                .map(|(index, _)| index);
+            if let Some(index) = unused {
+                self.values.remove(index);
+            } else if self.values.len() == MAX_SCOPES {
+                return Err(foldex_index::Error::InvalidIndex(format!(
+                    "At most {MAX_SCOPES} live search scopes can be subscribed"
+                )));
+            }
         }
         std::fs::create_dir_all(&self.base)?;
         let cache_dir = Index::cache_dir_for(&self.base, &request.root)?;

@@ -1483,7 +1483,7 @@ impl Pane {
                 Submission::Busy => ctx.request_repaint_after(Duration::from_millis(16)),
                 Submission::AtCapacity => {
                     let output = Arc::make_mut(&mut self.columns.output);
-                    output.error = Some("Recursive values are paused by the two-pane calculation limit. Activate this pane to calculate its values.".into());
+                    output.error = Some("The 32-view statistics subscription limit has been reached. Close an unused panel to calculate more values.".into());
                     output.busy = false;
                 }
             }

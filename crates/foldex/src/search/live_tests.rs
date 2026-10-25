@@ -1,9 +1,9 @@
 use super::*;
 use std::fs;
 
-pub(super) struct Fixture(pub(super) PathBuf);
+pub(crate) struct Fixture(pub(super) PathBuf);
 impl Fixture {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let path = std::env::temp_dir().join(format!(
             "foldex-live-search-{}-{}-{}",
@@ -17,7 +17,7 @@ impl Fixture {
         fs::create_dir_all(path.join("scope/child")).unwrap();
         Self(path)
     }
-    pub(super) fn root(&self) -> PathBuf {
+    pub(crate) fn root(&self) -> PathBuf {
         self.0.join("scope")
     }
     pub(super) fn cache(&self) -> PathBuf {
@@ -70,6 +70,108 @@ fn complete(client: &SearchClient, id: u64, total: usize) -> Arc<SearchWindow> {
     window(client, id, |value| {
         value.total == Some(total) && value.status.complete && !value.status.from_cache
     })
+}
+
+#[test]
+fn four_visible_scopes_and_a_launcher_finish_without_hiding_or_resubmitting() {
+    let fixture = Fixture::new();
+    let hub = SearchHub::unstarted_for_test();
+    let mut panes = Vec::new();
+    for index in 0..4 {
+        let root = fixture.root().join(format!("pane{index}"));
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join(format!("report{index}.txt")), b"a").unwrap();
+        if index == 3 {
+            for item in 0..2048 {
+                fs::write(root.join(format!("other{item}.bin")), []).unwrap();
+            }
+        }
+        let client = hub.client();
+        let id = client.request(root, query(), 0, false);
+        panes.push((client, id));
+    }
+    let launcher = hub.client();
+    let launcher_id =
+        launcher.request_launcher(fixture.root().join("pane0"), "report".into(), true);
+    let shared = hub.shared.clone();
+    let cache = fixture.cache();
+    let started = Instant::now();
+    let worker = thread::spawn(move || run(shared, cache));
+    for (client, id) in &panes {
+        complete(client, *id, 1);
+    }
+    let until = Instant::now() + Duration::from_secs(15);
+    loop {
+        if let Some(SearchEvent::Launcher {
+            request,
+            rows,
+            complete: true,
+            ..
+        }) = launcher.try_recv()
+        {
+            assert_eq!(request, launcher_id);
+            assert_eq!(rows.len(), 1);
+            break;
+        }
+        assert!(
+            Instant::now() < until,
+            "launcher starved behind completed panes"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
+    println!(
+        "five_visible_subscriptions_complete_ms={:.3}",
+        started.elapsed().as_secs_f64() * 1000.0
+    );
+    hub.shutdown();
+    worker.join().unwrap();
+}
+
+#[test]
+fn selected_generation_keeps_its_lease_while_other_visible_scopes_run() {
+    let fixture = Fixture::new();
+    fixture.file("report.txt", b"a");
+    let hub = SearchHub::new(fixture.cache(), Arc::new(|| {})).unwrap();
+    let selected = hub.client();
+    let id = selected.request(fixture.root(), query(), 0, false);
+    let original = complete(&selected, id, 1);
+    let pinned = selected.request_as_of(
+        fixture.root(),
+        query(),
+        0,
+        false,
+        Some(original.status.clone()),
+    );
+    complete(&selected, pinned, 1);
+    let others = (0..4)
+        .map(|index| {
+            let root = fixture.0.join(format!("other{index}"));
+            fs::create_dir(&root).unwrap();
+            fs::write(root.join("report.txt"), b"b").unwrap();
+            let client = hub.client();
+            let id = client.request(root, query(), 0, false);
+            (client, id)
+        })
+        .collect::<Vec<_>>();
+    for (client, id) in &others {
+        complete(client, *id, 1);
+    }
+    let selection = selected.resolve_selection(query(), original.status.clone(), vec![(0, 0)]);
+    let until = Instant::now() + Duration::from_secs(15);
+    loop {
+        if let Some(SearchEvent::Selection {
+            selection: id,
+            result,
+        }) = selected.try_recv()
+        {
+            assert_eq!(id, selection);
+            assert_eq!(result.unwrap(), vec![fixture.root().join("report.txt")]);
+            break;
+        }
+        assert!(Instant::now() < until);
+        thread::sleep(Duration::from_millis(1));
+    }
+    hub.shutdown();
 }
 
 #[test]

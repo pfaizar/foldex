@@ -18,11 +18,14 @@ use std::{
     time::{Duration, Instant},
 };
 #[cfg(test)]
-mod live_tests;
+pub(crate) mod live_tests;
 mod scopes;
 
 const MAX_CLIENTS: usize = 4096;
-const MAX_CONNECTIONS: usize = 2;
+// Subscriptions hold bounded result windows and selected-generation leases.
+// They do not reserve a traversal or a query turn after completing their work.
+const MAX_SUBSCRIPTIONS: usize = 32;
+const QUERY_TURNS: usize = 2;
 const PAGE_ROWS: usize = 256;
 const WINDOW_PAGES: usize = 3;
 pub(crate) const WINDOW_ROWS: usize = WINDOW_PAGES * PAGE_ROWS;
@@ -1645,10 +1648,11 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
             );
         }
     }
-    let mut contexts = Vec::<Context>::with_capacity(MAX_CONNECTIONS);
+    let mut contexts = Vec::<Context>::with_capacity(8);
     let mut scopes = scopes::Scopes::new(shared.clone(), cache_base.clone());
     let mut cleanup = Vec::<(PathBuf, PathBuf)>::with_capacity(8);
     let mut reconciled = None;
+    let mut next_context = 0usize;
     loop {
         if shared.stopped.load(Ordering::Acquire) {
             break;
@@ -1669,7 +1673,15 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
                     .collect()
             };
             inputs.sort_unstable_by(|a, b| b.1.serial.cmp(&a.1.serial));
-            inputs.truncate(MAX_CONNECTIONS);
+            for (client, request) in inputs.iter().skip(MAX_SUBSCRIPTIONS) {
+                client.failed(
+                    request,
+                    format!(
+                        "At most {MAX_SUBSCRIPTIONS} visible search subscriptions can be active"
+                    ),
+                );
+            }
+            inputs.truncate(MAX_SUBSCRIPTIONS);
             let mut at = 0;
             while at < contexts.len() {
                 let keep = contexts[at].client.upgrade().is_some_and(|client| {
@@ -1735,7 +1747,9 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
             contexts.sort_unstable_by(|a, b| b.request.serial.cmp(&a.request.serial));
         }
         let mut did_work = false;
-        for index in 0..contexts.len() {
+        let mut turns = 0;
+        for offset in 0..contexts.len() {
+            let index = (next_context + offset) % contexts.len();
             let cleanup_allowed = contexts
                 .iter()
                 .filter(|context| context.cache_dir == contexts[index].cache_dir)
@@ -1748,7 +1762,12 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
                 .linked(&priority_cancel);
             match contexts[index].step(&cache_base, cleanup_allowed, &work_cancel, &priority_cancel)
             {
-                Ok(work) => did_work |= work,
+                Ok(work) => {
+                    if work {
+                        turns += 1;
+                    }
+                    did_work |= work;
+                }
                 Err(foldex_index::Error::Cancelled) => {}
                 Err(error) => {
                     did_work = true;
@@ -1757,6 +1776,10 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
                         client.failed(&contexts[index].request, error.to_string());
                     }
                 }
+            }
+            if turns == QUERY_TURNS {
+                next_context = (index + 1) % contexts.len();
+                break;
             }
         }
         let active_roots = contexts
@@ -2346,7 +2369,7 @@ mod tests {
         let mut hub = unstarted_hub();
         let waiting = hub.client();
         let request = waiting.request(fixture.scope(), Query::default(), 0, false);
-        let failed: Vec<_> = (0..MAX_CONNECTIONS)
+        let failed: Vec<_> = (0..QUERY_TURNS)
             .map(|index| {
                 let client = hub.client();
                 if fail_on_open {

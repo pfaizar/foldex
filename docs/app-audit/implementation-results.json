@@ -74,6 +74,32 @@
         "windows_gnu_app_and_test_check": "passed",
         "windows_runtime": "pending"
       }
+    },
+    {
+      "stage": 4,
+      "name": "Fair visible work scheduling",
+      "before": {
+        "older_third_search_publishes_without_hiding_newer_clients": false,
+        "detail_view_leases": 2
+      },
+      "after": {
+        "four_panes_and_launcher_completed": true,
+        "observed_five_subscription_completion_ms": 13.556,
+        "subscribed_scopes_in_resource_test": 12,
+        "max_running_traversals": 2,
+        "detail_views_published_without_focus_changes": 8,
+        "max_active_statistics_walks": 4,
+        "active_subscription_bound": 32,
+        "unused_scope_cache_bound": 8
+      },
+      "timing_scope": "One Linux dev-profile fixture with four roots, a launcher, and one 2,049-file root",
+      "validation": {
+        "full_app_tests_passed": 614,
+        "additional_resource_test_passed": 1,
+        "folder_statistics_tests_passed": 7,
+        "windows_gnu_app_and_test_check": "passed",
+        "windows_runtime": "pending"
+      }
     }
   ]
 }

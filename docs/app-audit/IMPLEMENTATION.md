@@ -9,8 +9,8 @@ Each stage receives a focused implementation, edge-case tests, a diff review, an
 | 1 | Shared preferences, independent window state, compact saved layouts, recoverable save limits | Complete; reviewed; 592 applicable app tests pass |
 | 2 | Shared live search catalogs, freshness, and catalog reuse | Complete; reviewed; 603 applicable app tests pass |
 | 3 | Independent interactive Shell actions and operation status | Complete; reviewed; 611 applicable app tests pass |
-| 4 | Fair scheduling for visible searches and details | In progress |
-| 5 | Complete large listings and predictable deep paging | Pending |
+| 4 | Fair scheduling for visible searches and details | Complete; reviewed; 615 applicable app tests pass |
+| 5 | Complete large listings and predictable deep paging | In progress |
 | 6 | Structured search and saved collections | Pending |
 | 7 | Accessible virtual file listings | Pending |
 | 8 | Shared cloud-aware filesystem capabilities | Pending |
@@ -46,3 +46,13 @@ The File Operations command and application-menu entry show a bounded 64-record 
 The original blocked-mutation fixture delivered **0 interactive events in 250 ms**. Its regression now returns the Open error **before releasing the mutation**, observed at 2.328–2.630 ms in portable runs. This measures queue independence with a missing-file Open, not Windows application startup. Additional tests cover queued cancellation, journal-wait cancellation, queue rejection without phantom records, bounded history/UTF-8 messages, cancellation racing success, native callback ownership, and rendering the operation dialog. Review caught partial-child changes and an application-menu grouping expectation after the new entry.
 
 Validation: **611 applicable app tests pass**, formatting and diff checks pass. The full Windows GNU application and its test sources pass `cargo check`; native runtime interaction remains for Windows CI/manual acceptance. No runtime Windows latency is claimed.
+
+## Stage 4
+
+Search subscription state and selected-generation readers no longer reserve the two query turns. The coordinator rotates up to two productive turns, skips settled subscribers, and advances independently owned traversals. New requests retain their initial latency preference without permanently displacing older work. Up to 32 active subscriptions/scopes are supported; unused scopes still use an eight-entry cache. Excess subscriptions receive an explicit error. Running traversals remain capped at two (each retains the existing bounded filesystem-reader pool).
+
+Details views now register bounded subscriptions rather than competing for two permanent leases or evicting each other on focus changes. The folder-statistics service already has round-robin queued-view admission and sliced walks; those mechanisms now serve up to 32 views with the same **four active walks**, 512 KiB request-path budget, and 64 cached tree results. Completion events remain coalesced per request. Generation cleanup accepts the larger bounded set of pinned readers.
+
+Regression fixtures cover four distinct visible searches plus a launcher, a selected generation resolving actions while four other scopes run, eight detail views without focus evictions, twelve scopes finishing with at most two running traversals, and round-robin folder requests across six views. A Windows-native test additionally checks six real folder totals and traversal resource bounds. Five search subscriptions finished in **13.556 ms** in one portable fixture, including a 2,049-file scope; the baseline's older third client never published until another client was hidden. These are behavior/resource tests and local development timings, not a Windows release SLO.
+
+Validation: the full portable app suite passed **614 tests**; the subsequently added twelve-scope resource test passed independently (**615 applicable app tests total**). All **7 portable folder-statistics tests** passed. Windows GNU application/test checks, formatting and diff checks passed. The native six-view test awaits Windows runtime CI.
