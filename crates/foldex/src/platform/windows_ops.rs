@@ -1,5 +1,5 @@
-//! User file operations belong to the Windows Shell. This module deliberately
-//! leaves its progress, collision, elevation and retry dialogs enabled.
+//! User file operations belong to the Windows Shell. Progress is delayed for
+//! quick operations; collision, elevation and retry dialogs remain enabled.
 //!
 //! Everything COM-owned is created, used and released on the existing bounded
 //! file worker. No interface pointer escapes that STA or survives a job.
@@ -276,7 +276,7 @@ struct FileOperationVtable {
     unadvise: unsafe extern "system" fn(*mut c_void, u32) -> i32, // 4
     set_flags: unsafe extern "system" fn(*mut c_void, u32) -> i32, // 5
     set_progress_message: usize, // 6
-    set_progress_dialog: usize, // 7: left unset to preserve Windows' dialog/chart
+    set_progress_dialog: unsafe extern "system" fn(*mut c_void, *mut c_void) -> i32, // 7
     set_properties: usize,  // 8
     set_owner: unsafe extern "system" fn(*mut c_void, HWND) -> i32, // 9
     apply_properties: [usize; 2], // 10..11
@@ -959,6 +959,12 @@ fn perform_batch(
     hresult(
         unsafe { (vtable.set_owner)(operation.0, owner_window(owner)) },
         "Set Foldex operation owner",
+    )?;
+    let progress = foldex_shell::progress::DelayedProgressDialog::new()
+        .map_err(|result| hresult(result, "Create delayed Windows progress").unwrap_err())?;
+    hresult(
+        unsafe { (vtable.set_progress_dialog)(operation.0, progress.as_raw()) },
+        "Delay Windows file operation progress",
     )?;
     let global_sink = progress_sink(state.clone(), None, mode == Mode::Recycle);
     let mut cookie = 0;

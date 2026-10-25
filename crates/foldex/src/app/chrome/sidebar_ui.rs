@@ -1165,6 +1165,7 @@ impl Foldex {
                             let row_item = NavigationItem::Folder(section, item.path.clone());
                             let response =
                                 ui.interact(r.intersect(clip), identity.with("hit"), Sense::CLICK);
+                            crate::drag_drop::target(ui, r.intersect(clip), item.path.clone());
                             background.exclude(r.intersect(clip));
                             if response.clicked()
                                 || response.secondary_clicked()
