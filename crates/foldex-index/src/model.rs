@@ -155,6 +155,8 @@ pub struct IndexRecord {
     pub symlink: bool,
     pub size: u64,
     pub modified_secs: i64,
+    pub created_secs: Option<i64>,
+    pub accessed_secs: Option<i64>,
 }
 impl IndexRecord {
     pub fn new(
@@ -181,6 +183,8 @@ impl IndexRecord {
             symlink: false,
             size,
             modified_secs,
+            created_secs: None,
+            accessed_secs: None,
         })
     }
     pub(crate) fn heap_bytes(&self) -> usize {
@@ -203,6 +207,8 @@ pub struct IndexRow {
     pub symlink: bool,
     pub size: u64,
     pub modified_secs: i64,
+    pub created_secs: Option<i64>,
+    pub accessed_secs: Option<i64>,
     pub(crate) natural_key: Vec<u8>,
     pub(crate) raw_sort: Vec<u8>,
     pub(crate) extension: String,
@@ -228,6 +234,8 @@ pub enum SortColumn {
     Size,
     Modified,
     Kind,
+    Created,
+    Accessed,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum KindFilter {
@@ -374,6 +382,8 @@ pub struct BuildOptions {
     /// Exclude the common index-cache ancestor, including caches for other scopes.
     /// It must already exist. This protects against indexing the index itself.
     pub excluded_root: Option<PathBuf>,
+    /// Enumerate only direct children; never enqueue descendant directories.
+    pub directory_only: bool,
 }
 
 #[derive(Clone, Debug, Default)]

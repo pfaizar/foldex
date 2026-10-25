@@ -18,6 +18,8 @@ pub struct Entry {
     pub attributes: u32,
     pub size: u64,
     pub modified_secs: i64,
+    pub created_secs: Option<i64>,
+    pub accessed_secs: Option<i64>,
     pub metadata_known: bool,
 }
 impl Entry {
@@ -66,6 +68,14 @@ impl Entry {
                 .as_ref()
                 .and_then(|metadata| metadata.modified().ok())
                 .map_or(0, unix_secs),
+            created_secs: metadata
+                .as_ref()
+                .and_then(|m| m.created().ok())
+                .map(unix_secs),
+            accessed_secs: metadata
+                .as_ref()
+                .and_then(|m| m.accessed().ok())
+                .map(unix_secs),
             metadata_known: metadata.is_some(),
         }
     }

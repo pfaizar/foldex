@@ -20,7 +20,7 @@ impl Fixture {
     pub(crate) fn root(&self) -> PathBuf {
         self.0.join("scope")
     }
-    pub(super) fn cache(&self) -> PathBuf {
+    pub(crate) fn cache(&self) -> PathBuf {
         self.0.join("cache")
     }
     fn file(&self, path: &str, bytes: &[u8]) {
@@ -70,6 +70,43 @@ fn complete(client: &SearchClient, id: u64, total: usize) -> Arc<SearchWindow> {
     window(client, id, |value| {
         value.total == Some(total) && value.status.complete && !value.status.from_cache
     })
+}
+
+#[test]
+fn directory_and_recursive_subscribers_use_distinct_catalogs_for_the_same_root() {
+    let fixture = Fixture::new();
+    fixture.file("report-root.txt", b"a");
+    fixture.file("child/report-nested.txt", b"b");
+    let hub = SearchHub::new(fixture.cache(), Arc::new(|| {})).unwrap();
+    let directory = hub.client();
+    let recursive = hub.client();
+    let direct = directory.request_directory_as_of(fixture.root(), query(), 0, false, None);
+    let deep = recursive.request(fixture.root(), query(), 0, false);
+    let one = complete(&directory, direct, 1);
+    let two = complete(&recursive, deep, 2);
+    assert_ne!(one.status.database_path, two.status.database_path);
+    assert_ne!(one.status.generation, two.status.generation);
+    assert_eq!(
+        one.snapshot.entries[0].relative_path.as_deref(),
+        Some(Path::new("report-root.txt"))
+    );
+    let forged = directory.request_directory_as_of(
+        fixture.root(),
+        query(),
+        0,
+        false,
+        Some(two.status.clone()),
+    );
+    let until = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(SearchEvent::Failed { request, .. }) = directory.try_recv() {
+            assert_eq!(request, forged);
+            break;
+        }
+        assert!(Instant::now() < until);
+        thread::sleep(Duration::from_millis(1));
+    }
+    hub.shutdown();
 }
 
 #[test]

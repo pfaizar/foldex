@@ -24,6 +24,7 @@ pub enum ReaderKind {
 }
 
 pub struct WalkOptions {
+    pub recursive: bool,
     pub workers: usize,
     /// An existing private directory. Overflow is deleted when workers stop.
     pub spool_root: PathBuf,
@@ -248,7 +249,7 @@ fn read_directory(
             if !entry.metadata_known {
                 batch.skipped += 1;
             }
-            if entry.is_dir() && !entry.is_reparse() {
+            if shared.options.recursive && entry.is_dir() && !entry.is_reparse() {
                 let child = batch.parent.join(&entry.name);
                 shared
                     .queue

@@ -116,6 +116,7 @@ struct Request {
     serial: u64,
     scan_epoch: u64,
     root: PathBuf,
+    directory_only: bool,
     query: Query,
     start: usize,
     refresh: bool,
@@ -500,7 +501,18 @@ impl SearchClient {
         refresh: bool,
         boundary: Option<IndexStatus>,
     ) -> u64 {
-        self.request_kind(root, query, start, refresh, boundary, None)
+        self.request_kind(root, query, start, refresh, boundary, None, false)
+    }
+
+    pub fn request_directory_as_of(
+        &self,
+        root: PathBuf,
+        query: Query,
+        start: usize,
+        refresh: bool,
+        boundary: Option<IndexStatus>,
+    ) -> u64 {
+        self.request_kind(root, query, start, refresh, boundary, None, true)
     }
 
     /// Launcher matching bypasses the explorer's subsequence prefilter, retaining
@@ -517,6 +529,7 @@ impl SearchClient {
             false,
             None,
             Some(explicit),
+            false,
         )
     }
 
@@ -529,6 +542,7 @@ impl SearchClient {
         refresh: bool,
         boundary: Option<IndexStatus>,
         launcher: Option<bool>,
+        directory_only: bool,
     ) -> u64 {
         let id = self.state.sequence.fetch_add(1, Ordering::AcqRel) + 1;
         if self.state.closed.load(Ordering::Acquire) {
@@ -538,16 +552,22 @@ impl SearchClient {
         let old = commands.latest.take();
         if refresh
             || old.as_ref().is_none_or(|old| {
-                old.root != root || old.query != query || old.launcher != launcher
+                old.root != root
+                    || old.directory_only != directory_only
+                    || old.query != query
+                    || old.launcher != launcher
             })
         {
             if let Some(selection) = commands.selection.take() {
                 selection.cancel.cancel();
             }
         }
-        let same_scan = old
-            .as_ref()
-            .is_some_and(|old| old.root == root && !refresh && !old.scan_cancel.is_cancelled());
+        let same_scan = old.as_ref().is_some_and(|old| {
+            old.root == root
+                && old.directory_only == directory_only
+                && !refresh
+                && !old.scan_cancel.is_cancelled()
+        });
         if let Some(old) = &old {
             old.query_cancel.cancel();
         }
@@ -570,6 +590,7 @@ impl SearchClient {
             serial,
             scan_epoch: commands.scan_epoch,
             root,
+            directory_only,
             query,
             start,
             refresh,
@@ -1002,7 +1023,10 @@ impl Context {
         {
             return Err(foldex_index::Error::InvalidCursor);
         }
-        let cache_dir = Index::cache_dir_for(cache_base, source_root)?;
+        let cache_dir = Index::cache_dir_for(
+            &scope_cache_base(cache_base, request.directory_only),
+            source_root,
+        )?;
         let pinned = if let Some(boundary) = &request.boundary {
             let root = std::fs::canonicalize(&cache_dir)?;
             let path = std::fs::canonicalize(&boundary.database_path)?;
@@ -1601,6 +1625,14 @@ fn validate_ranges(ranges: &[(u32, u32)]) -> Result<usize, SelectionFailure> {
     Ok(count as usize)
 }
 
+fn scope_cache_base(base: &Path, directory_only: bool) -> PathBuf {
+    if directory_only {
+        base.join("directories")
+    } else {
+        base.to_owned()
+    }
+}
+
 fn new_builder(
     cache_dir: &Path,
     cache_base: &Path,
@@ -1611,6 +1643,7 @@ fn new_builder(
         &request.root,
         &BuildOptions {
             excluded_root: Some(cache_base.to_path_buf()),
+            directory_only: request.directory_only,
         },
         &request.scan_cancel,
     )
@@ -1689,6 +1722,7 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
                         Arc::ptr_eq(active, &client)
                             && request.scan_epoch == contexts[at].request.scan_epoch
                             && request.root == contexts[at].request.root
+                            && request.directory_only == contexts[at].request.directory_only
                     })
                 });
                 if keep {
@@ -1789,7 +1823,7 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
                     .client
                     .upgrade()
                     .and_then(|client| client.input())
-                    .map(|request| request.root)
+                    .map(|request| (request.root, request.directory_only))
             })
             .collect::<Vec<_>>();
         for update in scopes.advance(&active_roots) {
@@ -1919,9 +1953,8 @@ fn query_spec(query: &Query, include_total: bool) -> QuerySpec {
             foldex_core::SortColumn::Name => SortColumn::Name,
             foldex_core::SortColumn::Size => SortColumn::Size,
             foldex_core::SortColumn::Modified => SortColumn::Modified,
-            foldex_core::SortColumn::Created | foldex_core::SortColumn::Accessed => {
-                SortColumn::Name
-            }
+            foldex_core::SortColumn::Created => SortColumn::Created,
+            foldex_core::SortColumn::Accessed => SortColumn::Accessed,
             foldex_core::SortColumn::Kind => SortColumn::Kind,
         },
         kind: match query.kind {
@@ -1948,6 +1981,8 @@ fn snapshot<'a>(
                 row.modified_secs,
             );
             entry.relative_path = Some(row.relative_path.clone());
+            entry.created_secs = row.created_secs;
+            entry.accessed_secs = row.accessed_secs;
             entry.hidden = row.hidden;
             entry.symlink = row.symlink;
             entry

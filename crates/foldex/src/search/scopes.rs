@@ -30,7 +30,12 @@ impl Monitor {
     }
 }
 impl Monitor {
-    fn new(root: &Path, excluded: &Path, shared: &Arc<Shared>) -> Self {
+    fn new(root: &Path, excluded: &Path, shared: &Arc<Shared>, directory_only: bool) -> Self {
+        let mode = if directory_only {
+            RecursiveMode::NonRecursive
+        } else {
+            RecursiveMode::Recursive
+        };
         let signal = Arc::new(Signal {
             revision: AtomicU64::new(0),
             healthy: AtomicBool::new(true),
@@ -77,7 +82,7 @@ impl Monitor {
             Config::default().with_follow_symlinks(false),
         )
         .and_then(|mut watcher| {
-            watcher.watch(root, RecursiveMode::Recursive)?;
+            watcher.watch(root, mode)?;
             Ok(watcher)
         }) {
             Ok(watcher) => Watch::Native { _watcher: watcher },
@@ -89,7 +94,7 @@ impl Monitor {
                     .with_compare_contents(false),
             )
             .and_then(|mut watcher| {
-                watcher.watch(root, RecursiveMode::Recursive)?;
+                watcher.watch(root, mode)?;
                 Ok(watcher)
             }) {
                 Ok(watcher) => Watch::Poll { _watcher: watcher },
@@ -108,6 +113,7 @@ impl Monitor {
 
 struct Scope {
     root: PathBuf,
+    directory_only: bool,
     cache_dir: PathBuf,
     catalog: Rc<RefCell<SharedCatalog>>,
     monitor: Monitor,
@@ -152,7 +158,7 @@ mod tests {
     fn settle(scopes: &mut Scopes, root: &Path, backend: &Backend) {
         let until = Instant::now() + Duration::from_secs(15);
         while !backend.complete() || !backend.status().complete {
-            for update in scopes.advance(&[root.to_owned()]) {
+            for update in scopes.advance(&[(root.to_owned(), false)]) {
                 update.status.unwrap();
             }
             assert!(Instant::now() < until);
@@ -193,11 +199,11 @@ mod tests {
             .signal
             .revision
             .fetch_add(1, Ordering::AcqRel);
-        scopes.advance(&[fixture.root()]);
+        scopes.advance(&[(fixture.root(), false)]);
         assert!(backend.status().from_cache);
         assert!(scopes.deadline().is_some());
         scopes.values[0].retried = Instant::now() - WATCH_RETRY;
-        scopes.advance(&[fixture.root()]);
+        scopes.advance(&[(fixture.root(), false)]);
         settle(&mut scopes, &fixture.root(), &backend);
         assert_ne!(backend.status().generation, generation);
         assert!(!backend.status().from_cache);
@@ -230,7 +236,7 @@ mod tests {
             std::fs::write(root.join("report.txt"), b"a").unwrap();
             client.request(root.clone(), Query::default(), 0, false);
             let (_, backend) = scopes.backend(&client.state.input().unwrap()).unwrap();
-            roots.push(root);
+            roots.push((root, false));
             backends.push(backend);
         }
         let until = Instant::now() + Duration::from_secs(15);
@@ -278,15 +284,19 @@ impl Scopes {
         }
     }
     pub fn backend(&mut self, request: &Request) -> foldex_index::Result<(PathBuf, Backend)> {
-        if let Some(scope) = self
-            .values
-            .iter_mut()
-            .find(|scope| crate::bookmarks::path_eq(&scope.root, &request.root))
-        {
+        if let Some(scope) = self.values.iter_mut().find(|scope| {
+            scope.directory_only == request.directory_only
+                && crate::bookmarks::path_eq(&scope.root, &request.root)
+        }) {
             if scope.catalog.borrow().backend.is_none() {
                 scope.cancel = Cancellation::new();
-                let builder =
-                    Self::builder(&scope.cache_dir, &self.base, &scope.root, &scope.cancel)?;
+                let builder = Self::builder(
+                    &scope.cache_dir,
+                    &self.base,
+                    &scope.root,
+                    scope.directory_only,
+                    &scope.cancel,
+                )?;
                 scope.catalog.borrow_mut().backend = Some(Backend::Building(builder));
                 scope.dirty = None;
             }
@@ -318,8 +328,16 @@ impl Scopes {
             }
         }
         std::fs::create_dir_all(&self.base)?;
-        let cache_dir = Index::cache_dir_for(&self.base, &request.root)?;
-        let monitor = Monitor::new(&request.root, &self.base, &self.shared);
+        let cache_dir = Index::cache_dir_for(
+            &scope_cache_base(&self.base, request.directory_only),
+            &request.root,
+        )?;
+        let monitor = Monitor::new(
+            &request.root,
+            &self.base,
+            &self.shared,
+            request.directory_only,
+        );
         let cancel = Cancellation::new();
         let cached = (!request.refresh)
             .then(|| {
@@ -334,6 +352,7 @@ impl Scopes {
                 &cache_dir,
                 &self.base,
                 &request.root,
+                request.directory_only,
                 &cancel,
             )?),
         };
@@ -346,6 +365,7 @@ impl Scopes {
         let now = Instant::now();
         self.values.push(Scope {
             root: request.root.clone(),
+            directory_only: request.directory_only,
             cache_dir: cache_dir.clone(),
             catalog: catalog.clone(),
             monitor,
@@ -368,6 +388,7 @@ impl Scopes {
         cache_dir: &Path,
         base: &Path,
         root: &Path,
+        directory_only: bool,
         cancel: &Cancellation,
     ) -> foldex_index::Result<IndexBuilder> {
         IndexBuilder::create_with_options(
@@ -375,20 +396,22 @@ impl Scopes {
             root,
             &BuildOptions {
                 excluded_root: Some(base.to_owned()),
+                directory_only,
             },
             cancel,
         )
     }
     /// Query contexts own their immutable selection generations. A refresh only
     /// replaces the live scope; it never mutates a selected generation on disk.
-    pub fn advance(&mut self, active: &[PathBuf]) -> Vec<Update> {
+    pub fn advance(&mut self, active: &[(PathBuf, bool)]) -> Vec<Update> {
         let mut updates = Vec::new();
         let mut running = self.values.iter().filter(|scope| scope.running).count();
         let now = Instant::now();
         for scope in &mut self.values {
-            let active = active
-                .iter()
-                .any(|root| crate::bookmarks::path_eq(root, &scope.root));
+            let active = active.iter().any(|(root, directory_only)| {
+                *directory_only == scope.directory_only
+                    && crate::bookmarks::path_eq(root, &scope.root)
+            });
             scope.active = active;
             let revision = scope.monitor.signal.revision.load(Ordering::Acquire);
             if revision != scope.seen {
@@ -410,7 +433,8 @@ impl Scopes {
             if (!scope.monitor.signal.healthy.load(Ordering::Acquire) || !scope.monitor.native())
                 && scope.retried.elapsed() >= WATCH_RETRY
             {
-                scope.monitor = Monitor::new(&scope.root, &self.base, &self.shared);
+                scope.monitor =
+                    Monitor::new(&scope.root, &self.base, &self.shared, scope.directory_only);
                 scope.seen = scope.monitor.signal.revision.load(Ordering::Acquire);
                 scope.retried = now;
                 scope.dirty = Some(now);
@@ -439,7 +463,13 @@ impl Scopes {
                 || scope.dirty.is_some_and(|due| due <= now);
             if !rebuilding && needs_rebuild && running < MAX_SCANS {
                 scope.cancel = Cancellation::new();
-                match Self::builder(&scope.cache_dir, &self.base, &scope.root, &scope.cancel) {
+                match Self::builder(
+                    &scope.cache_dir,
+                    &self.base,
+                    &scope.root,
+                    scope.directory_only,
+                    &scope.cancel,
+                ) {
                     Ok(builder) => {
                         catalog.backend = Some(Backend::Building(builder));
                         catalog.stale = false;

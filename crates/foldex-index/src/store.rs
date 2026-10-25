@@ -392,6 +392,7 @@ pub struct IndexBuilder {
     pub(crate) mode: Mode,
     pub(crate) current: Option<crate::walk::CurrentDirectory>,
     pub(crate) scan_workers: usize,
+    pub(crate) directory_only: bool,
     pub(crate) walker: Option<foldex_fs::Walk>,
     pub(crate) walk_batch: Option<crate::parallel_walk::CurrentBatch>,
     pub(crate) walk_done: bool,
@@ -530,6 +531,7 @@ impl IndexBuilder {
             mode: Mode::None,
             current: None,
             scan_workers: 0,
+            directory_only: options.directory_only,
             walker: None,
             walk_batch: None,
             walk_done: false,
@@ -646,7 +648,7 @@ impl IndexBuilder {
             characters.execute(params![id, crate::fuzzy::tokens(&folded, false)])?;
             self.stats.character_write += character_started.elapsed();
             self.stats.records += 1;
-            if enqueue_directories && record.is_dir && !record.symlink {
+            if enqueue_directories && !self.directory_only && record.is_dir && !record.symlink {
                 pending.execute([&encoded])?;
             }
             index.status.entries += 1;

@@ -94,6 +94,8 @@ impl Catalog {
                 format::Metadata {
                     size: if entry.is_dir() { 0 } else { entry.size },
                     modified_secs: entry.modified_secs,
+                    created_secs: entry.created_secs,
+                    accessed_secs: entry.accessed_secs,
                     is_dir: entry.is_dir(),
                     hidden: entry.is_hidden(),
                     symlink: entry.is_reparse(),
@@ -443,6 +445,8 @@ impl Catalog {
             symlink: record.flags & 4 != 0,
             size: record.size,
             modified_secs: record.modified,
+            created_secs: record.created,
+            accessed_secs: record.accessed,
             natural_key: record.natural().to_vec(),
             raw_sort: record.name().to_vec(),
             extension: crate::model::extension(lower, is_dir).to_owned(),

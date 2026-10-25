@@ -173,7 +173,9 @@ pub struct Pane {
     pub(crate) recycle_busy: bool,
     pub loading: bool,
     pub resolving: bool,
+    /// Uses the paged index; `directory_only` distinguishes ordinary continuation.
     pub recursive: bool,
+    directory_only: bool,
     pub scanning: bool,
     pub error: Option<String>,
     pub cached: bool,
@@ -529,6 +531,7 @@ impl Pane {
             loading: false,
             resolving: false,
             recursive: false,
+            directory_only: false,
             scanning: false,
             error: None,
             cached: false,
@@ -823,13 +826,23 @@ impl Pane {
 
     fn request_window(&mut self, start: usize, refresh: bool) {
         if let Some(search) = &self.search {
-            self.search_request = search.request_as_of(
-                self.path.clone(),
-                self.query.clone(),
-                start,
-                refresh,
-                self.selection_boundary.clone(),
-            );
+            self.search_request = if self.directory_only {
+                search.request_directory_as_of(
+                    self.path.clone(),
+                    self.query.clone(),
+                    start,
+                    refresh,
+                    self.selection_boundary.clone(),
+                )
+            } else {
+                search.request_as_of(
+                    self.path.clone(),
+                    self.query.clone(),
+                    start,
+                    refresh,
+                    self.selection_boundary.clone(),
+                )
+            };
             self.requested_start = Some(start);
             self.requested_at = Instant::now();
         } else {
@@ -900,6 +913,7 @@ impl Pane {
             search.set_active(false);
         }
         self.recursive = false;
+        self.directory_only = false;
         self.browser.set_active(self.active);
         self.reset_search();
         self.scanning = false;
@@ -1142,13 +1156,31 @@ impl Pane {
                 .as_ref()
                 .is_some_and(|snapshot| snapshot.path == self.path)
     }
+    pub fn expanded_search(&self) -> bool {
+        self.recursive && !self.directory_only
+    }
+
+    pub fn continue_large_directory(&mut self) {
+        if self.is_virtual() {
+            return;
+        }
+        self.recursive = true;
+        self.directory_only = true;
+        self.change_indexed_view();
+    }
+
     pub fn toggle_recursive(&mut self) {
         if self.is_virtual() {
             return;
         }
+        self.recursive = !self.expanded_search();
+        self.directory_only = false;
+        self.change_indexed_view();
+    }
+
+    fn change_indexed_view(&mut self) {
         self.memory_retry = None;
         self.routing_revision = self.routing_revision.wrapping_add(1);
-        self.recursive = !self.recursive;
         if self.recursive {
             self.columns.enter_recursive(&mut self.query);
         }
@@ -1626,10 +1658,27 @@ impl Pane {
             ),
         );
         let columns = self.details_header(ui, t, header, active);
-        let body = Rect::from_min_max(
+        let mut body = Rect::from_min_max(
             pos2(all.left() + 16.0 * scale, header.bottom() + 3.0 * scale),
             pos2(all.right() - 10.0 * scale, footer.top() - 2.0 * scale),
         );
+        if !self.recursive
+            && self
+                .snapshot
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.limit.is_some())
+        {
+            let banner = Rect::from_min_size(body.min, vec2(body.width(), 32.0 * scale));
+            ui.scope_builder(UiBuilder::new().max_rect(banner), |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Only part of this folder is loaded.");
+                    if ui.button("Load all items").on_hover_text("Continue this folder listing with bounded memory. Subfolders are not searched.").clicked() {
+                        self.continue_large_directory();
+                    }
+                });
+            });
+            body.min.y = (banner.bottom() + 2.0 * scale).min(body.max.y);
+        }
         self.listing(ui, t, active, body, &columns, assets, &mut actions);
         if self.view_len() == 0 && !(self.is_recycle_bin() && self.error.is_some()) {
             let message = if let Some(e) = &self.error {
@@ -1854,6 +1903,54 @@ mod tests {
         assert!(pane.more_menu_command(7).is_none());
         pane.split_orientation = Some(false);
         assert!(matches!(pane.more_menu_command(7), Some(Action::ClosePane)));
+    }
+
+    #[test]
+    fn limited_directory_continuation_finds_omitted_files_without_searching_subfolders() {
+        let fixture = crate::search::live_tests::Fixture::new();
+        std::fs::write(fixture.root().join("report-root.txt"), b"a").unwrap();
+        std::fs::write(fixture.root().join("child/report-nested.txt"), b"b").unwrap();
+        let engine = engine();
+        let hub = crate::search::SearchHub::new(fixture.cache(), Arc::new(|| {})).unwrap();
+        let mut pane = Pane::dormant(1, &engine, fixture.root());
+        pane.active = true;
+        pane.attach_search(hub.client());
+        let mut prefix = Snapshot::from_entries(
+            fixture.root(),
+            vec![foldex_core::Entry::from_name("visible.txt", false, 0, 0)],
+        );
+        prefix.limit = Some(foldex_core::LimitReason::MemoryBudget);
+        prefix.complete = false;
+        pane.snapshot = Some(Arc::new(prefix));
+        pane.filter = "report".into();
+        pane.query.text = "report".into();
+        pane.query.kind = foldex_core::KindFilter::Files;
+        pane.query.sort = foldex_core::SortColumn::Created;
+        pane.continue_large_directory();
+        assert!(pane.directory_only && pane.recursive && !pane.expanded_search());
+        assert_eq!(pane.query.sort, foldex_core::SortColumn::Created);
+        let until = Instant::now() + Duration::from_secs(10);
+        while pane.search_total != Some(1) || pane.scanning || pane.loading {
+            pane.poll();
+            assert!(
+                Instant::now() < until,
+                "continuation did not finish: {:?}",
+                pane.error
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            pane.path_at(0),
+            Some(fixture.root().join("report-root.txt"))
+        );
+        pane.select_all();
+        assert_eq!(pane.selected.len(), 1);
+        assert!(
+            matches!(pane.request_selection(SelectionCommand::Copy), Some(Action::Copy(paths, false)) if paths == vec![fixture.root().join("report-root.txt")])
+        );
+        pane.toggle_recursive();
+        assert!(pane.expanded_search() && !pane.directory_only);
+        hub.shutdown();
     }
 
     #[test]

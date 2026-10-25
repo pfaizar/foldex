@@ -564,9 +564,9 @@ impl Pane {
                 Id::new((self.id, "expand-filter")),
                 t,
                 Icon::Recursive,
-                self.recursive,
+                self.expanded_search(),
             )
-            .on_hover_text(if self.recursive {
+            .on_hover_text(if self.expanded_search() {
                 "Return to folder filter · Ctrl+E"
             } else {
                 "Search this folder and subfolders · Ctrl+E"
@@ -581,7 +581,7 @@ impl Pane {
                 egui::WidgetInfo::selected(
                     egui::WidgetType::Checkbox,
                     ui.is_enabled(),
-                    self.recursive,
+                    self.expanded_search(),
                     "Search this folder and subfolders",
                 )
             });
@@ -804,7 +804,7 @@ impl Pane {
             "Filter recent…"
         } else if self.is_recycle_bin() {
             "Filter Recycle Bin…"
-        } else if self.recursive {
+        } else if self.expanded_search() {
             "Search this folder and subfolders…"
         } else {
             "Filter files…"

@@ -163,6 +163,14 @@ impl FindReader {
                 size: (u64::from(data.nFileSizeHigh) << 32) | u64::from(data.nFileSizeLow),
                 modified_secs: ((i128::from(modified) - 116_444_736_000_000_000i128)
                     .div_euclid(10_000_000)) as i64,
+                created_secs: Some(filetime_secs(
+                    (u64::from(data.ftCreationTime.dwHighDateTime) << 32)
+                        | u64::from(data.ftCreationTime.dwLowDateTime),
+                )),
+                accessed_secs: Some(filetime_secs(
+                    (u64::from(data.ftLastAccessTime.dwHighDateTime) << 32)
+                        | u64::from(data.ftLastAccessTime.dwLowDateTime),
+                )),
                 metadata_known: true,
             }));
         }
@@ -333,6 +341,8 @@ impl Reader {
                 size: record.EndOfFile as u64,
                 modified_secs: ((record.LastWriteTime as u64 as i128 - 116_444_736_000_000_000i128)
                     .div_euclid(10_000_000)) as i64,
+                created_secs: Some(filetime_secs(record.CreationTime as u64)),
+                accessed_secs: Some(filetime_secs(record.LastAccessTime as u64)),
                 metadata_known: true,
             }));
         }
@@ -341,4 +351,8 @@ impl Reader {
         self.ended = true;
         Err(io::Error::new(io::ErrorKind::InvalidData, message))
     }
+}
+
+fn filetime_secs(value: u64) -> i64 {
+    ((i128::from(value) - 116_444_736_000_000_000i128).div_euclid(10_000_000)) as i64
 }

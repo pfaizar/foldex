@@ -173,6 +173,8 @@ pub struct Hit {
     pub is_dir: bool,
     pub size: u64,
     pub modified_secs: i64,
+    pub created_secs: Option<i64>,
+    pub accessed_secs: Option<i64>,
     pub(super) natural: Vec<u8>,
     pub(super) raw: Vec<u8>,
     pub(super) extension: String,
@@ -214,6 +216,8 @@ impl Hit {
             is_dir: false,
             size: 0,
             modified_secs: 0,
+            created_secs: None,
+            accessed_secs: None,
             natural: Vec::new(),
             raw: Vec::new(),
             extension: String::new(),
@@ -235,6 +239,8 @@ impl Hit {
             is_dir: row.is_dir,
             size: row.size,
             modified_secs: row.modified_secs,
+            created_secs: row.created_secs,
+            accessed_secs: row.accessed_secs,
             natural: row.natural_key.clone(),
             raw: row.raw_sort.clone(),
             extension: row.extension.clone(),
@@ -255,6 +261,8 @@ impl Hit {
             score: self.score,
             size: self.size,
             modified: self.modified_secs,
+            created: self.created_secs,
+            accessed: self.accessed_secs,
             extension: &self.extension,
             natural: &self.natural,
             raw: &self.raw,
@@ -269,6 +277,8 @@ struct OrderKey<'a> {
     score: Option<i32>,
     size: u64,
     modified: i64,
+    created: Option<i64>,
+    accessed: Option<i64>,
     extension: &'a str,
     natural: &'a [u8],
     raw: &'a [u8],
@@ -285,6 +295,22 @@ impl OrderKey<'_> {
                     SortColumn::Name => Ordering::Equal,
                     SortColumn::Size => self.size.cmp(&other.size),
                     SortColumn::Modified => self.modified.cmp(&other.modified),
+                    SortColumn::Created => self
+                        .created
+                        .unwrap_or(if descending { i64::MIN } else { i64::MAX })
+                        .cmp(&other.created.unwrap_or(if descending {
+                            i64::MIN
+                        } else {
+                            i64::MAX
+                        })),
+                    SortColumn::Accessed => self
+                        .accessed
+                        .unwrap_or(if descending { i64::MIN } else { i64::MAX })
+                        .cmp(&other.accessed.unwrap_or(if descending {
+                            i64::MIN
+                        } else {
+                            i64::MAX
+                        })),
                     SortColumn::Kind => self.extension.cmp(other.extension),
                 };
                 let tie = primary
@@ -378,6 +404,8 @@ impl Top {
             score,
             size: record.size,
             modified: record.modified,
+            created: record.created,
+            accessed: record.accessed,
             extension,
             natural: record.natural(),
             raw: record.name(),
@@ -407,6 +435,8 @@ impl Top {
             worst.is_dir = is_dir;
             worst.size = record.size;
             worst.modified_secs = record.modified;
+            worst.created_secs = record.created;
+            worst.accessed_secs = record.accessed;
             worst.descending = query.spec.descending;
             worst.sort = query.spec.sort;
             worst.extension.clear();
@@ -433,6 +463,8 @@ impl Top {
                 is_dir,
                 size: record.size,
                 modified_secs: record.modified,
+                created_secs: record.created,
+                accessed_secs: record.accessed,
                 natural: record.natural().to_vec(),
                 raw: record.name().to_vec(),
                 descending: query.spec.descending,

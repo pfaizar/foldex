@@ -848,6 +848,7 @@ fn common_cache_ancestor_is_excluded_for_all_scope_generations() {
         &f.scope(),
         &BuildOptions {
             excluded_root: Some(common.clone()),
+            ..BuildOptions::default()
         },
         &c,
     )

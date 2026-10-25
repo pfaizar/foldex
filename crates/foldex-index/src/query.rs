@@ -299,7 +299,7 @@ impl Index {
 
     fn ensure_sort(&self, sort: SortColumn) -> Result<()> {
         let sql = match sort {
-            SortColumn::Name => return Ok(()),
+            SortColumn::Name | SortColumn::Created | SortColumn::Accessed => return Ok(()),
             SortColumn::Size => {
                 "CREATE INDEX IF NOT EXISTS entries_size ON entries(is_dir,size_key,natural_key,raw_sort,id)"
             }
@@ -998,7 +998,9 @@ pub(crate) fn fingerprint(spec: &QuerySpec, upper_id: Option<u64>) -> u64 {
 
 fn sort_columns(column: SortColumn) -> &'static str {
     match column {
-        SortColumn::Name => "e.natural_key,e.raw_sort,e.id",
+        SortColumn::Name | SortColumn::Created | SortColumn::Accessed => {
+            "e.natural_key,e.raw_sort,e.id"
+        }
         SortColumn::Size => "e.size_key,e.natural_key,e.raw_sort,e.id",
         SortColumn::Modified => "e.modified,e.natural_key,e.raw_sort,e.id",
         SortColumn::Kind => "e.extension,e.natural_key,e.raw_sort,e.id",
@@ -1007,7 +1009,7 @@ fn sort_columns(column: SortColumn) -> &'static str {
 fn cursor_values(row: &IndexRow, column: SortColumn) -> Vec<Value> {
     let mut values = Vec::with_capacity(4);
     match column {
-        SortColumn::Name => {}
+        SortColumn::Name | SortColumn::Created | SortColumn::Accessed => {}
         SortColumn::Size => values.push(Value::Blob(row.size.to_be_bytes().to_vec())),
         SortColumn::Modified => values.push(Value::Integer(row.modified_secs)),
         SortColumn::Kind => values.push(Value::Text(row.extension.clone())),
@@ -1040,6 +1042,8 @@ fn decode_row(row: &rusqlite::Row<'_>, scope: &std::path::Path) -> Result<IndexR
         symlink: row.get(4)?,
         size: u64::from_be_bytes(size),
         modified_secs: row.get(6)?,
+        created_secs: None,
+        accessed_secs: None,
         natural_key: row.get(7)?,
         raw_sort: row.get(8)?,
         extension: row.get(9)?,

@@ -11,7 +11,7 @@ use std::{
 };
 
 const APP_ID: i64 = 0x4649_4c43;
-const FORMAT: i64 = 4;
+const FORMAT: i64 = 5;
 static NEXT: AtomicU64 = AtomicU64::new(1);
 const SCHEMA: &str = "
 CREATE TABLE manifest(single INTEGER PRIMARY KEY CHECK(single=1),schema_version INTEGER NOT NULL,

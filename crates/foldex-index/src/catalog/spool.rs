@@ -109,6 +109,20 @@ impl Spool {
                 SortColumn::Name => ValueRef::Integer(0),
                 SortColumn::Size => ValueRef::Blob(&size),
                 SortColumn::Modified => ValueRef::Integer(record.modified),
+                SortColumn::Created => {
+                    ValueRef::Integer(record.created.unwrap_or(if spec.descending {
+                        i64::MIN
+                    } else {
+                        i64::MAX
+                    }))
+                }
+                SortColumn::Accessed => {
+                    ValueRef::Integer(record.accessed.unwrap_or(if spec.descending {
+                        i64::MIN
+                    } else {
+                        i64::MAX
+                    }))
+                }
                 SortColumn::Kind => {
                     let name = std::str::from_utf8(record.lower()).map_err(|_| {
                         Error::InvalidIndex("catalog lowercase is not UTF-8".into())

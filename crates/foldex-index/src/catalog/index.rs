@@ -350,6 +350,11 @@ impl NativeIndex {
             }
         }
         let next_offset = offset.saturating_add(rows.len() as u64);
+        if limit > 0 && offset < total && rows.is_empty() {
+            return Err(Error::InvalidIndex(
+                "ordered results ended before the reported total".into(),
+            ));
+        }
         let has_more = next_offset < total;
         let next = if has_more {
             rows.last().cloned().map(|last| PageCursor {

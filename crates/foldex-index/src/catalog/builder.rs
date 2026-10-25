@@ -25,6 +25,7 @@ pub struct NativeIndexBuilder {
     last_commit: Instant,
     committed_entries: u64,
     workers: usize,
+    directory_only: bool,
 }
 
 impl NativeIndexBuilder {
@@ -62,6 +63,7 @@ impl NativeIndexBuilder {
             started: Instant::now(),
             last_commit: Instant::now(),
             committed_entries: 0,
+            directory_only: options.directory_only,
             workers: std::thread::available_parallelism().map_or(1, |count| count.get().min(8)),
         })
     }
@@ -143,6 +145,7 @@ impl NativeIndexBuilder {
             self.walker = Some(foldex_fs::Walk::start(
                 index.status().scope.clone(),
                 foldex_fs::WalkOptions {
+                    recursive: !self.directory_only,
                     workers: self.workers,
                     spool_root: index.data.root.join("queues"),
                     excluded_relative: self.excluded_relative.clone(),
