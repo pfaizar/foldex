@@ -6,8 +6,10 @@ use foldex_index::{
     catalog::{NativeIndex, NativeIndexBuilder as IndexBuilder},
 };
 use std::{
+    cell::RefCell,
     io,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::{
         Arc, Condvar, Mutex, MutexGuard, Weak,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -15,6 +17,9 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+#[cfg(test)]
+mod live_tests;
+mod scopes;
 
 const MAX_CLIENTS: usize = 4096;
 const MAX_CONNECTIONS: usize = 2;
@@ -692,21 +697,65 @@ enum Backend {
     Cached(NativeIndex),
     Building(IndexBuilder),
     Complete(NativeIndex),
+    Shared(Rc<RefCell<SharedCatalog>>),
+}
+
+struct SharedCatalog {
+    backend: Option<Backend>,
+    stale: bool,
+    last_status: IndexStatus,
 }
 
 impl Backend {
-    fn database_path(&self) -> &Path {
+    fn database_path(&self) -> PathBuf {
         match self {
-            Self::Building(builder) => &builder.status().database_path,
-            Self::Cached(index) | Self::Complete(index) => &index.status().database_path,
-            Self::Legacy(index) => &index.status().database_path,
+            Self::Building(builder) => builder.status().database_path.clone(),
+            Self::Cached(index) | Self::Complete(index) => index.status().database_path.clone(),
+            Self::Legacy(index) => index.status().database_path.clone(),
+            Self::Shared(catalog) => {
+                let catalog = catalog.borrow();
+                catalog.backend.as_ref().map_or_else(
+                    || catalog.last_status.database_path.clone(),
+                    Backend::database_path,
+                )
+            }
         }
     }
-    fn status(&self) -> &IndexStatus {
+    fn status(&self) -> IndexStatus {
         match self {
-            Self::Building(builder) => builder.status(),
-            Self::Cached(index) | Self::Complete(index) => index.status(),
-            Self::Legacy(index) => index.status(),
+            Self::Building(builder) => builder.status().clone(),
+            Self::Cached(index) | Self::Complete(index) => index.status().clone(),
+            Self::Legacy(index) => index.status().clone(),
+            Self::Shared(catalog) => {
+                let catalog = catalog.borrow();
+                let mut status = catalog
+                    .backend
+                    .as_ref()
+                    .map_or_else(|| catalog.last_status.clone(), Backend::status);
+                status.from_cache |= catalog.stale;
+                status
+            }
+        }
+    }
+    fn complete(&self) -> bool {
+        match self {
+            Self::Complete(_) => true,
+            Self::Shared(catalog) => {
+                let catalog = catalog.borrow();
+                !catalog.stale && catalog.backend.as_ref().is_some_and(Backend::complete)
+            }
+            _ => false,
+        }
+    }
+    fn legacy(&self) -> bool {
+        match self {
+            Self::Legacy(_) => true,
+            Self::Shared(catalog) => catalog
+                .borrow()
+                .backend
+                .as_ref()
+                .is_some_and(Backend::legacy),
+            _ => false,
         }
     }
     fn open_database(path: &Path) -> foldex_index::Result<Self> {
@@ -727,6 +776,18 @@ impl Backend {
         cancel: &Cancellation,
         boundary: Option<&IndexStatus>,
     ) -> foldex_index::Result<foldex_index::QueryPage> {
+        if let Self::Shared(catalog) = self {
+            let mut catalog = catalog.borrow_mut();
+            let mut page = catalog
+                .backend
+                .as_mut()
+                .ok_or_else(|| {
+                    foldex_index::Error::InvalidIndex("Search scope is unavailable".into())
+                })?
+                .query(spec, start, size, cancel, boundary)?;
+            page.status.from_cache |= catalog.stale;
+            return Ok(page);
+        }
         match (self, boundary) {
             (Self::Building(builder), Some(boundary)) => {
                 builder.query_as_of(spec, boundary, start, size, cancel)
@@ -742,6 +803,7 @@ impl Backend {
                 index.query_as_of(spec, boundary, start, size, cancel)
             }
             (Self::Legacy(index), None) => index.query(spec, start, size, cancel),
+            (Self::Shared(_), _) => unreachable!(),
         }
     }
 
@@ -753,6 +815,18 @@ impl Backend {
         cancel: &Cancellation,
         boundary: Option<&IndexStatus>,
     ) -> foldex_index::Result<foldex_index::QueryPage> {
+        if let Self::Shared(catalog) = self {
+            let mut catalog = catalog.borrow_mut();
+            let mut page = catalog
+                .backend
+                .as_mut()
+                .ok_or_else(|| {
+                    foldex_index::Error::InvalidIndex("Search scope is unavailable".into())
+                })?
+                .query_after(spec, cursor, size, cancel, boundary)?;
+            page.status.from_cache |= catalog.stale;
+            return Ok(page);
+        }
         match (self, boundary) {
             (Self::Building(builder), Some(boundary)) => {
                 builder.query_after_as_of(spec, boundary, cursor, size, cancel)
@@ -768,6 +842,7 @@ impl Backend {
                 index.query_after_as_of(spec, boundary, cursor, size, cancel)
             }
             (Self::Legacy(index), None) => index.query_after(spec, cursor, size, cancel),
+            (Self::Shared(_), _) => unreachable!(),
         }
     }
 
@@ -785,6 +860,20 @@ impl Backend {
             // A legacy cache cannot supply unfiltered native names. The normal
             // worker transition builds a native catalog immediately afterwards.
             Self::Legacy(_) => Ok(None),
+            Self::Shared(catalog) => {
+                let mut catalog = catalog.borrow_mut();
+                let mut batch = catalog
+                    .backend
+                    .as_mut()
+                    .ok_or_else(|| {
+                        foldex_index::Error::InvalidIndex("Search scope is unavailable".into())
+                    })?
+                    .candidate_batch(lower, cancel, score)?;
+                if let Some(batch) = &mut batch {
+                    batch.status.from_cache |= catalog.stale;
+                }
+                Ok(batch)
+            }
         }
     }
 
@@ -797,6 +886,14 @@ impl Backend {
             Self::Building(builder) => builder.candidate_rows(hits, cancel),
             Self::Cached(index) | Self::Complete(index) => index.candidate_rows(hits, cancel),
             Self::Legacy(_) => Ok(Vec::new()),
+            Self::Shared(catalog) => catalog
+                .borrow()
+                .backend
+                .as_ref()
+                .ok_or_else(|| {
+                    foldex_index::Error::InvalidIndex("Search scope is unavailable".into())
+                })?
+                .candidate_rows(hits, cancel),
         }
     }
 }
@@ -893,7 +990,16 @@ impl Context {
         request: Request,
         cache_base: &Path,
     ) -> foldex_index::Result<Self> {
-        let cache_dir = Index::cache_dir_for(cache_base, &request.root)?;
+        let source_root = request
+            .boundary
+            .as_ref()
+            .map_or(&request.root, |boundary| &boundary.scope);
+        if request.boundary.is_some()
+            && !crate::bookmarks::path_eq(source_root, &std::path::absolute(&request.root)?)
+        {
+            return Err(foldex_index::Error::InvalidCursor);
+        }
+        let cache_dir = Index::cache_dir_for(cache_base, source_root)?;
         let pinned = if let Some(boundary) = &request.boundary {
             let root = std::fs::canonicalize(&cache_dir)?;
             let path = std::fs::canonicalize(&boundary.database_path)?;
@@ -925,7 +1031,29 @@ impl Context {
         } else {
             Backend::Building(new_builder(&cache_dir, cache_base, &request)?)
         };
-        Ok(Self {
+        Ok(Self::with_backend(client, request, cache_dir, backend))
+    }
+
+    fn live(
+        client: &Arc<ClientState>,
+        request: Request,
+        cache_base: &Path,
+        scopes: &mut scopes::Scopes,
+    ) -> foldex_index::Result<Self> {
+        if request.boundary.is_some() {
+            return Self::new(client, request, cache_base);
+        }
+        let (cache_dir, backend) = scopes.backend(&request)?;
+        Ok(Self::with_backend(client, request, cache_dir, backend))
+    }
+
+    fn with_backend(
+        client: &Arc<ClientState>,
+        request: Request,
+        cache_dir: PathBuf,
+        backend: Backend,
+    ) -> Self {
+        Self {
             client: Arc::downgrade(client),
             request,
             cache_dir,
@@ -940,7 +1068,7 @@ impl Context {
             last_progress: Instant::now(),
             selection: None,
             launcher: None,
-        })
+        }
     }
 
     fn replace_request(&mut self, request: Request) {
@@ -958,9 +1086,9 @@ impl Context {
                 && self.request.root == request.root
                 && self.request.query == request.query
                 && self.request.start == request.start
-                && matches!(self.backend, Some(Backend::Complete(_)))
+                && self.backend.as_ref().is_some_and(Backend::complete)
                 && self.window_status.as_ref().is_some_and(|status| {
-                    same_result_prefix(status, self.backend.as_ref().unwrap().status())
+                    same_result_prefix(status, &self.backend.as_ref().unwrap().status())
                 });
             let counts = replay.then(|| self.cached_counts()).flatten();
             if self.request.query.text != request.query.text
@@ -1002,6 +1130,9 @@ impl Context {
         if self.count_dirty {
             self.fetch_count(work_cancel)?;
             return Ok(true);
+        }
+        if matches!(self.backend, Some(Backend::Shared(_))) {
+            return Ok(false);
         }
         if matches!(self.backend, Some(Backend::Cached(_) | Backend::Legacy(_)))
             && self.request.boundary.is_none()
@@ -1067,7 +1198,7 @@ impl Context {
         // Native pages already compute exact counts while choosing their head.
         // Carry that total on the first publication instead of temporarily
         // advertising only the materialized window and counting again later.
-        let native = !matches!(backend, Backend::Legacy(_));
+        let native = !backend.legacy();
         let spec = query_spec(&self.request.query, native);
         let first = backend.query(
             &spec,
@@ -1295,7 +1426,7 @@ impl Context {
     fn cached_counts(&self) -> Option<(usize, usize)> {
         // Legacy readers can observe another writer between page/count calls.
         // Keep their existing validation query instead of relying on local state.
-        if matches!(self.backend, Some(Backend::Legacy(_))) {
+        if self.backend.as_ref().is_some_and(Backend::legacy) {
             return None;
         }
         let status = self.window_status.as_ref()?;
@@ -1515,6 +1646,7 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
         }
     }
     let mut contexts = Vec::<Context>::with_capacity(MAX_CONNECTIONS);
+    let mut scopes = scopes::Scopes::new(shared.clone(), cache_base.clone());
     let mut cleanup = Vec::<(PathBuf, PathBuf)>::with_capacity(8);
     let mut reconciled = None;
     loop {
@@ -1565,12 +1697,24 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
                         .upgrade()
                         .is_some_and(|state| Arc::ptr_eq(&state, client))
                 }) {
-                    context.replace_request(request.clone());
+                    let shared_backend = matches!(context.backend, Some(Backend::Shared(_)));
+                    if shared_backend == request.boundary.is_some() {
+                        match Context::live(client, request.clone(), &cache_base, &mut scopes) {
+                            Ok(replacement) => *context = replacement,
+                            Err(error) => {
+                                client.failed(request, error.to_string());
+                                reconciled = None;
+                            }
+                        }
+                    } else {
+                        context.replace_request(request.clone());
+                    }
                 } else {
                     match std::fs::create_dir_all(&cache_base)
                         .map_err(foldex_index::Error::from)
-                        .and_then(|_| Context::new(client, request.clone(), &cache_base))
-                    {
+                        .and_then(|_| {
+                            Context::live(client, request.clone(), &cache_base, &mut scopes)
+                        }) {
                         Ok(context) => {
                             let identity =
                                 (context.cache_dir.clone(), context.request.root.clone());
@@ -1615,8 +1759,58 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
                 }
             }
         }
+        let active_roots = contexts
+            .iter()
+            .filter_map(|context| {
+                context
+                    .client
+                    .upgrade()
+                    .and_then(|client| client.input())
+                    .map(|request| request.root)
+            })
+            .collect::<Vec<_>>();
+        for update in scopes.advance(&active_roots) {
+            did_work = true;
+            if update.refetch
+                && let Ok(status) = &update.status
+                && matches!(
+                    status.state,
+                    foldex_index::BuildState::Complete | foldex_index::BuildState::Partial
+                )
+                && let Some(directory) = status.database_path.parent()
+            {
+                let identity = (directory.to_owned(), status.scope.clone());
+                if !cleanup.contains(&identity) {
+                    cleanup.push(identity);
+                }
+            }
+            for context in &mut contexts {
+                let matches = matches!(&context.backend,Some(Backend::Shared(catalog)) if Rc::ptr_eq(catalog,&update.catalog));
+                if !matches {
+                    continue;
+                }
+                match &update.status {
+                    Ok(status) => {
+                        if update.refetch {
+                            context.query_dirty = true;
+                            context.count_dirty = false;
+                        }
+                        if let Some(client) = context.client.upgrade() {
+                            client.progress(&context.request, status.clone());
+                        }
+                    }
+                    Err(error) => {
+                        if let Some(client) = context.client.upgrade() {
+                            client.failed(&context.request, error.to_string());
+                        }
+                        reconciled = None;
+                    }
+                }
+            }
+        }
+        did_work |= scopes.busy();
         for (cache_dir, scope) in cleanup.drain(..) {
-            let active: Vec<_> = contexts
+            let mut active: Vec<_> = contexts
                 .iter()
                 .filter(|context| context.cache_dir == cache_dir)
                 .filter_map(|context| {
@@ -1626,6 +1820,9 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
                         .map(|backend| backend.database_path().to_path_buf())
                 })
                 .collect();
+            active.extend(scopes.active_paths(&cache_dir));
+            active.sort();
+            active.dedup();
             cleanup_cache(&cache_dir, &scope, &active);
         }
         if !did_work {
@@ -1634,15 +1831,28 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
                 && reconciled == Some(observed)
                 && !shared.stopped.load(Ordering::Acquire)
             {
-                drop(
-                    shared
-                        .ready
-                        .wait(changed)
-                        .unwrap_or_else(|poison| poison.into_inner()),
-                );
+                if let Some(deadline) = scopes.deadline() {
+                    drop(
+                        shared
+                            .ready
+                            .wait_timeout(
+                                changed,
+                                deadline.saturating_duration_since(Instant::now()),
+                            )
+                            .unwrap_or_else(|poison| poison.into_inner()),
+                    );
+                } else {
+                    drop(
+                        shared
+                            .ready
+                            .wait(changed)
+                            .unwrap_or_else(|poison| poison.into_inner()),
+                    );
+                }
             }
         }
     }
+    drop(scopes);
     for context in contexts {
         let identity = (context.cache_dir.clone(), context.request.root.clone());
         drop(context);

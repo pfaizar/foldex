@@ -110,7 +110,7 @@ impl NativeIndex {
         scope: &Path,
         active: &[PathBuf],
     ) -> Result<CleanupReport> {
-        if active.len() > 2 {
+        if active.len() > 16 {
             return Err(Error::InvalidIndex(
                 "too many active native generations".into(),
             ));

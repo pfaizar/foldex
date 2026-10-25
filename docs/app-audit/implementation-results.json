@@ -5,9 +5,48 @@
       "stage": 1,
       "name": "Workspace durability",
       "fixture": "4 tabs, 64 navigation entries per tab, 3 saved layouts",
-      "before": {"serialized_bytes": 339555, "save_accepted": false, "cross_window_preferences_preserved": false},
-      "after": {"serialized_bytes": 74002, "workspace_bytes": 56833, "shared_bytes": 17211, "save_accepted": true, "cross_window_preferences_preserved": true},
-      "validation": {"app_tests_passed": 592, "linux_platform_exclusions": 2, "formatting": "passed", "windows_runtime": "pending"}
+      "before": {
+        "serialized_bytes": 339555,
+        "save_accepted": false,
+        "cross_window_preferences_preserved": false
+      },
+      "after": {
+        "serialized_bytes": 74002,
+        "workspace_bytes": 56833,
+        "shared_bytes": 17211,
+        "save_accepted": true,
+        "cross_window_preferences_preserved": true
+      },
+      "validation": {
+        "app_tests_passed": 592,
+        "linux_platform_exclusions": 2,
+        "formatting": "passed",
+        "windows_runtime": "pending"
+      }
+    },
+    {
+      "stage": 2,
+      "name": "Shared live search",
+      "before": {
+        "external_changes": "Not observed without explicit refresh",
+        "unchanged_reactivation": "Starts a new catalog generation"
+      },
+      "after": {
+        "external_create_observed_ms": 123.218941,
+        "nested_create_rename_resize_delete": true,
+        "reactivations": 4,
+        "catalog_generations": 1,
+        "additional_full_scans": 0,
+        "selected_generation_preserved": true
+      },
+      "timing_scope": "One Linux dev-profile fixture run; no Windows release timing claim",
+      "validation": {
+        "app_tests_passed": 603,
+        "index_tests_passed": 34,
+        "linux_platform_exclusions": 2,
+        "windows_gnu_index_check": "passed",
+        "windows_runtime": "pending"
+      }
     }
   ]
 }

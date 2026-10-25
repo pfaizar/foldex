@@ -439,6 +439,13 @@ impl Pane {
         if self.recursive
             && let Some(status) = &self.search_status
         {
+            if self.selection_boundary.is_some() && !self.selected.is_empty() {
+                return format!(
+                    "{} selected / {} matches · clear selection to update",
+                    self.selected.len(),
+                    self.view_len()
+                );
+            }
             if status.from_cache {
                 return format!("{} matches · checking saved results…", self.view_len());
             }

@@ -30,6 +30,7 @@ egui.workspace = true
 wgpu = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
+notify = { version = "=8.2.0", default-features = false }
 image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
 winit = { version = "=0.30.13", default-features = false }
 
