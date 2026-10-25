@@ -1,0 +1,101 @@
+---
+import { getImage } from 'astro:assets';
+import '@fontsource-variable/inter/wght.css';
+import interFont from '@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url';
+import socialCard from '../assets/social-card.svg';
+import { site } from '../config/site';
+import { canIndex } from '../config/seo';
+import '../styles/global.css';
+
+interface Props {
+  title?: string;
+  description?: string;
+  noindex?: boolean;
+}
+
+const {
+  title = site.title,
+  description = site.description,
+  noindex = false,
+} = Astro.props;
+const canonical = Astro.site
+  ? new URL(Astro.url.pathname, Astro.site)
+  : undefined;
+const socialImage = await getImage({
+  src: socialCard,
+  format: 'png',
+  width: 1200,
+  height: 630,
+});
+const socialImagePath = socialImage.src;
+const socialImageUrl = Astro.site
+  ? new URL(socialImagePath, Astro.site)
+  : undefined;
+const indexable = canIndex(Astro.site) && !noindex;
+const structuredData = {
+  '@context': 'https://schema.org',
+  '@type': 'SoftwareApplication',
+  name: site.name,
+  description: site.description,
+  applicationCategory: 'UtilitiesApplication',
+  operatingSystem: 'Windows',
+  isAccessibleForFree: true,
+  license: 'https://spdx.org/licenses/AGPL-3.0-only.html',
+  offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+  ...(canonical && { url: canonical.href }),
+  ...(site.download && { downloadUrl: site.download }),
+};
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#fafafa" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <meta
+      name="robots"
+      content={indexable ? 'index, follow' : 'noindex, nofollow'}
+    />
+    {canonical && <link rel="canonical" href={canonical} />}
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link
+      rel="preload"
+      href={interFont}
+      as="font"
+      type="font/woff2"
+      crossorigin="anonymous"
+    />
+    {Astro.site && <link rel="sitemap" href="/sitemap-index.xml" />}
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content={site.name} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    {canonical && <meta property="og:url" content={canonical} />}
+    {socialImageUrl && <meta property="og:image" content={socialImageUrl} />}
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="Foldex. Files, without the friction. A native, open-source file explorer for Windows."
+    />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    {socialImageUrl && <meta name="twitter:image" content={socialImageUrl} />}
+    {!noindex && (
+      <script
+        type="application/ld+json"
+        set:html={JSON.stringify(structuredData).replace(/</g, '\\u003c')}
+      />
+    )}
+  </head>
+  <body>
+    <a class="skip-link" href="#main">
+      Skip to content
+    </a>
+    <slot />
+  </body>
+</html>

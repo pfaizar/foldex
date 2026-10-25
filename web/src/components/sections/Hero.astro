@@ -1,0 +1,88 @@
+---
+import Button from '../ui/Button.astro';
+import WorkspacePreview from '../product/WorkspacePreview.astro';
+---
+
+<section class="hero container" aria-labelledby="hero-title">
+  <div class="hero-copy">
+    <h1 id="hero-title">
+      Meet Foldex, your everyday file explorer for Windows.
+    </h1>
+    <p class="hero-description">
+      Browse in tabs and split panes, find files quickly, and keep your hands on
+      the keyboard.
+    </p>
+    <div class="hero-actions">
+      <Button href="#get-foldex">Get Foldex</Button>
+      <Button href="#features" variant="secondary">
+        Explore features
+      </Button>
+    </div>
+  </div>
+  <div class="hero-preview">
+    <WorkspacePreview />
+  </div>
+</section>
+
+<style>
+  .hero {
+    padding-top: 80px;
+    padding-bottom: 65px;
+  }
+  .hero-copy {
+    max-width: 620px;
+  }
+  h1 {
+    max-width: 610px;
+    margin: 0;
+    font-size: 40px;
+    font-weight: 400;
+    line-height: 1.12;
+    letter-spacing: -1.2px;
+    text-wrap: balance;
+  }
+  .hero-description {
+    max-width: 485px;
+    margin: 18px 0 0;
+    color: var(--muted);
+    font-size: 16px;
+    line-height: 1.5;
+    letter-spacing: -0.2px;
+  }
+  .hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    margin-top: 26px;
+  }
+  .hero-preview {
+    margin-top: 76px;
+  }
+  @media (max-width: 720px) {
+    .hero {
+      padding-top: 53px;
+      padding-bottom: 45px;
+    }
+    h1 {
+      max-width: 520px;
+      font-size: 34px;
+      letter-spacing: -0.9px;
+      line-height: 1.14;
+    }
+    .hero-description {
+      margin-top: 18px;
+    }
+    .hero-preview {
+      margin-top: 54px;
+    }
+  }
+  @media (max-width: 440px) {
+    h1 {
+      font-size: 32px;
+    }
+    .hero-preview {
+      margin-inline: -9px;
+    }
+  }
+</style>

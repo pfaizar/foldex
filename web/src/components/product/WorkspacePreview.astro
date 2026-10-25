@@ -1,0 +1,595 @@
+---
+import Icon from '../ui/Icon.astro';
+
+const folders = ['Projects', 'Documents', 'Downloads'];
+const files = [
+  { name: 'Brand', icon: 'folder', modified: 'Today', size: '4 items' },
+  {
+    name: 'Design',
+    icon: 'folder',
+    modified: 'Today',
+    size: '8 items',
+    selected: true,
+  },
+  {
+    name: 'Development',
+    icon: 'folder',
+    modified: 'Yesterday',
+    size: '12 items',
+  },
+  {
+    name: 'References',
+    icon: 'folder',
+    modified: 'Yesterday',
+    size: '6 items',
+  },
+  { name: 'launch-plan.md', icon: 'file', modified: 'Today', size: '2.4 KB' },
+  { name: 'notes.txt', icon: 'file', modified: 'Yesterday', size: '840 B' },
+  { name: 'README.md', icon: 'file', modified: 'Oct 21', size: '1.8 KB' },
+] as const;
+const designFiles = [
+  { name: 'Exports', icon: 'folder', modified: 'Today', size: '3 items' },
+  { name: 'Archive', icon: 'folder', modified: 'Oct 20', size: '6 items' },
+  {
+    name: 'design-system.fig',
+    icon: 'file',
+    modified: 'Today',
+    size: '4.2 MB',
+  },
+  {
+    name: 'wireframes.fig',
+    icon: 'file',
+    modified: 'Yesterday',
+    size: '1.8 MB',
+  },
+  { name: 'notes.md', icon: 'file', modified: 'Yesterday', size: '1.2 KB' },
+  { name: 'tokens.json', icon: 'code', modified: 'Oct 21', size: '3.1 KB' },
+] as const;
+---
+
+<figure class="workspace-figure">
+  <div class="workspace-stage">
+    <div
+      class="app-window"
+      role="img"
+      aria-label="Foldex workspace illustration showing folder tabs and two file lists side by side."
+    >
+      <div class="app-titlebar">
+        <span class="app-brand">
+          <Icon name="folder" size={15} /> Foldex
+        </span>
+        <div class="app-tabs">
+          <span class="app-tab active">
+            <Icon name="folder" size={13} />
+            Studio <span>×</span>
+          </span>
+          <span class="app-tab downloads-tab">
+            <Icon name="folder" size={13} />
+            Downloads
+          </span>
+          <Icon name="plus" size={13} />
+        </div>
+        <div class="window-controls">
+          <span>−</span>
+          <span>□</span>
+          <span>×</span>
+        </div>
+      </div>
+      <div class="app-body">
+        <aside class="app-sidebar">
+          <div class="sidebar-group">
+            <span>
+              <Icon name="home" size={15} />
+              Home
+            </span>
+            <span>
+              <Icon name="clock" size={15} />
+              Recent
+            </span>
+            <span>
+              <Icon name="star" size={15} />
+              Favorites
+            </span>
+          </div>
+          <span class="sidebar-label">Places</span>
+          <div class="sidebar-group">
+            {folders.map((folder) => (
+              <span class:list={{ selected: folder === 'Projects' }}>
+                <Icon name="folder" size={15} />
+                {folder}
+              </span>
+            ))}
+          </div>
+          <div class="device-group">
+            <span class="sidebar-label">Devices</span>
+            <span class="device">
+              <Icon name="drive" size={15} />
+              Local Disk (C:)
+            </span>
+          </div>
+          <span class="sidebar-bottom">
+            <Icon name="settings" size={14} />
+            Options
+          </span>
+        </aside>
+        <div class="workspace-panes">
+          <div class="file-pane primary-pane">
+            <div class="pane-toolbar">
+              <span class="back-arrows">
+                <Icon name="chevron-left" size={14} />
+                <Icon name="chevron-right" size={14} />
+              </span>
+              <span class="breadcrumb">
+                Projects <Icon name="chevron-right" size={11} />
+                <strong>Studio</strong>
+              </span>
+              <Icon name="more" size={16} />
+            </div>
+            <div class="pane-filter">
+              <Icon name="search" size={14} />
+              <span>Filter this folder</span>
+              <span class="filter-shortcut">Ctrl F</span>
+            </div>
+            <div class="table-head">
+              <span>Name</span>
+              <span>Modified</span>
+              <span>Size</span>
+            </div>
+            <div class="file-list">
+              {files.map((file) => (
+                <div
+                  class:list={[
+                    'file-row',
+                    { 'row-selected': 'selected' in file && file.selected },
+                  ]}
+                >
+                  <span class="file-name">
+                    <Icon
+                      name={file.icon}
+                      size={16}
+                      class={
+                        file.icon === 'folder' ? 'folder-icon' : 'file-icon'
+                      }
+                    />
+                    {file.name}
+                  </span>
+                  <span class="file-date">{file.modified}</span>
+                  <span class="file-size">{file.size}</span>
+                </div>
+              ))}
+            </div>
+            <div class="pane-status">
+              <span>7 items · 1 selected</span>
+              <Icon name="split" size={13} />
+            </div>
+          </div>
+          <div class="file-pane secondary-pane">
+            <div class="pane-toolbar">
+              <span class="breadcrumb">
+                Studio <Icon name="chevron-right" size={11} />
+                <strong>Design</strong>
+              </span>
+              <Icon name="more" size={16} />
+            </div>
+            <div class="pane-filter">
+              <Icon name="search" size={14} />
+              <span>Filter this folder</span>
+              <span class="filter-shortcut">Ctrl F</span>
+            </div>
+            <div class="table-head">
+              <span>Name</span>
+              <span>Modified</span>
+              <span>Size</span>
+            </div>
+            <div class="file-list">
+              {designFiles.map((file) => (
+                <div class="file-row">
+                  <span class="file-name">
+                    <Icon
+                      name={file.icon}
+                      size={16}
+                      class={
+                        file.icon === 'folder' ? 'folder-icon' : 'file-icon'
+                      }
+                    />
+                    {file.name}
+                  </span>
+                  <span class="file-date">{file.modified}</span>
+                  <span class="file-size">{file.size}</span>
+                </div>
+              ))}
+            </div>
+            <div class="pane-status">
+              <span>6 items</span>
+              <Icon name="split" size={13} />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <figcaption>Foldex workspace preview</figcaption>
+</figure>
+
+<style>
+  .workspace-figure {
+    margin: 0;
+  }
+  .workspace-stage {
+    padding: 30px 30px 0;
+    overflow: hidden;
+    border-radius: 10px;
+    background: #eef0f2;
+  }
+  .app-window {
+    overflow: hidden;
+    border: 1px solid #d9dde1;
+    border-radius: 8px 8px 0 0;
+    background: #fff;
+    box-shadow: 0 6px 28px #293c5010;
+    color: #5b6066;
+    font-size: 11px;
+    text-align: left;
+  }
+  .app-titlebar {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    height: 42px;
+    padding-inline: 16px;
+    border-bottom: 1px solid #e7e8eb;
+    background: #f7f8f9;
+  }
+  .app-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 136px;
+    color: #41464b;
+  }
+  .app-brand :global(svg) {
+    color: #7c94a5;
+  }
+  .app-tabs {
+    display: flex;
+    align-items: center;
+    align-self: stretch;
+    gap: 12px;
+  }
+  .app-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 127px;
+    height: 32px;
+    margin-top: 10px;
+    padding-inline: 11px;
+    color: #6b7178;
+  }
+  .app-tab.active {
+    border: 1px solid #e1e4e8;
+    border-bottom: 0;
+    border-radius: 5px 5px 0 0;
+    background: #fff;
+    color: #333b43;
+  }
+  .app-tab > span {
+    margin-left: auto;
+    color: #899098;
+  }
+  .app-tab :global(svg) {
+    color: #ad9560;
+  }
+  .window-controls {
+    display: flex;
+    gap: 26px;
+    margin-left: auto;
+    color: #727980;
+    font-family: Arial, sans-serif;
+    font-size: 13px;
+  }
+  .app-body {
+    display: flex;
+    min-height: 350px;
+  }
+  .app-sidebar {
+    position: relative;
+    flex: 0 0 162px;
+    padding: 16px 9px 46px;
+    border-right: 1px solid #e5e8eb;
+    background: #f8f9fa;
+  }
+  .sidebar-group {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .sidebar-group > span,
+  .device {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 30px;
+    padding-inline: 10px;
+    border-radius: 4px;
+  }
+  .sidebar-group :global(svg),
+  .device :global(svg) {
+    color: #87939e;
+  }
+  .sidebar-group > .selected {
+    background: #e6ecf1;
+    color: #354a5b;
+  }
+  .sidebar-label {
+    display: block;
+    margin: 22px 10px 9px;
+    color: #828a93;
+    font-size: 10px;
+  }
+  .sidebar-bottom {
+    position: absolute;
+    bottom: 16px;
+    left: 19px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #75808b;
+  }
+  .workspace-panes {
+    display: flex;
+    flex: 1;
+    min-width: 0;
+  }
+  .file-pane {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .primary-pane {
+    border-right: 1px solid #cfd8e0;
+  }
+  .pane-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 11px;
+    height: 43px;
+    padding-inline: 15px;
+    border-bottom: 1px solid #eceef0;
+  }
+  .back-arrows {
+    display: flex;
+    gap: 11px;
+    color: #8995a0;
+  }
+  .breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    margin-right: auto;
+    color: #737e88;
+  }
+  .breadcrumb strong {
+    color: #414c57;
+    font-weight: 400;
+  }
+  .pane-filter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 30px;
+    margin: 13px 13px 12px;
+    padding-inline: 9px;
+    border: 1px solid #e4e8ec;
+    border-radius: 4px;
+    color: #8b949d;
+    font-size: 10px;
+  }
+  .filter-shortcut {
+    margin-left: auto;
+    font-size: 9px;
+    color: #939ba4;
+  }
+  .table-head,
+  .file-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 75px 50px;
+    align-items: center;
+    gap: 8px;
+  }
+  .table-head {
+    height: 27px;
+    padding-inline: 16px;
+    border-bottom: 1px solid #eff0f2;
+    color: #85909b;
+    font-size: 9px;
+  }
+  .table-head > span:last-child {
+    text-align: right;
+  }
+  .file-list {
+    padding: 5px 6px;
+  }
+  .file-row {
+    min-height: 30px;
+    padding-inline: 10px;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    font-size: 10px;
+  }
+  .row-selected {
+    border-color: #d3e2ee;
+    background: #e8f1f8;
+  }
+  .file-name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #4b5761;
+    white-space: nowrap;
+  }
+  .file-name :global(svg) {
+    flex-shrink: 0;
+  }
+  .file-name :global(.folder-icon) {
+    color: #b59a58;
+    fill: #f5ecd2;
+  }
+  .file-name :global(.file-icon) {
+    color: #8297a9;
+  }
+  .file-date,
+  .file-size {
+    color: #8a939c;
+    font-size: 9px;
+  }
+  .file-size {
+    text-align: right;
+    white-space: nowrap;
+  }
+  .pane-status {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 29px;
+    margin-top: auto;
+    padding-inline: 15px;
+    border-top: 1px solid #e9edf0;
+    color: #8c97a1;
+    font-size: 9px;
+  }
+  figcaption {
+    margin-top: 16px;
+    color: var(--subtle);
+    font-size: 12px;
+  }
+  @media (max-width: 1050px) {
+    .workspace-stage {
+      padding: 23px 23px 0;
+    }
+    .app-sidebar {
+      flex-basis: 139px;
+    }
+    .app-brand {
+      width: 113px;
+    }
+    .table-head,
+    .file-row {
+      grid-template-columns: minmax(0, 1fr) 48px;
+    }
+    .table-head > span:nth-child(2),
+    .file-date {
+      display: none;
+    }
+  }
+  @media (max-width: 720px) {
+    .workspace-stage {
+      padding: 18px 18px 0;
+    }
+    .secondary-pane,
+    .downloads-tab,
+    .device-group {
+      display: none;
+    }
+    .primary-pane {
+      border-right: 0;
+    }
+    .app-body {
+      min-height: 318px;
+    }
+    .app-sidebar {
+      flex-basis: 122px;
+    }
+    .app-brand {
+      width: 96px;
+    }
+    .window-controls {
+      gap: 17px;
+    }
+  }
+  @media (max-width: 440px) {
+    .workspace-stage {
+      padding: 14px 12px 0;
+      border-radius: 7px;
+    }
+    .app-titlebar {
+      padding-inline: 10px;
+      gap: 8px;
+    }
+    .app-brand {
+      width: 73px;
+      font-size: 10px;
+    }
+    .app-tab {
+      min-width: 89px;
+      padding-inline: 7px;
+      font-size: 10px;
+    }
+    .window-controls {
+      gap: 13px;
+    }
+    .window-controls > span:nth-child(2) {
+      display: none;
+    }
+    .app-sidebar {
+      flex-basis: 92px;
+      padding-inline: 5px;
+      font-size: 9px;
+    }
+    .sidebar-group > span {
+      gap: 5px;
+      padding-inline: 6px;
+    }
+    .sidebar-group :global(svg) {
+      width: 12px;
+    }
+    .sidebar-label {
+      margin-inline: 6px;
+      font-size: 9px;
+    }
+    .sidebar-bottom {
+      left: 11px;
+      font-size: 9px;
+    }
+    .pane-toolbar {
+      gap: 5px;
+      padding-inline: 8px;
+    }
+    .back-arrows {
+      gap: 4px;
+    }
+    .breadcrumb {
+      gap: 3px;
+      font-size: 9px;
+    }
+    .pane-filter {
+      margin-inline: 8px;
+      font-size: 9px;
+    }
+    .filter-shortcut,
+    .file-size,
+    .table-head > span:last-child {
+      display: none;
+    }
+    .table-head,
+    .file-row {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .file-row {
+      padding-inline: 4px;
+    }
+    .file-name {
+      gap: 5px;
+      font-size: 9px;
+    }
+    .file-name :global(svg) {
+      width: 13px;
+    }
+    .pane-status {
+      padding-inline: 9px;
+      font-size: 8px;
+    }
+  }
+</style>

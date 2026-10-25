@@ -1,0 +1,51 @@
+---
+import { site } from '../config/site';
+import Brand from './ui/Brand.astro';
+---
+
+<footer class="site-footer">
+  <div class="container footer-inner">
+    <Brand />
+    <nav aria-label="Footer navigation">
+      <a href="#features">Features</a>
+      {site.repository && <a href={site.repository}>GitHub</a>}
+      <a href={site.license}>AGPL-3.0 License</a>
+    </nav>
+  </div>
+</footer>
+
+<style>
+  .site-footer {
+    border-top: 1px solid var(--line);
+  }
+  .footer-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    min-height: 112px;
+    padding-block: 28px;
+  }
+  nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 28px;
+  }
+  nav a {
+    color: var(--muted);
+    font-size: 13px;
+  }
+  nav a:hover {
+    color: var(--text);
+    text-decoration: underline;
+    text-underline-offset: 4px;
+  }
+  @media (max-width: 440px) {
+    .footer-inner {
+      align-items: flex-start;
+      flex-direction: column;
+      gap: 25px;
+      padding-block: 30px;
+    }
+  }
+</style>

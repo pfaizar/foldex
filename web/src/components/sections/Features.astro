@@ -1,0 +1,75 @@
+---
+const features = [
+  {
+    title: 'Browse side by side',
+    description:
+      'Keep two folders in view with split panes. Use tabs to move between the rest.',
+  },
+  {
+    title: 'Find files quickly',
+    description:
+      'Filter the folder you’re in, or search its subfolders with fuzzy filename matching.',
+  },
+  {
+    title: 'Keep what feels familiar',
+    description:
+      'Use Windows context menus, file operations, and drag and drop. Just as you would expect.',
+  },
+];
+---
+
+<section
+  class="features section container"
+  id="features"
+  aria-labelledby="features-title"
+>
+  <h2 id="features-title">A little more room to work.</h2>
+  <div class="feature-columns">
+    {features.map(({ title, description }) => (
+      <article>
+        <h3>{title}</h3>
+        <p>{description}</p>
+      </article>
+    ))}
+  </div>
+</section>
+
+<style>
+  .features {
+    border-bottom: 1px solid var(--line);
+  }
+  .feature-columns {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 55px;
+    margin-top: 40px;
+  }
+  article h3 {
+    margin: 0 0 13px;
+    font-size: 18px;
+    font-weight: 400;
+    line-height: 1.35;
+    letter-spacing: -0.25px;
+  }
+  article p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 15px;
+    line-height: 1.6;
+  }
+  @media (max-width: 850px) {
+    .feature-columns {
+      gap: 30px;
+    }
+  }
+  @media (max-width: 720px) {
+    .feature-columns {
+      grid-template-columns: 1fr;
+      gap: 30px;
+      margin-top: 31px;
+    }
+    article p {
+      max-width: 440px;
+    }
+  }
+</style>

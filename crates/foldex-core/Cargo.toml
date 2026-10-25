@@ -1,0 +1,14 @@
+[package]
+name = "foldex-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license.workspace = true
+description = "Bounded background filesystem and query engine for Foldex"
+
+[dependencies]
+foldex-match = { path = "../foldex-match" }
+tokio = { version = "=1.53.2", default-features = false, features = ["rt", "sync", "time", "macros"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Threading"] }

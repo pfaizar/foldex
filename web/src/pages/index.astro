@@ -1,0 +1,20 @@
+---
+import PageLayout from '../layouts/PageLayout.astro';
+import SiteHeader from '../components/SiteHeader.astro';
+import SiteFooter from '../components/SiteFooter.astro';
+import Hero from '../components/sections/Hero.astro';
+import Features from '../components/sections/Features.astro';
+import Keyboard from '../components/sections/Keyboard.astro';
+import OpenSource from '../components/sections/OpenSource.astro';
+---
+
+<PageLayout>
+  <SiteHeader />
+  <main id="main" tabindex="-1">
+    <Hero />
+    <Features />
+    <Keyboard />
+    <OpenSource />
+  </main>
+  <SiteFooter />
+</PageLayout>

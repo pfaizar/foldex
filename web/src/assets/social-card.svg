@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#fafafa"/>
+  <path d="M77 69h27l9 10h43v41H77Z" fill="#a4bac8"/>
+  <path d="M77 83h79v37H77Z" fill="#6d8292"/>
+  <text x="176" y="112" fill="#202020" font-family="Arial,sans-serif" font-size="44" font-weight="400" letter-spacing="-1">Foldex</text>
+  <text x="77" y="305" fill="#202020" font-family="Arial,sans-serif" font-size="76" font-weight="400" letter-spacing="-2">Files, without</text>
+  <text x="77" y="390" fill="#202020" font-family="Arial,sans-serif" font-size="76" font-weight="400" letter-spacing="-2">the friction.</text>
+  <text x="81" y="468" fill="#686868" font-family="Arial,sans-serif" font-size="25">A native, open-source file explorer for Windows.</text>
+  <path d="M80 555h1040" stroke="#e5e5e5"/>
+</svg>
