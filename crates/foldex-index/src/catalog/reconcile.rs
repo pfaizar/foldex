@@ -104,10 +104,19 @@ impl NativeIndex {
             || compact(&source.data)
             || source.data.shards.len() > 16_384
             || options.directory_only != source.status().directory_only
+            || options.excluded_subtrees != source.status().excluded_subtrees
         {
             return Err(Error::WrongMode);
         }
         let paths = changes(changed, options.directory_only)?;
+        if paths.iter().any(|path| {
+            options
+                .excluded_subtrees
+                .iter()
+                .any(|excluded| path.starts_with(excluded) || excluded.starts_with(path))
+        }) {
+            return Err(Error::WrongMode);
+        }
         let scope = source.status().scope.clone();
         let mut metrics = ReconcileMetrics::default();
         let mut ancestors = HashSet::new();
@@ -157,6 +166,7 @@ impl NativeIndex {
             &source.manifest.cache_dir,
             &scope,
             options.directory_only,
+            &options.excluded_subtrees,
             cancel,
         )?;
         data.entries = source.data.entries;
@@ -259,6 +269,7 @@ impl NativeIndex {
             let mut walk = foldex_fs::Walk::start_with_reader(
                 absolute,
                 foldex_fs::WalkOptions {
+                    excluded_subtrees: Vec::new(),
                     workers: 1,
                     recursive: true,
                     spool_root: index.data.root.join("queues"),

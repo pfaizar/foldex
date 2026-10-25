@@ -42,6 +42,7 @@ fn trim_unused(bytes: &mut Vec<u8>) {
 }
 
 struct MatchPlan {
+    conditions: foldex_query::Conditions,
     needle: String,
     points: Vec<u32>,
     matcher: foldex_match::Matcher,
@@ -53,6 +54,11 @@ struct MatchPlan {
 }
 impl MatchPlan {
     fn new(query: &CatalogQuery) -> Result<Self> {
+        query
+            .spec
+            .conditions
+            .validate()
+            .map_err(Error::InvalidPath)?;
         if query.spec.type_filter.as_ref().is_some_and(|filter| {
             filter.extensions.len() > 256
                 || filter.extensions.iter().any(|value| value.len() > 1024)
@@ -76,6 +82,7 @@ impl MatchPlan {
             && (query.spec.match_mode == MatchMode::Fuzzy || literal_ascii))
             .then(|| format::Signature::of(&needle));
         Ok(Self {
+            conditions: query.spec.conditions.clone(),
             points: needle.chars().map(u32::from).collect(),
             matcher: foldex_match::Matcher::new(&needle),
             needle,
@@ -95,6 +102,15 @@ impl MatchPlan {
         scorer: &mut crate::score_cache::ScoreMemo,
         rank: bool,
     ) -> Result<Option<Option<i32>>> {
+        if !self.conditions.is_empty() {
+            let path = std::path::PathBuf::from(codec::decode(record.path())?);
+            if !self
+                .conditions
+                .matches(&path, record.flags & 1 != 0, record.size, record.modified)
+            {
+                return Ok(None);
+            }
+        }
         if let Some(filter) = &self.type_filter {
             if record.flags & 1 != 0 {
                 if !filter.include_folders {

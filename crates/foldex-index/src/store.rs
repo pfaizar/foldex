@@ -18,6 +18,7 @@ CREATE TABLE manifest(single INTEGER PRIMARY KEY CHECK(single=1),schema_version 
  scope BLOB NOT NULL,state INTEGER NOT NULL,entries INTEGER NOT NULL,files INTEGER NOT NULL,folders INTEGER NOT NULL,
  skipped INTEGER NOT NULL,links INTEGER NOT NULL,excluded_cache INTEGER NOT NULL,started INTEGER NOT NULL,updated INTEGER NOT NULL,
  scope_modified INTEGER,synthetic INTEGER NOT NULL);
+CREATE TABLE exclusions(path BLOB NOT NULL);
 CREATE TABLE traversal_policy(single INTEGER PRIMARY KEY CHECK(single=1),directory_only INTEGER NOT NULL CHECK(directory_only IN(0,1)));
 INSERT INTO traversal_policy VALUES(1,0);
 CREATE TABLE entries(id INTEGER PRIMARY KEY,relative BLOB NOT NULL,
@@ -500,6 +501,7 @@ impl IndexBuilder {
             from_cache: false,
             synthetic: false,
             directory_only: options.directory_only,
+            excluded_subtrees: options.excluded_subtrees.clone(),
         };
         connection.execute(
             "INSERT INTO manifest VALUES(1,2,?1,?2,?3,0,?4,0,0,0,0,0,0,0,?5,?5,?6,0)",
@@ -516,6 +518,7 @@ impl IndexBuilder {
             "UPDATE traversal_policy SET directory_only=?1 WHERE single=1",
             params![options.directory_only],
         )?;
+        save_exclusions(&connection, &options.excluded_subtrees)?;
         write_pointer(&cache_dir, "building.index", &status.database_path)?;
         Ok(Self {
             index: Some(Index {
@@ -617,6 +620,15 @@ impl IndexBuilder {
         for record in records {
             cancel.check()?;
             let relative = codec::relative(&record.relative_path, false)?;
+            if index
+                .status
+                .excluded_subtrees
+                .iter()
+                .any(|p| relative.starts_with(p))
+            {
+                index.status.excluded_cache += 1;
+                continue;
+            }
             let encoded = codec::encode(relative.as_os_str());
             if encoded.len() > 128 * 1024 {
                 return Err(Error::InvalidPath(
@@ -945,6 +957,7 @@ pub(crate) fn load_status(connection: &Connection, database_path: &Path) -> Resu
         from_cache: false,
         synthetic: value.16,
         directory_only,
+        excluded_subtrees: load_exclusions(connection)?,
     })
 }
 
@@ -993,4 +1006,42 @@ pub(crate) fn unix_secs(time: SystemTime) -> i64 {
                 .min(i64::MAX as u64) as i64)
         }
     }
+}
+
+pub(crate) fn save_exclusions(connection: &Connection, paths: &[PathBuf]) -> Result<()> {
+    foldex_query::Conditions {
+        excluded_subtrees: paths.to_vec(),
+        ..Default::default()
+    }
+    .validate()
+    .map_err(Error::InvalidPath)?;
+    for path in paths {
+        connection.execute(
+            "INSERT INTO exclusions(path) VALUES(?1)",
+            [codec::encode(path.as_os_str())],
+        )?;
+    }
+    Ok(())
+}
+fn load_exclusions(connection: &Connection) -> Result<Vec<PathBuf>> {
+    let exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='exclusions')",
+        [],
+        |r| r.get(0),
+    )?;
+    if !exists {
+        return Ok(Vec::new());
+    }
+    let mut statement = connection.prepare("SELECT path FROM exclusions LIMIT 33")?;
+    let mut paths = Vec::new();
+    for raw in statement.query_map([], |r| r.get::<_, Vec<u8>>(0))? {
+        paths.push(PathBuf::from(codec::decode(&raw?)?));
+    }
+    foldex_query::Conditions {
+        excluded_subtrees: paths.clone(),
+        ..Default::default()
+    }
+    .validate()
+    .map_err(Error::InvalidIndex)?;
+    Ok(paths)
 }

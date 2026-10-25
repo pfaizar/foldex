@@ -58,6 +58,8 @@ pub(super) fn action_allowed(action: &Action) -> bool {
             | Action::Address
             | Action::EditPath(_)
             | Action::Navigate(_)
+            | Action::Search(_)
+            | Action::RemoveSearch(_)
             | Action::GoPath(_)
             | Action::NewTab(_)
             | Action::NewWindow(_)

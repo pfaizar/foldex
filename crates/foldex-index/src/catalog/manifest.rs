@@ -11,7 +11,7 @@ use std::{
 };
 
 const APP_ID: i64 = 0x4649_4c43;
-const FORMAT: i64 = 6;
+const FORMAT: i64 = 7;
 static NEXT: AtomicU64 = AtomicU64::new(1);
 const SCHEMA: &str = "
 CREATE TABLE manifest(single INTEGER PRIMARY KEY CHECK(single=1),schema_version INTEGER NOT NULL,
@@ -21,6 +21,7 @@ CREATE TABLE manifest(single INTEGER PRIMARY KEY CHECK(single=1),schema_version 
  scope_modified INTEGER,synthetic INTEGER NOT NULL);
 CREATE TABLE chunks(ordinal INTEGER PRIMARY KEY,first_id INTEGER NOT NULL,count INTEGER NOT NULL CHECK(count BETWEEN 1 AND 4096),
  bytes INTEGER NOT NULL CHECK(bytes BETWEEN 64 AND 2097152),checksum INTEGER NOT NULL);
+CREATE TABLE exclusions(path BLOB NOT NULL);
 CREATE TABLE traversal_policy(single INTEGER PRIMARY KEY CHECK(single=1),directory_only INTEGER NOT NULL CHECK(directory_only IN(0,1)));
 INSERT INTO traversal_policy VALUES(1,0);
 CREATE TABLE deleted(ordinal INTEGER PRIMARY KEY,bits BLOB NOT NULL CHECK(length(bits) BETWEEN 1 AND 512));
@@ -82,9 +83,16 @@ impl Manifest {
         cache_dir: &Path,
         scope: &Path,
         directory_only: bool,
+        excluded_subtrees: &[PathBuf],
         cancel: &Cancellation,
     ) -> Result<(Self, Catalog)> {
         cancel.check()?;
+        foldex_query::Conditions {
+            excluded_subtrees: excluded_subtrees.to_vec(),
+            ..Default::default()
+        }
+        .validate()
+        .map_err(Error::InvalidPath)?;
         fs::create_dir_all(cache_dir)?;
         let cache_dir = fs::canonicalize(cache_dir)?;
         let scope = absolute(scope)?;
@@ -132,6 +140,7 @@ impl Manifest {
             from_cache: false,
             synthetic: false,
             directory_only,
+            excluded_subtrees: excluded_subtrees.to_vec(),
         };
         connection.execute(
             "INSERT INTO manifest VALUES(1,2,?1,?2,?3,0,?4,0,0,0,0,0,0,0,?5,?5,?6,0)",
@@ -148,6 +157,7 @@ impl Manifest {
             "UPDATE traversal_policy SET directory_only=?1 WHERE single=1",
             params![directory_only],
         )?;
+        store::save_exclusions(&connection, excluded_subtrees)?;
         let catalog = Catalog::create(&data_root(&status.database_path)?)?;
         super::cleanup::publish_pointer(
             &cache_dir,

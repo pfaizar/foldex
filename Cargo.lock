@@ -1107,6 +1107,7 @@ dependencies = [
  "foldex-folder-stats",
  "foldex-index",
  "foldex-match",
+ "foldex-query",
  "foldex-shell",
  "foldex-ui",
  "foldex-update",
@@ -1134,6 +1135,8 @@ name = "foldex-core"
 version = "0.1.0"
 dependencies = [
  "foldex-match",
+ "foldex-query",
+ "serde",
  "tokio",
  "windows-sys 0.61.2",
 ]
@@ -1159,6 +1162,7 @@ dependencies = [
  "crc32fast",
  "foldex-fs",
  "foldex-match",
+ "foldex-query",
  "memmap2",
  "rayon",
  "rusqlite",
@@ -1168,6 +1172,16 @@ dependencies = [
 [[package]]
 name = "foldex-match"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "foldex-query"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "foldex-shell"

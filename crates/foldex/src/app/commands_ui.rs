@@ -10,6 +10,7 @@ impl Foldex {
         self.launcher_open
             || self.show_stats
             || self.operations_open
+            || self.search_editor.is_some()
             || self.keyboard_help
             || (self.inspector
                 && self

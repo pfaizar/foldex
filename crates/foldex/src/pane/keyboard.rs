@@ -564,6 +564,7 @@ mod tests {
             has_more: start.saturating_add(32) < total,
             elapsed: Duration::ZERO,
             status: foldex_index::IndexStatus {
+                excluded_subtrees: Vec::new(),
                 generation: "keyboard-fixture".into(),
                 revision,
                 scope: PathBuf::from("keyboard-fixture"),

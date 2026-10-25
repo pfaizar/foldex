@@ -51,7 +51,13 @@ impl NativeIndexBuilder {
                 .map(Path::to_path_buf)
         });
         let excluded_fallback = canonical_scope.is_none().then_some(excluded_root);
-        let (manifest, data) = Manifest::create(&cache_dir, scope, options.directory_only, cancel)?;
+        let (manifest, data) = Manifest::create(
+            &cache_dir,
+            scope,
+            options.directory_only,
+            &options.excluded_subtrees,
+            cancel,
+        )?;
         Ok(Self {
             index: Some(NativeIndex::new(manifest, data)),
             mode: Mode::None,
@@ -161,6 +167,7 @@ impl NativeIndexBuilder {
             self.walker = Some(foldex_fs::Walk::start(
                 index.status().scope.clone(),
                 foldex_fs::WalkOptions {
+                    excluded_subtrees: index.status().excluded_subtrees.clone(),
                     recursive: !self.directory_only,
                     workers: self.workers,
                     spool_root: index.data.root.join("queues"),

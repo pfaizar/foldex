@@ -45,8 +45,11 @@ impl PaneTransfer {
         };
         // Dormant panes start work only after the destination has committed.
         // Virtual routes must never turn their fallback path into a scan.
-        pane.recursive =
-            self.recursive && matches!(pane.route(), crate::navigation::Route::Folder(_));
+        pane.recursive = self.recursive
+            && matches!(
+                pane.route(),
+                crate::navigation::Route::Folder(_) | crate::navigation::Route::Search(_)
+            );
         pane.needs_refresh = pane.recursive;
         pane.home_selected = self.home_selected;
     }

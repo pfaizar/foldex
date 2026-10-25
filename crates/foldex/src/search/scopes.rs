@@ -197,6 +197,7 @@ impl Monitor {
 }
 
 struct Scope {
+    exclusions: Vec<PathBuf>,
     root: PathBuf,
     directory_only: bool,
     cache_dir: PathBuf,
@@ -514,8 +515,14 @@ impl Scopes {
         }
     }
     pub fn backend(&mut self, request: &Request) -> foldex_index::Result<(PathBuf, Backend)> {
+        request
+            .query
+            .conditions
+            .validate()
+            .map_err(foldex_index::Error::InvalidPath)?;
         if let Some(scope) = self.values.iter_mut().find(|scope| {
-            scope.directory_only == request.directory_only
+            scope.exclusions == request.query.conditions.excluded_subtrees
+                && scope.directory_only == request.directory_only
                 && crate::bookmarks::path_eq(&scope.root, &request.root)
         }) {
             if scope.catalog.borrow().backend.is_none() {
@@ -525,6 +532,7 @@ impl Scopes {
                     &self.base,
                     &scope.root,
                     scope.directory_only,
+                    &scope.exclusions,
                     &scope.cancel,
                 )?;
                 scope.catalog.borrow_mut().backend = Some(Backend::Building(builder));
@@ -560,7 +568,11 @@ impl Scopes {
         }
         std::fs::create_dir_all(&self.base)?;
         let cache_dir = Index::cache_dir_for(
-            &scope_cache_base(&self.base, request.directory_only),
+            &scope_policy_base(
+                &self.base,
+                request.directory_only,
+                &request.query.conditions.excluded_subtrees,
+            ),
             &request.root,
         )?;
         let monitor = Monitor::new(
@@ -577,7 +589,11 @@ impl Scopes {
                     .or_else(|_| Index::open_scope(&cache_dir, &request.root).map(Backend::Legacy))
             })
             .and_then(Result::ok)
-            .filter(|backend| backend.status().directory_only == request.directory_only);
+            .filter(|backend| {
+                backend.status().directory_only == request.directory_only
+                    && backend.status().excluded_subtrees
+                        == request.query.conditions.excluded_subtrees
+            });
         let backend = match cached {
             Some(backend) => backend,
             None => Backend::Building(Self::builder(
@@ -585,6 +601,7 @@ impl Scopes {
                 &self.base,
                 &request.root,
                 request.directory_only,
+                &request.query.conditions.excluded_subtrees,
                 &cancel,
             )?),
         };
@@ -597,6 +614,7 @@ impl Scopes {
         }));
         let now = Instant::now();
         self.values.push(Scope {
+            exclusions: request.query.conditions.excluded_subtrees.clone(),
             root: request.root.clone(),
             directory_only: request.directory_only,
             cache_dir: cache_dir.clone(),
@@ -627,12 +645,14 @@ impl Scopes {
         base: &Path,
         root: &Path,
         directory_only: bool,
+        exclusions: &[PathBuf],
         cancel: &Cancellation,
     ) -> foldex_index::Result<IndexBuilder> {
         IndexBuilder::create_with_options(
             cache_dir,
             root,
             &BuildOptions {
+                excluded_subtrees: exclusions.to_vec(),
                 excluded_root: Some(base.to_owned()),
                 directory_only,
             },
@@ -762,8 +782,26 @@ impl Scopes {
                 && scope.monitor.native()
                 && matches!(catalog.backend, Some(Backend::Complete(_)))
             {
-                let (changes, seen) = scope.monitor.signal.drain();
+                let (mut changes, seen) = scope.monitor.signal.drain();
                 scope.seen = seen;
+                changes.paths.retain(|path| {
+                    !scope
+                        .exclusions
+                        .iter()
+                        .any(|excluded| path.starts_with(excluded))
+                });
+                if !changes.full && changes.paths.is_empty() {
+                    scope.dirty = None;
+                    catalog.stale = false;
+                    let status = catalog.backend.as_ref().unwrap().status();
+                    catalog.last_status = status.clone();
+                    updates.push(Update {
+                        catalog: scope.catalog.clone(),
+                        status: Ok(status),
+                        refetch: true,
+                    });
+                    continue;
+                }
                 let source = catalog.backend.as_ref().unwrap().status();
                 if !changes.full
                     && !changes.paths.is_empty()
@@ -777,6 +815,7 @@ impl Scopes {
                         source.database_path,
                         paths,
                         BuildOptions {
+                            excluded_subtrees: scope.exclusions.clone(),
                             excluded_root: Some(self.base.clone()),
                             directory_only: scope.directory_only,
                         },
@@ -805,6 +844,7 @@ impl Scopes {
                     &self.base,
                     &scope.root,
                     scope.directory_only,
+                    &scope.exclusions,
                     &scope.cancel,
                 ) {
                     Ok(builder) => {

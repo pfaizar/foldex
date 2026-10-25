@@ -28,6 +28,7 @@ impl IndexBuilder {
             self.walker = Some(Walk::start(
                 self.status().scope.clone(),
                 WalkOptions {
+                    excluded_subtrees: self.status().excluded_subtrees.clone(),
                     recursive: !self.directory_only,
                     workers: self.scan_workers,
                     spool_root: self.cache_dir.clone(),

@@ -380,7 +380,8 @@ impl Pane {
         self.kind_counts.or_else(|| {
             (!self.recursive
                 && self.rendered_query.text.is_empty()
-                && self.rendered_query.type_filter.is_none())
+                && self.rendered_query.type_filter.is_none()
+                && self.rendered_query.conditions.is_empty())
             .then(|| {
                 self.snapshot
                     .as_ref()
@@ -558,6 +559,37 @@ impl Pane {
                 .rect_stroke(rect, radius, Stroke::new(1.0, t.line()), StrokeKind::Inside);
         }
         if !home && !self.is_recycle_bin() {
+            let tools = Rect::from_min_size(
+                pos2(layout.search.right() + 4.0 * scale, layout.search.top()),
+                vec2(24.0 * scale, layout.search.height()),
+            );
+            if tools.right() < layout.status.left() {
+                let response = icon_button_at(
+                    ui,
+                    tools,
+                    Id::new((self.id, "search-conditions")),
+                    t,
+                    Icon::Search,
+                    !self.query.conditions.is_empty(),
+                )
+                .on_hover_text("Search conditions and saved collections");
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        ui.is_enabled(),
+                        "Search conditions and saved collections",
+                    )
+                });
+                crate::keyboard::register(
+                    ui,
+                    crate::keyboard::Region::Footer(self.id),
+                    response.id,
+                    tools,
+                );
+                if response.clicked() {
+                    self.deferred_action = Some(Action::SearchBuilder);
+                }
+            }
             let expand = icon_button_at(
                 ui,
                 layout.expand,
@@ -828,6 +860,14 @@ impl Pane {
             filter_id,
             layout.filter,
         );
+        if !home && !self.is_recycle_bin() {
+            response.context_menu(|ui| {
+                if ui.button("Search conditions / save collection…").clicked() {
+                    self.deferred_action = Some(Action::SearchBuilder);
+                    ui.close();
+                }
+            });
+        }
         if response.has_focus() {
             ui.memory_mut(|memory| {
                 memory.set_focus_lock_filter(
@@ -1879,6 +1919,7 @@ mod tests {
         crate::keyboard::request_id(&ctx, crate::keyboard::listing_id(pane.id));
         draw(&mut pane, 1, vec![]);
         let expected = [
+            Id::new((pane.id, "search-conditions")),
             Id::new((pane.id, "expand-filter")),
             Id::new((pane.id, "kind-count", true)),
             Id::new((pane.id, "kind-count", false)),

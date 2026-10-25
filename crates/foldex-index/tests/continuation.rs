@@ -37,6 +37,7 @@ fn directory_continuation_enumerates_direct_children_and_retains_dates() {
         &fixture.0.join("cache"),
         &scope,
         &BuildOptions {
+            excluded_subtrees: Vec::new(),
             directory_only: true,
             ..Default::default()
         },
@@ -349,6 +350,7 @@ fn shallow_reconciliation_rejects_a_different_traversal_policy_and_never_descend
         &old.status().database_path,
         &["child".into()],
         &BuildOptions {
+            excluded_subtrees: Vec::new(),
             directory_only: true,
             ..Default::default()
         },
@@ -365,6 +367,7 @@ fn shallow_reconciliation_rejects_a_different_traversal_policy_and_never_descend
             &old.status().database_path,
             &["child".into()],
             &BuildOptions {
+                excluded_subtrees: Vec::new(),
                 directory_only: true,
                 ..Default::default()
             },

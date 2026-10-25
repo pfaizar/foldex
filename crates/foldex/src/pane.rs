@@ -39,6 +39,9 @@ pub enum DeleteMode {
 pub enum Action {
     RecycleBin(crate::recycle_bin::Intent),
     Navigate(PathBuf),
+    Search(crate::navigation::SearchLocation),
+    SearchBuilder,
+    RemoveSearch(String),
     GoPath(PathBuf),
     Address,
     EditPath(PathBuf),
@@ -952,6 +955,7 @@ impl Pane {
         self.filter.clear();
         self.filter_lower.clear();
         self.query.text.clear();
+        self.query.conditions = Default::default();
         self.query.kind = foldex_core::KindFilter::All;
         self.more_menu.close();
         self.breadcrumb_menu.menu.close();
@@ -1039,6 +1043,13 @@ impl Pane {
         self.keyboard.cancel_range();
         self.filter_lower = self.filter.to_lowercase();
         self.query.text = self.filter.clone();
+        if let crate::navigation::Route::Search(mut location) = self.route().clone() {
+            let conditions = location.query.conditions;
+            location.query = self.query.clone();
+            location.query.conditions = conditions;
+            self.navigation
+                .replace_current(crate::navigation::Route::Search(location));
+        }
         if self.is_recycle_bin() {
             self.query_generation = self.query_generation.wrapping_add(1);
             self.recycle_requested = None;
@@ -1170,6 +1181,13 @@ impl Pane {
     }
 
     pub fn toggle_recursive(&mut self) {
+        if let crate::navigation::Route::Search(mut location) = self.route().clone() {
+            location.directory_only = !location.directory_only;
+            self.navigation
+                .replace_current(crate::navigation::Route::Search(location.clone()));
+            self.navigate_route(crate::navigation::Route::Search(location), false);
+            return;
+        }
         if self.is_virtual() {
             return;
         }
@@ -2422,6 +2440,7 @@ mod tests {
             has_more: start + 256 < total,
             elapsed: Duration::ZERO,
             status: foldex_index::IndexStatus {
+                excluded_subtrees: Vec::new(),
                 generation: "owned-virtual-fixture".into(),
                 revision,
                 scope: snapshot.path.clone(),

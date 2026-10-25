@@ -10,8 +10,8 @@ Each stage receives a focused implementation, edge-case tests, a diff review, an
 | 2 | Shared live search catalogs, freshness, and catalog reuse | Complete; reviewed; 603 applicable app tests pass |
 | 3 | Independent interactive Shell actions and operation status | Complete; reviewed; 611 applicable app tests pass |
 | 4 | Fair scheduling for visible searches and details | Complete; reviewed; 615 applicable app tests pass |
-| 5 | Complete large listings and predictable deep paging | In progress |
-| 6 | Structured search and saved collections | Pending |
+| 5 | Complete large listings and predictable deep paging | Implemented and reviewed; integrated benchmarks pending |
+| 6 | Structured search and saved collections | Complete; reviewed; 627 applicable app tests pass |
 | 7 | Accessible virtual file listings | Pending |
 | 8 | Shared cloud-aware filesystem capabilities | Pending |
 
@@ -86,3 +86,15 @@ Delta work still examines private catalog metadata; it is not constant-time comp
 Cleanup now leaves a scope-validated retry marker if a mapped hardlinked shard prevents deletion, and retries only recognized owned orphan directories. A short cross-process publication lock coordinates pointer publication with manifest removal. Unknown files and malformed markers remain untouched. Review also fixed subscriber root spelling, notification revision races, queue-full retry behavior, stale footer wording, and update latency accounting.
 
 Validation: **623 applicable app tests passed**; **44 index tests passed**, two opt-in stress/microbenchmarks ignored. Focused tests cover same-timestamp size changes, subtree rename/removal, parent metadata, independent old/new generations, shallow traversal, masked deep pages, cancellation, notification bursts/overflow, selected-only pause/resume, cleanup retries and publication locks. Windows GNU application and index test sources compile; mapped-file deletion behavior is additionally covered by a Windows-only runtime test for CI. Comparable benchmarks are recorded in the integrated results.
+
+## Stage 6: structured searches and collections
+
+A shared metadata predicate model now serves ordinary listings, the native catalog and the legacy SQLite backend. The search editor combines filename matching with relative-path text, inclusive byte ranges, UTC modification bounds, relative modification dates, hidden items and explicit subtree exclusions. SI/binary size units use checked integer arithmetic. Invalid ranges, oversized lists and escaping paths produce errors. Conditions participate in count, query-head and cursor identities; metadata conditions run before filename scoring. Launcher ranking retains its existing policy.
+
+Subtree exclusions prune filesystem traversal and have separately validated persistent policies and cache namespaces. A pruned scope cannot satisfy an unpruned subscriber or selection. Notifications entirely within excluded subtrees do not rebuild the scope. Other metadata conditions reuse the existing scope catalog. Native manifests advance to v7, with unchanged v5 row data. Exclusion counts share the existing excluded-entry counter.
+
+Search is a serializable navigation route, retaining its scope, conditions and direct-child/recursive mode through Back/Forward, layouts, session restoration and window transfers. Relative dates resolve once when opening the route and remain symbolic in saved collections. Up to 32 named collections appear in the sidebar, merge through shared preferences, can be reopened/overwritten, and can be removed from their context menu. The footer has a focusable search-conditions button where space permits and a search-editor context menu. The editor shows all active conditions and validation errors.
+
+Review fixed catalog reuse after changing exclusions, source-policy validation, relative-date restoration, filter changes updating the current route, traversal-mode toggles retaining structured conditions, and the new footer Tab order. Regression tests compare in-memory, native and legacy results across matching modes, metadata sorts, exact totals, deep pages and cursors; another checks real traversal pruning and switching between shared pruned/unpruned scopes. History, workspace serialization, editor validation, shared collection storage and rendering are covered.
+
+Validation: **627 applicable app tests passed**, the core/index/query library suites passed, Windows GNU application/test compilation passed, and formatting/diff checks passed. Integrated timings and Windows runtime CI are recorded separately.

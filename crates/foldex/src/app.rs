@@ -25,6 +25,7 @@ mod options_ui;
 #[cfg(test)]
 mod persistence_tests;
 pub(crate) mod recycle_ui;
+mod searches_ui;
 mod stress;
 mod update_ui;
 pub(crate) mod window_transfer;
@@ -53,6 +54,7 @@ pub struct Session {
     pub sidebar: bool,
     pub sidebar_collapsed: u8,
     pub workspace: Option<crate::workspace::WorkspaceState>,
+    pub saved_searches: Vec<crate::navigation::SavedSearch>,
     pub saved_layouts: Vec<crate::workspace::NamedWorkspace>,
     pub folder_views: Vec<crate::workspace::SavedFolderView>,
     pub command_bookmarks: Option<Vec<crate::commands::Command>>,
@@ -72,6 +74,7 @@ impl Default for Session {
             sidebar: true,
             sidebar_collapsed: 0,
             workspace: None,
+            saved_searches: vec![],
             saved_layouts: vec![],
             folder_views: vec![],
             command_bookmarks: None,
@@ -207,6 +210,8 @@ pub struct Foldex {
     adapter_info: String,
     frame_count: u64,
     renderer_cpu_ms: f64,
+    search_editor: Option<searches_ui::SearchEditor>,
+    saved_searches: Vec<crate::navigation::SavedSearch>,
     saved_layouts: Vec<crate::workspace::NamedWorkspace>,
     folder_views: Vec<crate::workspace::SavedFolderView>,
     closed_tabs: VecDeque<crate::workspace::TabState>,
@@ -530,6 +535,8 @@ impl Foldex {
             adapter_info,
             frame_count: 0,
             renderer_cpu_ms: 0.0,
+            search_editor: None,
+            saved_searches: crate::navigation::normalize_searches(session.saved_searches),
             saved_layouts: session.saved_layouts.into_iter().take(16).collect(),
             folder_views: session.folder_views.into_iter().take(128).collect(),
             closed_tabs: VecDeque::new(),
@@ -866,6 +873,15 @@ impl Foldex {
                     crate::keyboard::request_id(&self.ui_context, Id::new("breadcrumb-filter"));
                 }
             }
+            Action::Search(location) => self
+                .pane_mut()
+                .navigate_route(crate::navigation::Route::Search(location), true),
+            Action::SearchBuilder => self.open_search_editor(),
+            Action::RemoveSearch(name) => {
+                self.saved_searches.retain(|s| s.name != name);
+                self.session_dirty = true;
+                self.save_due = Some(Instant::now());
+            }
             Action::Navigate(p) => {
                 self.pane_mut().navigate(p, true);
                 self.apply_folder_view();
@@ -875,7 +891,8 @@ impl Foldex {
                     match route {
                         crate::navigation::Route::Home => self.navigate_home(),
                         crate::navigation::Route::RecycleBin => self.navigate_recycle_bin(),
-                        crate::navigation::Route::Folder(_) => unreachable!(),
+                        crate::navigation::Route::Folder(_)
+                        | crate::navigation::Route::Search(_) => unreachable!(),
                     }
                     return;
                 }
@@ -3152,6 +3169,7 @@ impl eframe::App for Foldex {
         }
         self.dialogs(&ctx);
         self.operations_ui(&ctx);
+        self.searches_ui(&ctx);
         if !self.popup_active() {
             self.updates.notification(&ctx, &self.theme);
         }
@@ -3503,6 +3521,7 @@ impl Foldex {
             sidebar: self.sidebar,
             sidebar_collapsed: self.sidebar_sections.bits(),
             workspace: Some(self.workspace_state()),
+            saved_searches: self.saved_searches.clone(),
             saved_layouts: self.saved_layouts.clone(),
             folder_views: self.folder_views.clone(),
             command_bookmarks: Some(self.commands.bookmarks()),
@@ -3555,6 +3574,7 @@ impl Foldex {
         self.active.hash(&mut hash);
         self.desk.hash_state(&mut hash);
         self.bookmarks.hash(&mut hash);
+        self.saved_searches.hash(&mut hash);
         self.recent.hash(&mut hash);
         self.home_usage_revision.hash(&mut hash);
         self.sidebar.hash(&mut hash);
@@ -3674,6 +3694,7 @@ impl Foldex {
 
     fn apply_shared_preferences(&mut self, mut session: Session) {
         self.bookmarks = crate::bookmarks::normalize(session.bookmarks);
+        self.saved_searches = crate::navigation::normalize_searches(session.saved_searches);
         self.saved_layouts = session.saved_layouts.into_iter().take(16).collect();
         for layout in &mut self.saved_layouts {
             layout.state.clear_navigation_history();

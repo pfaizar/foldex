@@ -123,6 +123,31 @@ impl Index {
         boundary: Option<&IndexStatus>,
     ) -> Result<QueryPage> {
         cancel.check()?;
+        spec.conditions.validate().map_err(Error::InvalidPath)?;
+        let conditions = spec.conditions.clone();
+        self.connection.create_scalar_function(
+            "foldex_metadata",
+            4,
+            rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC
+                | rusqlite::functions::FunctionFlags::SQLITE_INNOCUOUS,
+            move |ctx| {
+                let raw = ctx.get_raw(0).as_blob()?;
+                let path = PathBuf::from(
+                    codec::decode(raw)
+                        .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?,
+                );
+                let bytes = ctx.get_raw(2).as_blob()?;
+                let bytes: [u8; 8] = bytes
+                    .try_into()
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                Ok(conditions.matches(
+                    &path,
+                    ctx.get::<bool>(1)?,
+                    u64::from_be_bytes(bytes),
+                    ctx.get(3)?,
+                ))
+            },
+        )?;
         let started = Instant::now();
         #[cfg(feature = "diagnostics")]
         {
@@ -139,7 +164,8 @@ impl Index {
             self.status = load_status(&self.connection, &self.status.database_path)?;
             self.status.from_cache = from_cache;
             if let Some(boundary) = boundary {
-                if boundary.directory_only != self.status.directory_only
+                if boundary.excluded_subtrees != self.status.excluded_subtrees
+                    || boundary.directory_only != self.status.directory_only
                     || boundary.generation != self.status.generation
                     || boundary.scope != self.status.scope
                     || boundary.entries > self.status.entries
@@ -173,6 +199,7 @@ impl Index {
             let count = if spec.include_total || (offset > 0 && cursor.is_none()) {
                 if spec.text.is_empty()
                     && spec.type_filter.is_none()
+                    && spec.conditions.is_empty()
                     && spec.show_hidden
                     && upper_id.is_none_or(|bound| bound == self.status.entries)
                 {
@@ -869,6 +896,9 @@ fn make_predicate(spec: &QuerySpec, use_fts: bool, upper_id: Option<u64>) -> Res
         Vec::new()
     };
     let mut conditions = vec!["1=1".to_string()];
+    if !spec.conditions.is_empty() {
+        conditions.push("foldex_metadata(e.relative,e.is_dir,e.size_key,e.modified)".into());
+    }
     let mut fuzzy_verification = None;
     if !spec.show_hidden {
         conditions.push("e.hidden=0".into());
@@ -993,6 +1023,7 @@ pub(crate) fn fingerprint(spec: &QuerySpec, upper_id: Option<u64>) -> u64 {
     spec.show_hidden.hash(&mut hasher);
     spec.kind.hash(&mut hasher);
     spec.type_filter.hash(&mut hasher);
+    spec.conditions.hash(&mut hasher);
     upper_id.hash(&mut hasher);
     hasher.finish()
 }

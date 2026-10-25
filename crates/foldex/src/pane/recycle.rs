@@ -7,7 +7,10 @@ impl Pane {
         matches!(self.route(), crate::navigation::Route::RecycleBin)
     }
     pub fn is_virtual(&self) -> bool {
-        !matches!(self.route(), crate::navigation::Route::Folder(_))
+        !matches!(
+            self.route(),
+            crate::navigation::Route::Folder(_) | crate::navigation::Route::Search(_)
+        )
     }
     pub fn navigate_recycle_bin(&mut self, remember: bool) {
         if remember {

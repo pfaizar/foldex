@@ -24,6 +24,7 @@ pub enum ReaderKind {
 }
 
 pub struct WalkOptions {
+    pub excluded_subtrees: Vec<PathBuf>,
     pub recursive: bool,
     pub workers: usize,
     /// An existing private directory. Overflow is deleted when workers stop.
@@ -246,6 +247,16 @@ fn read_directory(
                     continue;
                 }
             };
+            let relative = batch.parent.join(&entry.name);
+            if shared
+                .options
+                .excluded_subtrees
+                .iter()
+                .any(|p| relative.starts_with(p))
+            {
+                batch.excluded += 1;
+                continue;
+            }
             if !entry.metadata_known {
                 batch.skipped += 1;
             }

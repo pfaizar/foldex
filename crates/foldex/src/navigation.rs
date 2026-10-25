@@ -10,6 +10,53 @@ pub enum Route {
     Home,
     RecycleBin,
     Folder(PathBuf),
+    Search(SearchLocation),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SearchLocation {
+    pub scope: PathBuf,
+    pub query: foldex_core::Query,
+    pub directory_only: bool,
+}
+impl SearchLocation {
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.scope.is_absolute() || self.query.text.len() > 1024 {
+            return Err(
+                "Search needs an absolute folder and a filename query within 1024 bytes".into(),
+            );
+        }
+        self.query.conditions.validate()
+    }
+    pub fn resolved_query(&self) -> foldex_core::Query {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .min(i64::MAX as u64) as i64;
+        let mut query = self.query.clone();
+        query.conditions = query.conditions.resolved(now);
+        query
+    }
+}
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SavedSearch {
+    pub name: String,
+    pub location: SearchLocation,
+}
+
+pub fn normalize_searches(searches: Vec<SavedSearch>) -> Vec<SavedSearch> {
+    let mut valid = Vec::new();
+    for search in searches.into_iter().take(32) {
+        if !search.name.trim().is_empty()
+            && search.name.len() <= 96
+            && search.location.validate().is_ok()
+            && !valid.iter().any(|s: &SavedSearch| s.name == search.name)
+        {
+            valid.push(search);
+        }
+    }
+    valid
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -45,6 +92,9 @@ impl Navigation {
         }
         self.at = self.entries.len() - 1;
     }
+    pub fn replace_current(&mut self, route: Route) {
+        self.entries[self.at] = route;
+    }
     pub fn back(&mut self) -> Option<Route> {
         if !self.can_back() {
             return None;
@@ -69,11 +119,10 @@ impl Navigation {
         let end = (start + MAX_NAVIGATION).min(self.entries.len());
         self.entries = self.entries.drain(start..end).collect();
         self.at -= start;
-        if self
-            .entries
-            .iter()
-            .any(|route| matches!(route, Route::Folder(path) if path.as_os_str().is_empty()))
-        {
+        if self.entries.iter().any(|route| {
+            matches!(route, Route::Folder(path) if path.as_os_str().is_empty())
+                || matches!(route, Route::Search(search) if search.validate().is_err())
+        }) {
             return Self::new(fallback);
         }
         self

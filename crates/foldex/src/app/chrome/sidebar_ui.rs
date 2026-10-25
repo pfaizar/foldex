@@ -916,6 +916,18 @@ impl Foldex {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
+                    if !self.saved_searches.is_empty() {
+                        egui::CollapsingHeader::new("Search collections").default_open(true).show(ui, |ui| {
+                            for search in &self.saved_searches {
+                                if !self.side_filter.is_empty() && !search.name.to_lowercase().contains(&self.side_filter.to_lowercase()) { continue; }
+                                let response = ui.button(&search.name).on_hover_text(search.location.scope.display().to_string());
+                                if response.clicked() { actions.push(Action::Search(search.location.clone())); }
+                                response.context_menu(|ui| { if ui.button("Remove collection").clicked() { actions.push(Action::RemoveSearch(search.name.clone())); ui.close(); } });
+                            }
+                        });
+                    }
+                    if ui.small_button("Search conditions / collections…").clicked() { actions.push(Action::SearchBuilder); }
+
                     // Home is a destination, with the same icon/text alignment as
                     // category headers and no misleading accordion chevron.
                     let (home, _) = ui

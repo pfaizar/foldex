@@ -18,6 +18,8 @@ use std::{
     time::{Duration, Instant},
 };
 #[cfg(test)]
+mod conditions_tests;
+#[cfg(test)]
 pub(crate) mod live_tests;
 mod paging;
 mod reconcile;
@@ -1025,11 +1027,13 @@ impl CountCache {
             && self.query.match_mode == query.match_mode
             && self.query.show_hidden == query.show_hidden
             && self.query.type_filter == query.type_filter
+            && self.query.conditions == query.conditions
     }
 }
 
 fn same_result_prefix(a: &IndexStatus, b: &IndexStatus) -> bool {
-    a.directory_only == b.directory_only
+    a.excluded_subtrees == b.excluded_subtrees
+        && a.directory_only == b.directory_only
         && a.generation == b.generation
         && a.revision == b.revision
         && a.entries == b.entries
@@ -1091,17 +1095,20 @@ impl Context {
             .boundary
             .as_ref()
             .map_or(&request.root, |boundary| &boundary.scope);
-        if request
-            .boundary
-            .as_ref()
-            .is_some_and(|boundary| boundary.directory_only != request.directory_only)
-            || request.boundary.is_some()
-                && !crate::bookmarks::path_eq(source_root, &std::path::absolute(&request.root)?)
+        if request.boundary.as_ref().is_some_and(|boundary| {
+            boundary.directory_only != request.directory_only
+                || boundary.excluded_subtrees != request.query.conditions.excluded_subtrees
+        }) || request.boundary.is_some()
+            && !crate::bookmarks::path_eq(source_root, &std::path::absolute(&request.root)?)
         {
             return Err(foldex_index::Error::InvalidCursor);
         }
         let cache_dir = Index::cache_dir_for(
-            &scope_cache_base(cache_base, request.directory_only),
+            &scope_policy_base(
+                cache_base,
+                request.directory_only,
+                &request.query.conditions.excluded_subtrees,
+            ),
             source_root,
         )?;
         let pinned = if let Some(boundary) = &request.boundary {
@@ -1129,6 +1136,11 @@ impl Context {
                 .map(Backend::Cached)
                 .or_else(|_| Index::open_scope(&cache_dir, &request.root).map(Backend::Legacy))
                 .ok()
+                .filter(|backend| {
+                    backend.status().directory_only == request.directory_only
+                        && backend.status().excluded_subtrees
+                            == request.query.conditions.excluded_subtrees
+                })
         };
         let backend = if let Some(index) = cached {
             index
@@ -1764,6 +1776,17 @@ fn scope_cache_base(base: &Path, directory_only: bool) -> PathBuf {
     }
 }
 
+fn scope_policy_base(base: &Path, directory_only: bool, exclusions: &[PathBuf]) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    let base = scope_cache_base(base, directory_only);
+    if exclusions.is_empty() {
+        return base;
+    }
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    exclusions.hash(&mut hash);
+    base.join(format!("policy-{:016x}", hash.finish()))
+}
+
 fn new_builder(
     cache_dir: &Path,
     cache_base: &Path,
@@ -1773,6 +1796,7 @@ fn new_builder(
         cache_dir,
         &request.root,
         &BuildOptions {
+            excluded_subtrees: request.query.conditions.excluded_subtrees.clone(),
             excluded_root: Some(cache_base.to_path_buf()),
             directory_only: request.directory_only,
         },
@@ -1855,6 +1879,8 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
                             && request.scan_epoch == contexts[at].request.scan_epoch
                             && request.root == contexts[at].request.root
                             && request.directory_only == contexts[at].request.directory_only
+                            && request.query.conditions.excluded_subtrees
+                                == contexts[at].request.query.conditions.excluded_subtrees
                     })
                 });
                 if keep {
@@ -2102,6 +2128,7 @@ fn filtered_total(query: &Query, (folders, files): (usize, usize)) -> usize {
 
 fn query_spec(query: &Query, include_total: bool) -> QuerySpec {
     QuerySpec {
+        conditions: query.conditions.clone(),
         text: query.text.clone(),
         match_mode: match query.match_mode {
             foldex_core::MatchMode::Fuzzy => foldex_index::MatchMode::Fuzzy,
@@ -2485,6 +2512,7 @@ mod tests {
 
     fn test_status(scope: PathBuf, database_path: PathBuf) -> IndexStatus {
         IndexStatus {
+            excluded_subtrees: Vec::new(),
             generation: "generation".into(),
             revision: 2,
             scope,

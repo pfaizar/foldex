@@ -256,7 +256,8 @@ impl NativeIndex {
             ));
         }
         let source = boundary.unwrap_or(self.status()).clone();
-        if source.directory_only != self.status().directory_only
+        if source.excluded_subtrees != self.status().excluded_subtrees
+            || source.directory_only != self.status().directory_only
             || source.generation != self.status().generation
             || source.scope != self.status().scope
             || source.entries > self.status().entries

@@ -117,6 +117,7 @@ impl BuildState {
 
 #[derive(Clone, Debug)]
 pub struct IndexStatus {
+    pub excluded_subtrees: Vec<PathBuf>,
     pub directory_only: bool,
     pub generation: String,
     pub revision: u64,
@@ -273,6 +274,7 @@ pub struct TypeFilter {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct QuerySpec {
+    pub conditions: foldex_query::Conditions,
     pub text: String,
     pub match_mode: MatchMode,
     pub sort: SortColumn,
@@ -286,6 +288,7 @@ pub struct QuerySpec {
 impl Default for QuerySpec {
     fn default() -> Self {
         Self {
+            conditions: Default::default(),
             text: String::new(),
             match_mode: MatchMode::Fuzzy,
             sort: SortColumn::Name,
@@ -380,6 +383,7 @@ pub struct IngestionStats {
 
 #[derive(Clone, Debug, Default)]
 pub struct BuildOptions {
+    pub excluded_subtrees: Vec<PathBuf>,
     /// Exclude the common index-cache ancestor, including caches for other scopes.
     /// It must already exist. This protects against indexing the index itself.
     pub excluded_root: Option<PathBuf>,
