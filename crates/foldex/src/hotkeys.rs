@@ -74,7 +74,7 @@ impl KeyStroke {
             return None;
         }
         Some(Stroke {
-            key,
+            key: shifted_base_key(key, self.shift),
             bits: self.ctrl as u8
                 | ((self.alt as u8) << 1)
                 | ((self.shift as u8) << 2)
@@ -177,7 +177,7 @@ struct Stroke {
 impl Stroke {
     fn event(key: Key, modifiers: Modifiers) -> Self {
         Self {
-            key,
+            key: shifted_base_key(key, modifiers.shift),
             bits: modifiers.ctrl as u8
                 | ((modifiers.alt as u8) << 1)
                 | ((modifiers.shift as u8) << 2)
@@ -186,6 +186,24 @@ impl Stroke {
     }
     fn unmodified_or_shift(self) -> bool {
         self.bits & 0b1011 == 0
+    }
+}
+// Native Windows capture reports the base virtual key, while egui can report
+// its shifted symbol. Normalize both saved bindings and incoming events so a
+// recorded chord also works after capture ends, including older symbol bindings.
+fn shifted_base_key(key: Key, shift: bool) -> Key {
+    if !shift {
+        return key;
+    }
+    match key {
+        Key::Plus => Key::Equals,
+        Key::Colon => Key::Semicolon,
+        Key::Pipe => Key::Backslash,
+        Key::Questionmark => Key::Slash,
+        Key::OpenCurlyBracket => Key::OpenBracket,
+        Key::CloseCurlyBracket => Key::CloseBracket,
+        Key::Exclamationmark => Key::Num1,
+        key => key,
     }
 }
 // Keep shifted number chords aligned with their configured number-row keys.
@@ -2984,8 +3002,11 @@ fn consume_native_input(ctx: &egui::Context, stroke: Stroke) -> bool {
     })
 }
 fn consume_event(events: &mut Vec<Event>, index: usize, stroke: Stroke) {
-    let logical = matches!(events.remove(index), Event::Key { .. });
-    if logical
+    let logical_key = match events.remove(index) {
+        Event::Key { key, .. } => Some(key),
+        _ => None,
+    };
+    if logical_key.is_some()
         && events
             .get(index)
             .is_some_and(|event| clipboard_event(event, stroke))
@@ -2993,10 +3014,13 @@ fn consume_event(events: &mut Vec<Event>, index: usize, stroke: Stroke) {
         events.remove(index);
     }
     if stroke.unmodified_or_shift() {
-        let expected = if stroke.key == Key::Space {
+        // Text aliases use the original logical symbol (e.g. ':'), even when
+        // shortcut matching normalized the chord to its base key (';').
+        let key = logical_key.unwrap_or(stroke.key);
+        let expected = if key == Key::Space {
             " "
         } else {
-            stroke.key.symbol_or_name()
+            key.symbol_or_name()
         };
         if matches!(events.get(index),Some(Event::Text(text)) if text.eq_ignore_ascii_case(expected))
         {
@@ -3395,6 +3419,122 @@ mod tests {
         let mut input = raw(0.0, events);
         hotkeys.capture_raw_input(&mut input);
         assert_eq!(hotkeys.recording.as_ref().unwrap().strokes.len(), 100);
+    }
+
+    const SHIFTED_SYMBOLS: [(Key, Key); 7] = [
+        (Key::Equals, Key::Plus),
+        (Key::Semicolon, Key::Colon),
+        (Key::Backslash, Key::Pipe),
+        (Key::Slash, Key::Questionmark),
+        (Key::OpenBracket, Key::OpenCurlyBracket),
+        (Key::CloseBracket, Key::CloseCurlyBracket),
+        (Key::Num1, Key::Exclamationmark),
+    ];
+
+    #[test]
+    fn native_recorded_shifted_symbols_match_logical_dispatch_after_json_roundtrip() {
+        for (base, logical) in SHIFTED_SYMBOLS {
+            for modifiers in [
+                Modifiers::SHIFT,
+                Modifiers::CTRL | Modifiers::SHIFT,
+                Modifiers::ALT | Modifiers::SHIFT,
+                Modifiers {
+                    shift: true,
+                    mac_cmd: true,
+                    ..Modifiers::NONE
+                },
+                Modifiers {
+                    ctrl: true,
+                    alt: true,
+                    shift: true,
+                    mac_cmd: true,
+                    ..Modifiers::NONE
+                },
+            ] {
+                let mut hotkeys = Hotkeys::from_bindings(vec![]);
+                hotkeys.record(Command::Refresh);
+                let mut input = raw(0.0, vec![]);
+                hotkeys.capture_input_batch(
+                    &mut input,
+                    native_recorder::Input {
+                        events: vec![key(base, modifiers), up(base, modifiers)],
+                        ..Default::default()
+                    },
+                );
+                let sequence = hotkeys.recording.as_ref().unwrap().strokes.clone();
+                hotkeys
+                    .assign(
+                        Binding {
+                            command: Command::Refresh,
+                            sequence,
+                        },
+                        None,
+                        false,
+                    )
+                    .unwrap();
+                let json = serde_json::to_string(hotkeys.bindings()).unwrap();
+                let mut restored = Hotkeys::from_bindings(serde_json::from_str(&json).unwrap());
+                let mut event = key(logical, modifiers);
+                if let Event::Key { physical_key, .. } = &mut event {
+                    *physical_key = Some(base);
+                }
+                let mut events = vec![event];
+                if !modifiers.ctrl && !modifiers.alt && !modifiers.mac_cmd {
+                    events.push(Event::Text(logical.symbol_or_name().into()));
+                }
+                let ctx = egui::Context::default();
+                let mut output = ctx.run_ui(raw(0.1, events), |ui| {
+                    assert_eq!(
+                        restored.dispatch_many(ui.ctx(), true),
+                        [Command::Refresh],
+                        "{base:?} {logical:?} {modifiers:?}"
+                    );
+                    assert!(!ui.input(|input| {
+                        input
+                            .events
+                            .iter()
+                            .any(|event| matches!(event, Event::Text(_)))
+                    }));
+                });
+                output.textures_delta.clear();
+            }
+        }
+    }
+
+    #[test]
+    fn saved_shifted_symbol_bindings_match_the_native_base_key() {
+        for (base, logical) in SHIFTED_SYMBOLS {
+            let modifiers = Modifiers::CTRL | Modifiers::SHIFT;
+            let mut hotkeys =
+                Hotkeys::from_bindings(vec![Binding::single(Command::Refresh, logical, modifiers)]);
+            assert_eq!(
+                hotkeys.command_for(&KeyStroke::new(base, modifiers), true),
+                Some(Command::Refresh),
+                "{logical:?}"
+            );
+            assert_eq!(
+                run(
+                    &mut hotkeys,
+                    &egui::Context::default(),
+                    0.0,
+                    vec![key(base, modifiers)],
+                    true
+                ),
+                [Command::Refresh]
+            );
+        }
+    }
+
+    #[test]
+    fn unshifted_symbol_bindings_remain_distinct_from_the_base_key() {
+        for (base, logical) in SHIFTED_SYMBOLS {
+            for modifiers in [Modifiers::NONE, Modifiers::CTRL] {
+                assert_ne!(
+                    KeyStroke::new(base, modifiers).compile(),
+                    KeyStroke::new(logical, modifiers).compile()
+                );
+            }
+        }
     }
 
     #[test]
