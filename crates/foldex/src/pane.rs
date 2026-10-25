@@ -59,6 +59,7 @@ pub enum Action {
     NewWindow(PathBuf),
     MoveTabToNewWindow,
     Copy(Vec<PathBuf>, bool),
+    DragFiles(Vec<PathBuf>),
     Paste(PathBuf),
     Rename(PathBuf),
     RenameMany(Vec<PathBuf>),
@@ -2157,9 +2158,16 @@ mod tests {
                 assert!(pane.visible_rows.start > 0, "scrollbar did not scroll");
                 assert_eq!(pane.selected.intervals(), vec![(2, 2)]);
 
-                // The adjacent file content must still support drag selection.
-                let start = pos2(50.0, 30.0);
-                let end = pos2(200.0, 150.0);
+                // Empty content still supports marquee selection. A press on
+                // a file now starts a file drag instead of stealing selection.
+                let single = snapshot(1);
+                pane.indices = single.default_order.clone();
+                pane.snapshot = Some(single);
+                for _ in 0..4 {
+                    draw(&mut pane, Vec::new());
+                }
+                let start = pos2(350.0, 250.0);
+                let end = pos2(500.0, 320.0);
                 draw(
                     &mut pane,
                     vec![egui::Event::PointerMoved(start), button(start, true)],

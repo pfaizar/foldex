@@ -109,6 +109,14 @@ impl Pane {
                     && response.rect.is_positive()
                     && response.rect.intersects(ui.clip_rect())
                 {
+                    if !self.is_virtual()
+                        && let Some(path) = self
+                            .breadcrumb_path
+                            .ancestors()
+                            .nth(self.breadcrumbs.len() - 1 - index)
+                    {
+                        crate::drag_drop::target(ui, response.rect, path.to_path_buf());
+                    }
                     crate::keyboard::register(
                         ui,
                         crate::keyboard::Region::Toolbar(self.id),

@@ -207,6 +207,10 @@ pub struct Foldex {
     commands: crate::commands::Palette,
     window_owner: isize,
     native_frame: Option<crate::native_frame::NativeFrame>,
+    file_drag: crate::drag_drop::Native,
+    pending_file_drag: Option<Vec<PathBuf>>,
+    file_drag_frame: Option<u64>,
+    file_drag_release: Option<egui::Pos2>,
     fullscreen: bool,
     picker: Option<crate::picker::Picker>,
     picker_layout: bool,
@@ -337,6 +341,7 @@ impl Foldex {
         home_history.migrate_recent(session.recent.iter().cloned());
         let persistence = crate::persistence::Persistence::new(wake, launcher_runtime.auxiliary)?;
         let native_frame = crate::native_frame::NativeFrame::new(window_owner, &cc.egui_ctx);
+        let file_drag = crate::drag_drop::Native::new(window_owner, &cc.egui_ctx)?;
         #[cfg(feature = "renderer-glow")]
         let adapter_info = cc
             .gl
@@ -520,6 +525,10 @@ impl Foldex {
             commands,
             window_owner,
             native_frame,
+            file_drag,
+            pending_file_drag: None,
+            file_drag_frame: None,
+            file_drag_release: None,
             fullscreen: false,
             picker: None,
             picker_layout: false,
@@ -884,6 +893,13 @@ impl Foldex {
                 }
             }
             Action::Paste(destination) => self.job(Job::ReadClipboard { destination }),
+            Action::DragFiles(paths) => {
+                let frame = self.ui_context.cumulative_frame_nr();
+                if self.file_drag_frame != Some(frame) {
+                    self.file_drag_frame = Some(frame);
+                    self.pending_file_drag = Some(paths);
+                }
+            }
             Action::Rename(path) => {
                 let name = path
                     .file_name()
@@ -2822,6 +2838,19 @@ impl eframe::App for Foldex {
             input.max_texture_side = Some(input.max_texture_side.unwrap_or(2048).min(2048));
             return;
         }
+        if let Some(pos) = self.file_drag_release.take() {
+            // The OLE modal loop consumes the physical release. Feed it back
+            // before new input so egui cannot retain a stuck pressed button.
+            input.events.insert(
+                0,
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            );
+        }
         if let Some(run) = self.benchmark.as_mut().and_then(|run| run.fixes.as_mut()) {
             if run.force_focus {
                 input.focused = true;
@@ -2898,6 +2927,7 @@ impl eframe::App for Foldex {
             .is_some_and(|run| run.stress.is_some());
         let mut stages = [0.0; 5];
         let ctx = ui.ctx().clone();
+        crate::drag_drop::begin_frame(&ctx);
         self.service_theme(&ctx);
         self.service_updates(&ctx);
         self.service_launcher(&ctx);
@@ -2962,18 +2992,6 @@ impl eframe::App for Foldex {
                 .map(|f| f.path().to_path_buf())
                 .collect()
         });
-        if !dropped.is_empty() && !self.updates.exit_pending {
-            if self.pane().is_virtual() {
-                self.toast("Open a folder before dropping files", false);
-            } else {
-                self.job(Job::DropFiles {
-                    sources: dropped,
-                    destination: self.pane().path.clone(),
-                    control: ctx.input(|input| input.modifiers.ctrl),
-                    shift: ctx.input(|input| input.modifiers.shift),
-                });
-            }
-        }
         if self.first_frame.is_none() {
             self.first_frame = Some(self.started.elapsed().as_secs_f64() * 1000.0);
         }
@@ -3087,6 +3105,66 @@ impl eframe::App for Foldex {
             stages[3] = begin.elapsed().as_secs_f64() * 1000.0;
         }
         moving |= self.workspace_canvas(ui, content, direct_layout);
+        if !self.popup_active() && !self.updates.exit_pending {
+            if !dropped.is_empty()
+                && let Some(destination) = ctx
+                    .input(|input| input.pointer.hover_pos())
+                    .and_then(|point| crate::drag_drop::destination(&ctx, point))
+            {
+                self.job(Job::DropFiles {
+                    sources: dropped,
+                    destination,
+                    control: ctx.input(|input| input.modifiers.ctrl),
+                    shift: ctx.input(|input| input.modifiers.shift),
+                });
+            }
+            if let Some(paths) = self.pending_file_drag.take() {
+                let pointer = ctx
+                    .input(|input| input.pointer.interact_pos())
+                    .unwrap_or_default();
+                if ctx.input(|input| input.pointer.primary_down()) {
+                    if let Err(error) = self.file_drag.start(&paths) {
+                        self.toast(error.to_string(), true);
+                    }
+                    self.file_drag_release = Some(pointer);
+                    ctx.stop_dragging();
+                    ctx.request_repaint();
+                } else if ctx.input(|input| input.pointer.primary_released())
+                    && let Some(destination) = crate::drag_drop::destination(&ctx, pointer)
+                {
+                    // A fast gesture can arrive as press/move/release in one
+                    // frame, after the physical OLE drag opportunity has ended.
+                    self.job(Job::DropFiles {
+                        sources: paths,
+                        destination,
+                        control: ctx.input(|input| input.modifiers.ctrl),
+                        shift: ctx.input(|input| input.modifiers.shift),
+                    });
+                }
+            }
+            while let Some(drop) = self.file_drag.take_drop() {
+                self.job(Job::Copy {
+                    sources: drop.sources,
+                    destination: drop.destination,
+                    cut: drop.cut,
+                });
+            }
+        } else {
+            self.pending_file_drag = None;
+            crate::drag_drop::begin_frame(&ctx);
+        }
+        if self.file_drag.take_changed() {
+            for tab in &mut self.tabs {
+                if !tab.left.is_virtual() {
+                    tab.left.refresh();
+                }
+                if let Some(right) = &mut tab.right
+                    && !right.is_virtual()
+                {
+                    right.refresh();
+                }
+            }
+        }
         if trace_stress {
             stages[4] = begin.elapsed().as_secs_f64() * 1000.0;
         }
@@ -3448,6 +3526,9 @@ impl eframe::App for Foldex {
                 && !Self::editing(&ctx)
                 && ctx.input(|i| i.focused),
         );
+        if self.popup_active() || self.updates.exit_pending {
+            crate::drag_drop::begin_frame(&ctx);
+        }
         self.service_benchmark(&ctx);
     }
 }

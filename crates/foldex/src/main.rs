@@ -6,6 +6,7 @@ mod bookmarks;
 mod commands;
 mod context;
 mod cut_state;
+mod drag_drop;
 mod goto;
 mod home_history;
 mod hotkeys;
@@ -211,6 +212,9 @@ fn main() -> eframe::Result {
             .with_inner_size([1200.0, 760.0])
             .with_min_inner_size([420.0, 320.0])
             .with_decorations(true)
+            // Foldex routes OLE drops to the folder under the pointer. Winit's
+            // generic file target only reports paths and always advertises Copy.
+            .with_drag_and_drop(!cfg!(windows))
             .with_icon(Arc::new(app_icon())),
         renderer: {
             #[cfg(feature = "renderer-wgpu")]
