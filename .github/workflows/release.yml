@@ -20,20 +20,55 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  ci:
+    name: Require CI for the release source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+      ci_passed: ${{ steps.ci.outputs.ci_passed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Pin the release source commit
+        id: source
+        env:
+          RELEASE_REF: ${{ inputs.tag || github.sha }}
+        run: |
+          source_sha=$(git rev-parse --verify --end-of-options "$RELEASE_REF^{commit}")
+          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
+      - name: Wait for successful CI on the same commit
+        id: ci
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+          REQUIRE_CI: ${{ github.event_name == 'push' && github.ref_type == 'branch' }}
+        run: |
+          args=(--sha "$SOURCE_SHA")
+          if [[ "$REQUIRE_CI" != 'true' ]]; then args+=(--allow-missing); fi
+          python -B scripts/ci_gate.py "${args[@]}"
+
   windows:
     name: Build and publish Windows x64 installer and portable
+    needs: ci
     runs-on: windows-2025
     timeout-minutes: 60
     permissions:
       contents: write
     env:
       CARGO_TERM_COLOR: always
+      RUSTFLAGS: -C target-feature=+crt-static
       RELEASE_INPUT: ${{ inputs.tag }}
       GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ needs.ci.outputs.source_sha }}
           fetch-depth: 0
           persist-credentials: false
       - name: Resolve the release version
@@ -47,6 +82,7 @@ jobs:
       - name: Validate the release version and notes
         run: python -B scripts/package_portable.py --tag "$env:RELEASE_TAG" --validate-only
       - name: Check release tooling
+        if: needs.ci.outputs.ci_passed != 'true'
         run: python -B -m unittest discover -s scripts/tests -v
       - name: Install the pinned Rust toolchain
         shell: pwsh
@@ -55,19 +91,28 @@ jobs:
           rustup toolchain install $toolchain --profile minimal --component rustfmt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           rustup target add x86_64-pc-windows-msvc --toolchain $toolchain
+      - name: Restore Rust build dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: windows-x64-release
+          key: ${{ hashFiles('vendor/**') }}
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Check Rust formatting
+        if: needs.ci.outputs.ci_passed != 'true'
         run: cargo fmt --all -- --check
       - name: Test the Windows workspace
+        if: needs.ci.outputs.ci_passed != 'true'
         run: cargo test --locked --workspace --target x86_64-pc-windows-msvc
+      - name: Build the release application
+        run: cargo build --locked --release --target x86_64-pc-windows-msvc -p foldex
       - name: Install Inno Setup 6.7
         run: choco upgrade innosetup --version=6.7.0 --yes --no-progress --allow-downgrade
-      - name: Build the installer smoke-test application
-        run: cargo build --locked --target x86_64-pc-windows-msvc -p foldex
       - name: Exercise install, repair, upgrade, downgrade and uninstall
         shell: pwsh
         run: |
           try {
-            ./scripts/test_installer.ps1 -Binary target/x86_64-pc-windows-msvc/debug/foldex.exe
+            ./scripts/test_installer.ps1 -Binary target/x86_64-pc-windows-msvc/release/foldex.exe
           } finally {
             Get-ChildItem -LiteralPath $env:RUNNER_TEMP -Directory -Filter 'foldex-installer-*' | ForEach-Object {
               Get-ChildItem -LiteralPath $_.FullName -File -Filter 'setup-*.log' | ForEach-Object {
@@ -84,10 +129,6 @@ jobs:
           path: ${{ runner.temp }}/foldex-installer-*/setup-*.log
           if-no-files-found: ignore
           retention-days: 14
-      - name: Build the release application
-        env:
-          RUSTFLAGS: -C target-feature=+crt-static
-        run: cargo build --locked --release --target x86_64-pc-windows-msvc -p foldex
       - name: Create or verify the release source tag
         shell: pwsh
         env:

@@ -13,8 +13,34 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Select checks and validate CI tooling
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      native: ${{ steps.changes.outputs.native }}
+      installer: ${{ steps.changes.outputs.installer }}
+      website: ${{ steps.changes.outputs.website }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select checks from the full change range
+        id: changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -B scripts/ci_changes.py
+      - name: Test CI and release tooling
+        run: python -B -m unittest discover -s scripts/tests -v
+
   windows:
     name: Windows x64
+    needs: changes
+    if: needs.changes.outputs.native == 'true' || needs.changes.outputs.installer == 'true'
     runs-on: windows-2025
     timeout-minutes: 45
     env:
@@ -30,17 +56,27 @@ jobs:
           rustup toolchain install $toolchain --profile minimal --component rustfmt
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           rustup target add x86_64-pc-windows-msvc --toolchain $toolchain
+      - name: Restore Rust build dependencies
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: windows-x64-tests
+          key: ${{ hashFiles('vendor/**') }}
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Check Rust formatting
+        if: needs.changes.outputs.native == 'true'
         run: cargo fmt --all -- --check
       - name: Test the Windows workspace
+        if: needs.changes.outputs.native == 'true'
         run: cargo test --locked --workspace --target x86_64-pc-windows-msvc
-      - name: Check release tooling
-        run: python -B -m unittest discover -s scripts/tests -v
       - name: Install Inno Setup 6.7
+        if: needs.changes.outputs.installer == 'true'
         run: choco upgrade innosetup --version=6.7.0 --yes --no-progress --allow-downgrade
       - name: Build the installer smoke-test application
+        if: needs.changes.outputs.installer == 'true'
         run: cargo build --locked --target x86_64-pc-windows-msvc -p foldex
       - name: Exercise install, repair, upgrade, downgrade and uninstall
+        if: needs.changes.outputs.installer == 'true'
         shell: pwsh
         run: |
           try {
@@ -54,7 +90,7 @@ jobs:
             }
           }
       - name: Retain installer smoke-test logs
-        if: always()
+        if: always() && needs.changes.outputs.installer == 'true'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: foldex-installer-smoke-logs
@@ -62,84 +98,10 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  test-installer:
-    name: Downloadable PR installer
-    if: github.event_name == 'pull_request'
-    runs-on: windows-2025
-    timeout-minutes: 60
-    env:
-      CARGO_TERM_COLOR: always
-      RUSTFLAGS: -C target-feature=+crt-static
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          ref: ${{ github.event.pull_request.head.sha }}
-      - name: Install the pinned Rust toolchain
-        shell: pwsh
-        run: |
-          $toolchain = python -c "import tomllib; print(tomllib.load(open('rust-toolchain.toml', 'rb'))['toolchain']['channel'])"
-          rustup toolchain install $toolchain --profile minimal
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          rustup target add x86_64-pc-windows-msvc --toolchain $toolchain
-      - name: Install Inno Setup 6.7
-        run: choco upgrade innosetup --version=6.7.0 --yes --no-progress --allow-downgrade
-      - name: Build the PR application
-        run: cargo build --locked --release --target x86_64-pc-windows-msvc -p foldex
-      - name: Package a test installer with license notices
-        shell: python
-        run: |
-          import hashlib
-          import json
-          from pathlib import Path
-          import shutil
-          import subprocess
-          import sys
-          import tempfile
-
-          sys.path.insert(0, str(Path("scripts").resolve()))
-          import package_portable as portable
-
-          version = portable.version()
-          commit = portable.run("git", "rev-parse", "HEAD")
-          source = f"{portable.REPOSITORY}/tree/{commit}"
-          source_archive = f"{portable.REPOSITORY}/archive/{commit}.zip"
-          output = portable.ROOT / "dist" / "pr-installer"
-          output.mkdir(parents=True, exist_ok=True)
-          binary = portable.ROOT / "target" / portable.TARGET / "release" / "foldex.exe"
-          portable.validate_x64(binary.read_bytes())
-          _, packages = portable.runtime_packages()
-          with tempfile.TemporaryDirectory(prefix="foldex-pr-installer-") as temporary:
-              stage = Path(temporary)
-              shutil.copyfile(binary, stage / "Foldex.exe")
-              for name in ("LICENSE", "theme.toml"):
-                  shutil.copyfile(portable.ROOT / name, stage / name)
-              readme = (portable.ROOT / "packaging/windows/installed-README.md").read_text(encoding="utf-8")
-              readme = readme.replace("@VERSION@", version).replace("@SOURCE_URL@", source)
-              readme = readme.replace("@SOURCE_ARCHIVE_URL@", source_archive)
-              (stage / "README.md").write_text("PR TEST BUILD - not a published release.\n\n" + readme, encoding="utf-8")
-              (stage / "foldex-installed.ini").write_text(f"[Installation]\nVersion={version}\n", encoding="utf-8")
-              portable.write_notices(stage, packages)
-              subprocess.run([
-                  r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
-                  f"/DAppVersion={version}", f"/DSourceDir={stage}",
-                  f"/DReleaseDir={output}", str(portable.ROOT / "packaging/windows/foldex.iss"),
-              ], check=True)
-          installer = output / f"Foldex-{version}-windows-x64-setup.exe"
-          if not installer.is_file() or installer.stat().st_size < 1024:
-              raise ValueError("Inno Setup did not produce a complete installer")
-          digest = hashlib.sha256(installer.read_bytes()).hexdigest()
-          print(json.dumps({"installer": installer.name, "sha256": digest, "commit": commit}))
-      - name: Retain the downloadable test installer
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: Foldex-PR-${{ github.event.pull_request.number }}-windows-x64-test-installer
-          path: dist/pr-installer/
-          if-no-files-found: error
-          retention-days: 14
-
   website:
     name: Website
+    needs: changes
+    if: needs.changes.outputs.website == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
