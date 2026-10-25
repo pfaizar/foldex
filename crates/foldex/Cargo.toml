@@ -23,8 +23,9 @@ frizbee = { version = "=0.13.0", default-features = false, features = ["safe_rea
 foldex-assets = { path = "../foldex-assets" }
 foldex-folder-stats = { path = "../foldex-folder-stats" }
 foldex-shell = { path = "../foldex-shell" }
+foldex-update = { path = "../foldex-update" }
 raw-window-handle = "=0.6.2"
-eframe.workspace = true
+eframe = { workspace = true, features = ["links"] }
 egui.workspace = true
 wgpu = { workspace = true, optional = true }
 serde.workspace = true

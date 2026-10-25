@@ -28,6 +28,8 @@ impl Foldex {
             || self.context.is_open()
             || self.picker.is_some()
             || self.options
+            || self.updates.open
+            || self.updates.exit_pending
             || self.options_popup.owns_navigation(&self.ui_context)
             || self.edit.is_some()
             || self.deletion.is_open()

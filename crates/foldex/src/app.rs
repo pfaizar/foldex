@@ -23,6 +23,7 @@ mod lifecycle_tests;
 mod options_ui;
 pub(crate) mod recycle_ui;
 mod stress;
+mod update_ui;
 pub(crate) mod window_transfer;
 pub(crate) mod window_transfer_probe;
 mod workspace_canvas;
@@ -160,6 +161,7 @@ pub struct Foldex {
     sidebar_data: crate::sidebar::Data,
     places: Vec<(Icon, String, PathBuf)>,
     options: bool,
+    updates: crate::updates::Updates,
     options_popup: options_ui::OptionsPopup,
     edit: Option<EditDialog>,
     deletion: deletion_ui::Deletion,
@@ -253,6 +255,18 @@ impl Foldex {
             wake.clone(),
         )?;
         let platform = Platform::new(wake.clone())?;
+        let updates = crate::updates::Updates::new(
+            session_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new("."))
+                .to_owned(),
+            std::env::current_exe()
+                .ok()
+                .and_then(|exe| exe.parent().map(crate::installation::managed))
+                .unwrap_or(false),
+            cfg!(windows) && !cfg!(test) && benchmark.is_none() && !launcher_runtime.isolate,
+            wake.clone(),
+        );
         let mut context = crate::context::ContextMenu::new(wake.clone())?;
         context.set_pins(&session.context_pins);
         let mut assets = if benchmark.as_ref().is_some_and(|run| run.no_shell_assets) {
@@ -458,6 +472,7 @@ impl Foldex {
             sidebar_data,
             places,
             options: false,
+            updates,
             options_popup: options_ui::OptionsPopup::default(),
             edit: None,
             deletion: Default::default(),
@@ -1540,6 +1555,10 @@ impl Foldex {
             if response.closed {
                 self.options = false;
             }
+            if response.updates {
+                self.options = false;
+                self.updates.open = true;
+            }
         }
         if apply_theme {
             self.theme.remember_active_palette();
@@ -1548,6 +1567,14 @@ impl Foldex {
         }
         if save_theme {
             self.options_popup.persist_theme(ctx, &self.theme, true);
+        }
+        let can_install = self.can_install_update();
+        self.updates.ui(ctx, &self.theme, can_install);
+        if self.updates.exit_pending && !self.updates.open {
+            self.cancel_update_exit(
+                ctx,
+                "Update installation was cancelled. Your current version is unchanged.",
+            );
         }
         let mut edit_result = None;
         let mut edit_cancel = false;
@@ -2743,6 +2770,7 @@ impl eframe::App for Foldex {
             // Tray/IPC events and save acknowledgements still need an owner.
             // Keep nonvisual async services (e.g. theme replies/debounce) here.
             self.service_theme(ctx);
+            self.service_updates(ctx);
             self.service_launcher(ctx);
             self.poll(ctx);
             self.service_session(ctx);
@@ -2870,6 +2898,7 @@ impl eframe::App for Foldex {
         let mut stages = [0.0; 5];
         let ctx = ui.ctx().clone();
         self.service_theme(&ctx);
+        self.service_updates(&ctx);
         self.service_launcher(&ctx);
         self.fixes_benchmark_step(&ctx);
         self.launcher_benchmark_step(&ctx);
@@ -2932,7 +2961,7 @@ impl eframe::App for Foldex {
                 .map(|f| f.path().to_path_buf())
                 .collect()
         });
-        if !dropped.is_empty() {
+        if !dropped.is_empty() && !self.updates.exit_pending {
             if self.pane().is_virtual() {
                 self.toast("Open a folder before dropping files", false);
             } else {
@@ -3082,6 +3111,9 @@ impl eframe::App for Foldex {
             self.keyboard(&ctx, true);
         }
         self.dialogs(&ctx);
+        if !self.popup_active() {
+            self.updates.notification(&ctx, &self.theme);
+        }
         self.workspace_dialogs(&ctx);
         self.commands_ui(&ctx);
         self.context_ui(&ctx);
@@ -3478,6 +3510,9 @@ impl Foldex {
                 Ok(()) => self.saved_revision = revision,
                 Err(e) => {
                     let closing = self.close_requested.is_some();
+                    if self.updates.exit_pending {
+                        self.cancel_update_exit(ctx, "The workspace could not be saved. Installation was cancelled; your current version is unchanged.");
+                    }
                     self.close_failed = closing;
                     if closing && !self.explorer_visible {
                         self.show_explorer(ctx);
@@ -3523,18 +3558,42 @@ impl Foldex {
                 }
                 Err(e) => {
                     self.toast(format!("Workspace could not be queued: {e}"), true);
-                    self.save_due = Some(now + Duration::from_millis(50));
+                    if self.updates.exit_pending {
+                        self.cancel_update_exit(ctx, "The workspace could not be queued for saving. Installation was cancelled.");
+                        self.save_due = None;
+                    } else {
+                        self.save_due = Some(now + Duration::from_millis(50));
+                    }
                 }
             }
         }
         if self.close_requested.is_some() && !self.allow_close {
+            if self.updates.exit_pending
+                && let Some(error) = self.options_popup.theme_preferences_error()
+            {
+                let error =
+                    format!("Appearance could not be saved: {error}. Installation was cancelled.");
+                self.cancel_update_exit(ctx, &error);
+                return;
+            }
+            if self.updates.exit_pending && self.platform.update_busy() {
+                self.cancel_update_exit(ctx, "File work started while preparing the update. Finish it, then try installing again.");
+                return;
+            }
             if !self.session_dirty
                 && self.session_revision > 0
                 && self.saved_revision >= self.session_revision
                 && self.options_popup.theme_preferences_saved()
             {
-                self.allow_close = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                if !self.updates.exit_pending || self.updates.arm_handoff() {
+                    self.allow_close = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                } else {
+                    self.cancel_update_exit(
+                        ctx,
+                        "Could not prepare the installer. Check for updates and try again.",
+                    );
+                }
             } else if !self.close_failed {
                 ctx.request_repaint_after(Duration::from_millis(16));
             }

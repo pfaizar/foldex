@@ -1,0 +1,15 @@
+[package]
+name = "foldex-update"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Bounded release discovery and verified installer downloads for Foldex"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+semver = "=1.0.28"
+sha2 = "=0.10.9"
+tempfile = "=3.27.0"
+ureq = { version = "=3.5.0", default-features = false, features = ["rustls", "platform-verifier", "win-system-proxy"] }

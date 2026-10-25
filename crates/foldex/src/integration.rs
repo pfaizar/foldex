@@ -347,6 +347,7 @@ pub fn run(enabled: Option<bool>) -> Result<Status, String> {
     let mut registry = windows::UserRegistry::default();
     if let Some(enabled) = enabled {
         let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+        let executable = std::fs::canonicalize(&executable).unwrap_or(executable);
         let result = apply(&mut registry, &executable, enabled);
         windows::notify();
         result
@@ -359,10 +360,194 @@ pub fn run(_: Option<bool>) -> Result<Status, String> {
     Err("Default file explorer integration is available on Windows.".into())
 }
 
+fn text_value(value: &Value) -> Result<String, String> {
+    if !matches!(value.kind, 1 | 2) || value.bytes.len() % 2 != 0 || value.bytes.len() > MAX_VALUE {
+        return Err("An installer registry value has an unsupported format".into());
+    }
+    let units: Vec<u16> = value
+        .bytes
+        .chunks_exact(2)
+        .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+        .collect();
+    let units = units.strip_suffix(&[0]).unwrap_or(&units);
+    if units.contains(&0) {
+        return Err("An installer registry value contains an embedded null".into());
+    }
+    String::from_utf16(units).map_err(|error| error.to_string())
+}
+
+fn same_directory(a: &str, b: &str) -> bool {
+    let normalize = |value: &str| {
+        let value = value.trim().trim_matches('"').trim_end_matches('\\');
+        value.strip_prefix(r"\\?\").unwrap_or(value).to_lowercase()
+    };
+    normalize(a) == normalize(b)
+}
+
+fn uninstall_with(registry: &mut impl Registry, executable: &Path) -> Result<(), String> {
+    if let Some(backup) = load(registry)? {
+        let expected = plan(executable);
+        // Constant shell values are shared across copies. Only an executable
+        // command proves this backup belongs to the copy being uninstalled.
+        if backup.changes.iter().any(|change| {
+            change.name.is_empty()
+                && change.key.ends_with("\\command")
+                && expected.iter().any(|own| {
+                    own.key == change.key
+                        && (own.applied == change.applied
+                            || text_value(&own.applied)
+                                .ok()
+                                .zip(text_value(&change.applied).ok())
+                                .is_some_and(|(a, b)| a.to_lowercase() == b.to_lowercase()))
+                })
+        }) {
+            restore(registry, &backup)?;
+            registry.remove(BACKUP_KEY, BACKUP_VALUE)?;
+        }
+    }
+    const INSTALLER: &str = r"Software\Foldex\Installer";
+    if let Some(owned) = registry.read(INSTALLER, "OwnedPath")? {
+        let owned = text_value(&owned)?;
+        let directory = executable
+            .parent()
+            .ok_or("Missing installation directory")?
+            .to_string_lossy();
+        if same_directory(&owned, &directory) {
+            if let Some(mut path) = registry.read("Environment", "Path")? {
+                let original = text_value(&path)?;
+                let remaining = original
+                    .split(';')
+                    .filter(|part| !same_directory(part, &owned))
+                    .collect::<Vec<_>>()
+                    .join(";");
+                if original != remaining {
+                    // Preserve REG_SZ / REG_EXPAND_SZ and every unrelated segment.
+                    path.bytes = Value::text(&remaining).bytes;
+                    registry.write("Environment", "Path", &path)?;
+                }
+            }
+            registry.remove(INSTALLER, "OwnedPath")?;
+            registry.remove_empty_key(INSTALLER)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+pub fn uninstall() -> Result<(), String> {
+    let _guard = windows::RegistrationLock::acquire()?;
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let executable = std::fs::canonicalize(&executable).unwrap_or(executable);
+    let result = uninstall_with(&mut windows::UserRegistry::default(), &executable);
+    windows::notify();
+    result
+}
+#[cfg(not(windows))]
+pub fn uninstall() -> Result<(), String> {
+    Err("Uninstall is available on Windows".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::{BTreeMap, BTreeSet};
+
+    #[test]
+    fn uninstall_owns_commands_even_when_the_executable_was_launched_with_different_case() {
+        let mut registry = MemoryRegistry::default();
+        apply(&mut registry, Path::new("C:/Apps/foldex.exe"), true).unwrap();
+        uninstall_with(&mut registry, Path::new("C:/Apps/Foldex.exe")).unwrap();
+        assert!(registry.read(BACKUP_KEY, BACKUP_VALUE).unwrap().is_none());
+        assert!(!inspect(&registry).unwrap().enabled);
+        assert!(same_directory(r"\\?\C:\Apps\Foldex", r"c:\apps\foldex\"));
+    }
+
+    #[test]
+    fn uninstall_removes_only_owned_path_segments_and_preserves_registry_type() {
+        for kind in [1, 2] {
+            let mut registry = MemoryRegistry::default();
+            let mut path = Value::text("%TOOLS%;C:/Apps;C:/Unrelated;;");
+            path.kind = kind;
+            registry.write("Environment", "Path", &path).unwrap();
+            registry
+                .write(
+                    r"Software\Foldex\Installer",
+                    "OwnedPath",
+                    &Value::text("C:/Apps"),
+                )
+                .unwrap();
+            uninstall_with(&mut registry, Path::new("C:/Apps/Foldex.exe")).unwrap();
+            let remaining = registry.read("Environment", "Path").unwrap().unwrap();
+            assert_eq!(remaining.kind, kind);
+            assert_eq!(text_value(&remaining).unwrap(), "%TOOLS%;C:/Unrelated;;");
+            assert!(
+                registry
+                    .read(r"Software\Foldex\Installer", "OwnedPath")
+                    .unwrap()
+                    .is_none()
+            );
+        }
+    }
+
+    #[test]
+    fn uninstall_preserves_a_preexisting_unowned_path_entry() {
+        let mut registry = MemoryRegistry::default();
+        let path = Value::text("C:/Apps;C:/Other");
+        registry.write("Environment", "Path", &path).unwrap();
+        uninstall_with(&mut registry, Path::new("C:/Apps/Foldex.exe")).unwrap();
+        assert_eq!(registry.read("Environment", "Path").unwrap(), Some(path));
+    }
+
+    #[test]
+    fn uninstall_does_not_restore_another_copys_explorer_backup() {
+        let mut registry = MemoryRegistry::default();
+        apply(&mut registry, Path::new("C:/Portable/Foldex.exe"), true).unwrap();
+        let before = registry.read(BACKUP_KEY, BACKUP_VALUE).unwrap();
+        uninstall_with(&mut registry, Path::new("C:/Installed/Foldex.exe")).unwrap();
+        assert_eq!(registry.read(BACKUP_KEY, BACKUP_VALUE).unwrap(), before);
+        assert!(inspect(&registry).unwrap().enabled);
+    }
+
+    #[test]
+    fn uninstall_restores_its_backup_but_preserves_later_foreign_commands() {
+        let mut registry = MemoryRegistry::default();
+        let executable = Path::new("C:/Apps/Foldex.exe");
+        apply(&mut registry, executable, true).unwrap();
+        let foreign = Value::text("another explorer command");
+        registry.write(WIN_E, "", &foreign).unwrap();
+        uninstall_with(&mut registry, executable).unwrap();
+        assert_eq!(registry.read(WIN_E, "").unwrap(), Some(foreign));
+        assert!(registry.read(BACKUP_KEY, BACKUP_VALUE).unwrap().is_none());
+    }
+
+    #[test]
+    fn malformed_path_aborts_cleanup_without_losing_ownership() {
+        let mut registry = MemoryRegistry::default();
+        registry
+            .write(
+                "Environment",
+                "Path",
+                &Value {
+                    kind: 3,
+                    bytes: vec![1],
+                },
+            )
+            .unwrap();
+        registry
+            .write(
+                r"Software\Foldex\Installer",
+                "OwnedPath",
+                &Value::text("C:/Apps"),
+            )
+            .unwrap();
+        assert!(uninstall_with(&mut registry, Path::new("C:/Apps/Foldex.exe")).is_err());
+        assert!(
+            registry
+                .read(r"Software\Foldex\Installer", "OwnedPath")
+                .unwrap()
+                .is_some()
+        );
+    }
     #[derive(Default)]
     struct MemoryRegistry {
         values: BTreeMap<(String, String), Value>,

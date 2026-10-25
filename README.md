@@ -45,10 +45,35 @@ workers keep browsing, icons and folder statistics out of the UI thread.
 Folder scans, filename indexing, native icons and statistics run on bounded
 background workers. Large listings render visible rows rather than creating a
 widget for every file. Search publishes paged results, and caches have explicit
-limits. Foldex works locally and keeps its theme, session and generated cache
-beside the executable.
+limits. Foldex works locally. Installed copies keep preferences in your Windows
+user profile; portable copies keep them beside the executable.
 
 ## Installation
+
+### Windows installer (recommended)
+
+Download `Foldex-VERSION-windows-x64-setup.exe` from
+[GitHub Releases](https://github.com/pfaizar/foldex/releases). The wizard lets you
+choose a folder, add Foldex to your user PATH, and create a desktop shortcut.
+It installs for your Windows account without requesting administrator rights and
+adds a Start menu shortcut and an entry in Windows Settings → Apps.
+
+Options → **Application Updates** checks for new versions and offers **Install
+and restart**. Automatic checks are enabled; automatic downloads and prerelease
+versions are optional. Installation always needs your confirmation and waits for
+file operations and workspace saves. A second installer upgrades the existing
+copy in place; older versions are blocked. Exit other Foldex windows before an
+update. Setup never force closes file operations.
+
+Installed preferences, themes and caches live in `%LOCALAPPDATA%\Foldex\data`.
+Upgrades and repairs preserve them. Uninstall through Windows Settings → Apps
+after exiting Foldex and its tray instance. Uninstall removes the program,
+shortcuts, its owned PATH entry, and restores folder integration belonging to
+this copy. Personal preferences remain; remove `%LOCALAPPDATA%\Foldex` after
+uninstall if you also want to erase them.
+
+Both release formats require Windows 10 x64 (1809+) and compatible DirectX 12
+graphics. Official release builds statically link the Visual C++ runtime.
 
 ### Portable build
 
@@ -57,19 +82,22 @@ Extract the entire ZIP into a writable folder, then open `Foldex.exe`.
 GitHub's **Source code** archives contain source files, not the Windows application.
 The initial `0.x` releases are public previews with limited desktop hardware coverage.
 
-**Requires:** Windows x64, a compatible DirectX 12 graphics adapter/driver, and the
-[Microsoft Visual C++ x64 Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist#latest-supported-redistributable-version).
-
 A portable folder contains `Foldex.exe`, the example `theme.toml`, `README.md`,
 `LICENSE`, `BUILD-INFO.json`, `THIRD-PARTY-NOTICES.md`, and the `licenses` directory.
 The generated `dist` directory is local build output and is not included in Git clones.
 
-The release includes a SHA-256 checksum file for the ZIP. Builds are currently
+The release includes SHA-256 checksums for both downloads. Builds are currently
 unsigned, so Windows may display a publisher or SmartScreen prompt.
 
 You can move the portable folder to a writable location of your choice. Preserve
 `theme.toml` and `foldex-session.json` when updating to keep your appearance,
 bookmarks, workspace and launcher settings.
+
+Portable copies can check for releases in Options; in-app installation is for
+installed copies. To migrate, install Foldex in a separate folder, exit both
+copies, and copy your portable `theme.toml`, `foldex-session.json`, and `themes/`
+into `%LOCALAPPDATA%\Foldex\data`. Turn off Default File Explorer in the portable
+copy first. The installer preserves your portable folder.
 
 If **Default File Explorer** is enabled in Options, turn it off before moving or
 deleting the portable folder so Windows folder and Win+E registrations are restored.
@@ -140,11 +168,12 @@ are not reversible through Foldex history.
 
 ## Personalization and storage
 
-- **Options:** appearance, shortcuts, launcher settings and Windows integration.
-- **`theme.toml`:** an editable theme beside the executable. Reload with `Ctrl+Shift+R`.
+- **Options:** appearance, shortcuts, launcher settings, application updates and Windows integration.
+- **`theme.toml`:** an editable theme in your data folder. Reload with `Ctrl+Shift+R`.
 - **`themes/`:** your saved and imported color schemes. Each theme contains both dark and light colors. Save and share them from Options.
 - **`foldex-session.json`:** saved workspace, bookmarks and preferences.
 - **`foldex-cache/`:** generated search data; it can be removed after exiting Foldex.
+- **`foldex-updates.json`:** update preferences. Installed data lives in `%LOCALAPPDATA%\Foldex\data`; portable data lives beside the executable.
 
 Optional clipboard history stays in memory while Foldex runs. Clear it or disable
 it in Options under Launcher.
@@ -179,8 +208,9 @@ Renderer features are mutually exclusive. Icon exports are committed; see
 [the artwork guide](assets/brand/README.md) if you want to regenerate them.
 Build output and personal settings are excluded from Git.
 
-CI checks Windows x64 and the website. Version tags build and publish portable
-release assets automatically; see [the release guide](docs/RELEASING.md).
+CI checks Windows x64, installer lifecycle behavior and the website. Version tags
+publish the installer and portable ZIP; see [the release guide](docs/RELEASING.md)
+and [installer/updater design and validation](docs/WINDOWS-UPDATES.md).
 
 ## Contributing
 
