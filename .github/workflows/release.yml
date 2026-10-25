@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag to build
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -20,11 +26,12 @@ jobs:
       contents: write
     env:
       CARGO_TERM_COLOR: always
-      RELEASE_TAG: ${{ github.ref_name }}
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
       GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ inputs.tag || github.ref }}
           persist-credentials: false
       - name: Validate the release tag and notes
         run: python -B scripts/package_portable.py --tag "$env:RELEASE_TAG" --validate-only

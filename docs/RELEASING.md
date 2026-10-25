@@ -26,6 +26,13 @@ builds x64 from the tagged source, generates third-party notices, and publishes
 the portable ZIP and SHA-256 checksum file. Versions beginning with `0.` and
 versions containing a prerelease suffix are marked as GitHub prereleases.
 
+To start or retry a build of an existing tag without moving that tag, use the
+Release workflow's **Run workflow** button and supply the tag, or run:
+
+```powershell
+gh workflow run release.yml --repo pfaizar/foldex --ref main -f tag=v0.1.0
+```
+
 Release tags identify published source and must not be moved to different commits.
 Fixes should receive a new version and tag.
 
