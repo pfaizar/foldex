@@ -1,7 +1,10 @@
 ---
 import { getImage } from 'astro:assets';
-import '@fontsource-variable/inter/wght.css';
-import interFont from '@fontsource-variable/inter/files/inter-latin-wght-normal.woff2?url';
+import '@fontsource-variable/geist/wght.css';
+import '@fontsource-variable/geist-mono/wght.css';
+import '@fontsource-variable/geist-pixel/elsh.css';
+import geistFont from '@fontsource-variable/geist/files/geist-latin-wght-normal.woff2?url';
+import pixelFont from '@fontsource-variable/geist-pixel/files/geist-pixel-latin-elsh-normal.woff2?url';
 import socialCard from '../assets/social-card.svg';
 import { site } from '../config/site';
 import { canIndex } from '../config/seo';
@@ -11,12 +14,15 @@ interface Props {
   title?: string;
   description?: string;
   noindex?: boolean;
+  /** Above-the-fold image to fetch early, such as the hero video's poster. */
+  preloadImage?: string;
 }
 
 const {
   title = site.title,
   description = site.description,
   noindex = false,
+  preloadImage,
 } = Astro.props;
 const canonical = Astro.site
   ? new URL(Astro.url.pathname, Astro.site)
@@ -38,12 +44,14 @@ const structuredData = {
   name: site.name,
   description: site.description,
   applicationCategory: 'UtilitiesApplication',
-  operatingSystem: 'Windows',
+  operatingSystem: 'Windows 10, Windows 11',
+  softwareVersion: site.version,
   isAccessibleForFree: true,
   license: 'https://spdx.org/licenses/AGPL-3.0-only.html',
   offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
   ...(canonical && { url: canonical.href }),
-  ...(site.download && { downloadUrl: site.download }),
+  ...(site.installer && { downloadUrl: site.installer.href }),
+  ...(site.installer && { fileSize: site.installer.size }),
 };
 ---
 
@@ -52,7 +60,7 @@ const structuredData = {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#fafafa" />
+    <meta name="theme-color" content="#0b0e10" />
     <title>{title}</title>
     <meta name="description" content={description} />
     <meta
@@ -61,13 +69,18 @@ const structuredData = {
     />
     {canonical && <link rel="canonical" href={canonical} />}
     <link rel="icon" href="/favicon.ico" sizes="any" />
-    <link
-      rel="preload"
-      href={interFont}
-      as="font"
-      type="font/woff2"
-      crossorigin="anonymous"
-    />
+    {[pixelFont, geistFont].map((href) => (
+      <link
+        rel="preload"
+        href={href}
+        as="font"
+        type="font/woff2"
+        crossorigin="anonymous"
+      />
+    ))}
+    {preloadImage && (
+      <link rel="preload" href={preloadImage} as="image" fetchpriority="high" />
+    )}
     {Astro.site && <link rel="sitemap" href="/sitemap-index.xml" />}
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content={site.name} />

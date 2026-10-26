@@ -1,20 +1,29 @@
 :root {
   color-scheme: light;
-  --bg: #fafafa;
-  --text: #202020;
-  --muted: #686868;
-  --subtle: #727272;
-  --accent: #235c85;
-  --line: #e5e5e5;
-  --line-strong: #d8d8d8;
-  --gutter: clamp(24px, 5.8vw, 76px);
-  --page-width: 1120px;
-  font-family:
-    'Inter Variable',
-    -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    sans-serif;
+  /* Neutrals are tinted toward the app's Graphite blue-grey. */
+  --paper: #eceeed;
+  --paper-2: #e2e5e4;
+  --ink: #101315;
+  --ink-2: #3d4549;
+  --muted: #646d71;
+  --line: #cfd5d5;
+  --night: #0b0e10;
+  --night-2: #15191c;
+  --night-line: #262d31;
+  --night-text: #c9d1d4;
+  /* The app's Graphite accent and folder colours. */
+  --teal: #17a1cc;
+  --teal-ink: #0a6e8e;
+  --yellow: #ffcd4f;
+  --folder-back: color-mix(in srgb, var(--yellow) 72%, #7a4300);
+  --radius: 10px;
+  --gutter: clamp(16px, 4vw, 56px);
+  --page: 1280px;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --font-sans: 'Geist Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', 'Cascadia Mono', Consolas, monospace;
+  --font-pixel: 'Geist Pixel Variable', 'Geist Mono Variable', monospace;
+  font-family: var(--font-sans);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -24,66 +33,72 @@
 }
 html {
   scroll-behavior: smooth;
-  scroll-padding-top: 40px;
+  scroll-padding-top: 72px;
 }
 body {
   margin: 0;
-  background: var(--bg);
-  color: var(--text);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1.5;
 }
 a {
   color: inherit;
   text-decoration: none;
 }
-button,
-input,
-summary {
+button {
   font: inherit;
+  color: inherit;
 }
 button,
-a,
-summary {
+a {
   touch-action: manipulation;
 }
 svg,
-img {
+img,
+video,
+canvas {
   display: block;
 }
-img {
+img,
+video {
   max-width: 100%;
   height: auto;
 }
 ::selection {
-  background: #dae6ed;
-  color: #202020;
+  background: var(--yellow);
+  color: var(--ink);
 }
 [hidden] {
   display: none !important;
 }
 :focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 5px;
+  outline: 2px solid var(--teal);
+  outline-offset: 3px;
 }
-.container {
-  width: min(var(--page-width), calc(100% - var(--gutter) * 2));
-  margin-inline: auto;
-}
-.section {
-  padding-block: 80px;
-}
-h2 {
+h1,
+h2,
+h3 {
   margin: 0;
-  font-size: 32px;
   font-weight: 400;
-  letter-spacing: -0.025em;
-  line-height: 1.18;
   text-wrap: balance;
 }
-section[id] {
-  scroll-margin-top: 40px;
-}
 p {
+  margin: 0;
   text-wrap: pretty;
+}
+.wrap {
+  width: min(var(--page), 100% - var(--gutter) * 2);
+  margin-inline: auto;
+}
+.pixel {
+  font-family: var(--font-pixel);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 .sr-only {
   position: absolute;
@@ -100,25 +115,51 @@ p {
   position: fixed;
   z-index: 100;
   top: 10px;
-  left: 20px;
-  padding: 12px 18px;
-  border-radius: 4px;
-  background: #202020;
-  color: #fff;
+  left: 16px;
+  padding: 10px 16px;
+  background: var(--yellow);
+  color: var(--ink);
   transform: translateY(-200%);
   font-size: 14px;
 }
 .skip-link:focus {
-  transform: translateY(0);
+  transform: none;
 }
-@media (max-width: 720px) {
-  .section {
-    padding-block: 56px;
-  }
-  h2 {
-    font-size: 28px;
-  }
+
+/* Keycaps: the app's kbd chips, slightly raised. */
+.key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.9em;
+  height: 1.9em;
+  padding-inline: 0.5em;
+  border: 1px solid currentColor;
+  border-bottom-width: 3px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    transform 80ms var(--ease-out),
+    border-bottom-width 80ms var(--ease-out),
+    background-color 80ms var(--ease-out);
 }
+.key.is-down {
+  transform: translateY(2px);
+  border-bottom-width: 1px;
+  background: color-mix(in srgb, var(--teal) 30%, transparent);
+}
+
+/* A dithered edge between two section colours. Set --from to the colour above. */
+.dither-edge {
+  height: 64px;
+  background: var(--from);
+  -webkit-mask: url('/dither/fade.png') 0 0 / 32px 64px repeat-x;
+  mask: url('/dither/fade.png') 0 0 / 32px 64px repeat-x;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;

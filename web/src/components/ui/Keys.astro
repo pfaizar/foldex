@@ -1,0 +1,53 @@
+---
+// Keycaps for a shortcut. Every cap on the page goes down while the visitor
+// holds that key, so the shortcuts can be tried out on the page itself.
+import { keyId } from '../../data/keys';
+
+interface Props {
+  keys: string[];
+  class?: string;
+}
+const { keys, class: className, ...rest } = Astro.props;
+---
+
+<kbd {...rest} class:list={['keys', className]}>
+  {keys.map((key) => (
+    <kbd class="key" data-key={keyId(key)}>
+      {key}
+    </kbd>
+  ))}
+</kbd>
+
+<script>
+  import { eventKeyId } from '../../data/keys';
+
+  const held = new Set<string>();
+  const paint = () =>
+    document
+      .querySelectorAll<HTMLElement>('.key[data-key]')
+      .forEach((cap) =>
+        cap.classList.toggle('is-down', held.has(cap.dataset.key!)),
+      );
+  addEventListener('keydown', (event) => {
+    held.add(eventKeyId(event));
+    paint();
+  });
+  addEventListener('keyup', (event) => {
+    held.delete(eventKeyId(event));
+    // Releasing a modifier can swallow the other key's keyup.
+    if (['Control', 'Alt', 'Shift', 'Meta'].includes(event.key)) held.clear();
+    paint();
+  });
+  addEventListener('blur', () => {
+    held.clear();
+    paint();
+  });
+</script>
+
+<style>
+  .keys {
+    display: inline-flex;
+    gap: 4px;
+    font: inherit;
+  }
+</style>

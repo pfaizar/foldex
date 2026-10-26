@@ -1,0 +1,37 @@
+---
+// The yellow folder Foldex draws in its file lists and tabs.
+interface Props {
+  size?: number;
+  class?: string;
+}
+const { size = 16, class: className } = Astro.props;
+---
+
+<svg
+  class:list={['folder', className]}
+  viewBox="0 0 16 16"
+  width={size}
+  height={size}
+  aria-hidden="true"
+>
+  <path
+    d="M1 3.4C1 2.6 1.6 2 2.4 2h3.5l1.6 1.6h6.1c.8 0 1.4.6 1.4 1.4v1H1z"
+    class="back"
+  ></path>
+  <path
+    d="M1 5.4h14v7.2c0 .8-.6 1.4-1.4 1.4H2.4c-.8 0-1.4-.6-1.4-1.4z"
+    class="front"
+  ></path>
+</svg>
+
+<style>
+  .folder {
+    flex-shrink: 0;
+  }
+  .back {
+    fill: var(--folder-back);
+  }
+  .front {
+    fill: var(--yellow);
+  }
+</style>
