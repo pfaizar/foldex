@@ -67,6 +67,7 @@ pub enum Icon {
     Picture,
     Window,
     Calculator,
+    Filter,
 }
 
 pub fn icon(p: &egui::Painter, center: Pos2, icon: Icon, color: Color32, size: f32) {
@@ -110,6 +111,19 @@ pub fn icon(p: &egui::Painter, center: Pos2, icon: Icon, color: Color32, size: f
             }
         }
         Icon::Empty => {}
+        Icon::Filter => {
+            p.add(egui::Shape::closed_line(
+                vec![
+                    q(0.08, 0.14),
+                    q(0.92, 0.14),
+                    q(0.60, 0.52),
+                    q(0.60, 0.86),
+                    q(0.40, 0.76),
+                    q(0.40, 0.52),
+                ],
+                s,
+            ));
+        }
         Icon::Recursive => {
             // Two folder branches keep recursive search distinct from zoom or
             // window expansion, including at the footer's small control size.

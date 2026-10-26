@@ -1848,6 +1848,7 @@ fn icon_button_label(glyph: Icon) -> &'static str {
         Icon::Picture => "Preview",
         Icon::Window => "Open window",
         Icon::Calculator => "Calculator",
+        Icon::Filter => "Search conditions",
         Icon::Folder => "Open folder",
         Icon::File => "Open file",
         Icon::Image => "Open image",

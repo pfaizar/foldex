@@ -144,6 +144,7 @@ pub(super) struct FooterLayout {
     pub search: Rect,
     pub filter: Rect,
     pub expand: Rect,
+    pub conditions: Rect,
     pub clear: Rect,
     pub status: Rect,
     pub folders: Rect,
@@ -158,6 +159,7 @@ impl Default for FooterLayout {
             search: Rect::ZERO,
             filter: Rect::ZERO,
             expand: Rect::ZERO,
+            conditions: Rect::ZERO,
             clear: Rect::ZERO,
             status: Rect::ZERO,
             folders: Rect::ZERO,
@@ -227,17 +229,21 @@ impl FooterLayout {
         let folders =
             Rect::from_min_max(pos2(count_left, inner.top()), pos2(split, inner.bottom()));
         let files = Rect::from_min_max(pos2(split, inner.top()), pos2(count_right, inner.bottom()));
-        let expand_width = if expand_control {
-            (24.0 * scale).min(search_width * 0.28)
+        let tool_width = if expand_control {
+            (24.0 * scale).min(search_width * 0.2)
         } else {
             0.0
         };
-        let expand = Rect::from_min_max(
+        let conditions = Rect::from_min_max(
             pos2(
-                base_search.right() - expand_width - 2.0 * scale,
+                base_search.right() - tool_width - 2.0 * scale,
                 search.top() + 2.0 * scale,
             ),
             base_search.max - vec2(2.0, 2.0) * scale,
+        );
+        let expand = Rect::from_min_max(
+            pos2(conditions.left() - tool_width, conditions.top()),
+            pos2(conditions.left(), conditions.bottom()),
         );
         let clear = Rect::from_min_size(
             pos2(base_search.right() - 2.0 * scale, expand.top()),
@@ -254,6 +260,7 @@ impl FooterLayout {
             search,
             filter,
             expand,
+            conditions,
             clear,
             status,
             folders,
@@ -559,25 +566,22 @@ impl Pane {
                 .rect_stroke(rect, radius, Stroke::new(1.0, t.line()), StrokeKind::Inside);
         }
         if !home && !self.is_recycle_bin() {
-            let tools = Rect::from_min_size(
-                pos2(layout.search.right() + 4.0 * scale, layout.search.top()),
-                vec2(24.0 * scale, layout.search.height()),
-            );
-            if tools.right() < layout.status.left() {
+            let tools = layout.conditions;
+            if tools.width() > 1.0 {
                 let response = icon_button_at(
                     ui,
                     tools,
                     Id::new((self.id, "search-conditions")),
                     t,
-                    Icon::Search,
+                    Icon::Filter,
                     !self.query.conditions.is_empty(),
                 )
-                .on_hover_text("Search conditions and saved collections");
+                .on_hover_text("Search conditions");
                 response.widget_info(|| {
                     egui::WidgetInfo::labeled(
                         egui::WidgetType::Button,
                         ui.is_enabled(),
-                        "Search conditions and saved collections",
+                        "Search conditions",
                     )
                 });
                 crate::keyboard::register(
@@ -862,7 +866,7 @@ impl Pane {
         );
         if !home && !self.is_recycle_bin() {
             response.context_menu(|ui| {
-                if ui.button("Search conditions / save collection…").clicked() {
+                if ui.button("Search conditions…").clicked() {
                     self.deferred_action = Some(Action::SearchBuilder);
                     ui.close();
                 }
