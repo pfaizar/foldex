@@ -599,8 +599,8 @@ mod imp {
             {
                 error = Some("Windows could not add Foldex to the system tray".into());
             }
-            if let Some((modifiers, key)) = parse_hotkey(&hotkey)
-                .filter(|(modifiers, _)| modifiers & MOD_WIN != 0)
+            if let Some((modifiers, key)) =
+                parse_hotkey(&hotkey).filter(|(modifiers, _)| modifiers & MOD_WIN != 0)
             {
                 if hook_win_chord(data, hwnd, modifiers, key) {
                     replace_hotkey(

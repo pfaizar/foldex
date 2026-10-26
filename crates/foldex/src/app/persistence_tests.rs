@@ -62,7 +62,8 @@ fn shared_hotkey_refresh_keeps_the_window_attached_shortcut_recorder() {
     // An invalid owner never holds focus, so an attached recorder refuses to
     // start. A detached one would silently record without the keyboard hook.
     app.hotkeys.attach_native_capture(-1);
-    let mut session: Session = serde_json::from_value(serde_json::to_value(app.session_snapshot()).unwrap()).unwrap();
+    let mut session: Session =
+        serde_json::from_value(serde_json::to_value(app.session_snapshot()).unwrap()).unwrap();
     session.hotkeys = Some(vec![crate::hotkeys::Binding::single(
         crate::commands::Command::Refresh,
         egui::Key::F9,
