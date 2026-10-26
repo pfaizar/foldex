@@ -1,0 +1,971 @@
+{
+  "environment": "Linux dev profile; warm file cache; full 768-row windows; synthetic 100k names and 150k real empty files; no Windows/GPU latency claim",
+  "improved": true,
+  "records": [
+    {
+      "filename_exposed": true,
+      "labels": [
+        "audit-accessible-document.txt",
+        "Files in C:/audit",
+        "audit-accessible-document.txt",
+        "Files in C:/audit",
+        "audit-accessible-document.txt",
+        "Files in C:/audit"
+      ],
+      "nodes_over_three_frames": 27,
+      "probe": "listing_accessibility"
+    },
+    {
+      "elapsed_ms": 10.016306,
+      "offset": 0,
+      "phase": "first",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 9.856193,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 2.292086,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 114.640726,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 2.0829809999999997,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 11.821033,
+      "offset": 0,
+      "phase": "first",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 12.62509,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 1.681205,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 124.537022,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 2.0885000000000002,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 10.869863,
+      "offset": 0,
+      "phase": "first",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 11.688458,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 1.965394,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 121.021029,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 2.171625,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 8.007275,
+      "offset": 0,
+      "phase": "first",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 9.876885999999999,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 2.405949,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 107.847162,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 3.420488,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 13.949938,
+      "offset": 0,
+      "phase": "first",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 16.928023,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 2.103542,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 127.052886,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 2.1474889999999998,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 15.235235999999999,
+      "offset": 0,
+      "phase": "first",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 15.72188,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 1.837191,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 121.466221,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 2.193137,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 8.455752,
+      "offset": 0,
+      "phase": "first",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 9.060698,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 2.007107,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 105.19424199999999,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 2.136472,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 15.980169999999998,
+      "offset": 0,
+      "phase": "first",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 15.175175000000001,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 2.103902,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 129.181616,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 2.4129989999999997,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 11.899205,
+      "offset": 0,
+      "phase": "first",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 13.208559,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 1.990312,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 119.80137,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 2.290064,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 8.764357,
+      "offset": 0,
+      "phase": "first",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 9.591575,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 1.863731,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 102.683024,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 2.24738,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 12.575205,
+      "offset": 0,
+      "phase": "first",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 13.224985,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 2.139987,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 124.977806,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 2.106607,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 15.116501,
+      "offset": 0,
+      "phase": "first",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 16.361595,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 1.912614,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 141.928324,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 2.096972,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 8.303002000000001,
+      "offset": 0,
+      "phase": "first",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 8.995957,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 1.699333,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 122.598238,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 2.109321,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "complete_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 13.886631999999999,
+      "offset": 0,
+      "phase": "first",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 15.094063,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 2.030092,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 140.314546,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 2.3135489999999996,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "complete_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 12.840554000000001,
+      "offset": 0,
+      "phase": "first",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 13.844168,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 1.695937,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 124.159673,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 2.399508,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "complete_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "complete": false,
+      "created": 150000,
+      "elapsed_ms": 255.78653699999998,
+      "filename_bytes": 121,
+      "filter_matches": 0,
+      "limit": "Some(MemoryBudget)",
+      "model_bytes": 49367721,
+      "probe": "bounded_directory",
+      "rows": 126542
+    },
+    {
+      "complete": true,
+      "created": 150000,
+      "elapsed_ms": 298.84164699999997,
+      "filter_matches": 1,
+      "probe": "continued_directory",
+      "rows": 150000
+    },
+    {
+      "changed_ancestor_metadata_reads": 1,
+      "copied_bytes": 0,
+      "elapsed_ms": 58.369205,
+      "enumerated_entries": 0,
+      "probe": "metadata_refresh",
+      "records": 150000,
+      "retired_rows": 1,
+      "reused_shards": 74,
+      "run": 0
+    },
+    {
+      "changed_ancestor_metadata_reads": 1,
+      "copied_bytes": 0,
+      "elapsed_ms": 56.44228,
+      "enumerated_entries": 0,
+      "probe": "metadata_refresh",
+      "records": 150000,
+      "retired_rows": 1,
+      "reused_shards": 75,
+      "run": 1
+    },
+    {
+      "changed_ancestor_metadata_reads": 1,
+      "copied_bytes": 0,
+      "elapsed_ms": 57.551413000000004,
+      "enumerated_entries": 0,
+      "probe": "metadata_refresh",
+      "records": 150000,
+      "retired_rows": 1,
+      "reused_shards": 76,
+      "run": 2
+    },
+    {
+      "changed_ancestor_metadata_reads": 1,
+      "copied_bytes": 0,
+      "elapsed_ms": 57.06543,
+      "enumerated_entries": 0,
+      "probe": "metadata_refresh",
+      "records": 150000,
+      "retired_rows": 1,
+      "reused_shards": 77,
+      "run": 3
+    },
+    {
+      "changed_ancestor_metadata_reads": 1,
+      "copied_bytes": 0,
+      "elapsed_ms": 57.197508,
+      "enumerated_entries": 0,
+      "probe": "metadata_refresh",
+      "records": 150000,
+      "retired_rows": 1,
+      "reused_shards": 78,
+      "run": 4
+    }
+  ],
+  "medians": [
+    {
+      "probe": "complete_window",
+      "query": "",
+      "phase": "first",
+      "runs": 5,
+      "median_ms": 8.455752
+    },
+    {
+      "probe": "complete_window",
+      "query": "",
+      "phase": "nearby_crossing",
+      "runs": 5,
+      "median_ms": 9.591575
+    },
+    {
+      "probe": "complete_window",
+      "query": "",
+      "phase": "cross_head",
+      "runs": 5,
+      "median_ms": 2.007107
+    },
+    {
+      "probe": "complete_window",
+      "query": "",
+      "phase": "arbitrary_seek",
+      "runs": 5,
+      "median_ms": 107.847162
+    },
+    {
+      "probe": "complete_window",
+      "query": "",
+      "phase": "warm_deep",
+      "runs": 5,
+      "median_ms": 2.136472
+    },
+    {
+      "probe": "complete_window",
+      "query": "report",
+      "phase": "first",
+      "runs": 5,
+      "median_ms": 13.886631999999999
+    },
+    {
+      "probe": "complete_window",
+      "query": "report",
+      "phase": "nearby_crossing",
+      "runs": 5,
+      "median_ms": 15.094063
+    },
+    {
+      "probe": "complete_window",
+      "query": "report",
+      "phase": "cross_head",
+      "runs": 5,
+      "median_ms": 2.103542
+    },
+    {
+      "probe": "complete_window",
+      "query": "report",
+      "phase": "arbitrary_seek",
+      "runs": 5,
+      "median_ms": 127.052886
+    },
+    {
+      "probe": "complete_window",
+      "query": "report",
+      "phase": "warm_deep",
+      "runs": 5,
+      "median_ms": 2.1474889999999998
+    },
+    {
+      "probe": "complete_window",
+      "query": "rpt",
+      "phase": "first",
+      "runs": 5,
+      "median_ms": 12.840554000000001
+    },
+    {
+      "probe": "complete_window",
+      "query": "rpt",
+      "phase": "nearby_crossing",
+      "runs": 5,
+      "median_ms": 13.844168
+    },
+    {
+      "probe": "complete_window",
+      "query": "rpt",
+      "phase": "cross_head",
+      "runs": 5,
+      "median_ms": 1.912614
+    },
+    {
+      "probe": "complete_window",
+      "query": "rpt",
+      "phase": "arbitrary_seek",
+      "runs": 5,
+      "median_ms": 121.466221
+    },
+    {
+      "probe": "complete_window",
+      "query": "rpt",
+      "phase": "warm_deep",
+      "runs": 5,
+      "median_ms": 2.193137
+    },
+    {
+      "probe": "bounded_directory",
+      "query": null,
+      "phase": null,
+      "runs": 1,
+      "median_ms": 255.78653699999998
+    },
+    {
+      "probe": "continued_directory",
+      "query": null,
+      "phase": null,
+      "runs": 1,
+      "median_ms": 298.84164699999997
+    },
+    {
+      "probe": "metadata_refresh",
+      "query": null,
+      "phase": null,
+      "runs": 5,
+      "median_ms": 57.197508
+    }
+  ]
+}

@@ -100,6 +100,159 @@
         "windows_gnu_app_and_test_check": "passed",
         "windows_runtime": "pending"
       }
+    },
+    {
+      "stage": 5,
+      "name": "Complete listings, bounded queries and immutable metadata deltas",
+      "before": {
+        "reachable_directory_rows": 126542,
+        "omitted_exact_match": 0,
+        "report_cross_boundary_768_rows_ms": 123.196341,
+        "report_three_window_sequence_ms": 153.034349,
+        "report_five_window_sequence_ms": 158.183244,
+        "full_refresh_median_ms": 218.671087,
+        "filesystem_entries_enumerated_per_refresh": 150000
+      },
+      "after": {
+        "reachable_directory_rows": 150000,
+        "omitted_exact_match": 1,
+        "report_cross_boundary_768_rows_ms": 2.103542,
+        "report_three_window_sequence_ms": 31.010787,
+        "report_five_window_sequence_ms": 162.181878,
+        "metadata_delta_median_ms": 57.197508,
+        "filesystem_entries_enumerated_per_delta": 0,
+        "targeted_changed_ancestor_metadata_reads": 1,
+        "metadata_metric_excludes": "root/cache identity checks and private-catalog scans",
+        "separate_query_workers": 2,
+        "separate_metadata_workers": 2,
+        "full_traversal_permits": 2,
+        "continuation_cache_within_existing_head_budget": true
+      },
+      "limits": "The first arbitrary seek now pays the deferred ordered-cache build. First-window latency and total sequence CPU time are not universally lower. See RESULTS.md and all raw samples."
+    },
+    {
+      "stage": 6,
+      "name": "Structured search and saved collections",
+      "after": {
+        "shared_predicates_across_three_backends": true,
+        "calendar_dates_and_relative_days": true,
+        "traversal_pruning": true,
+        "saved_collection_limit": 32,
+        "persistent_search_routes": true,
+        "keyboard_registered_sidebar_controls": true,
+        "handoff_budget_bytes": 4194304
+      }
+    },
+    {
+      "stage": 7,
+      "name": "Accessible virtual listings",
+      "before": {
+        "filename_exposed": false,
+        "nodes_over_three_frames": 21
+      },
+      "after": {
+        "filename_exposed": true,
+        "nodes_over_three_frames": 27,
+        "visible_row_bound": 512,
+        "additional_loaded_focused_row": 1,
+        "stable_raw_identity": true,
+        "focus_selection_scroll_keyboard_and_custom_activation": true
+      }
+    },
+    {
+      "stage": 8,
+      "name": "Shared filesystem capabilities",
+      "after": {
+        "name_surrogate_cloud_unknown_classification": true,
+        "metadata_content_policies_separate": true,
+        "cloud_availability_in_ordinary_and_paged_rows": true,
+        "cache_only_online_thumbnails": true,
+        "background_preview_requires_local_hydrated_content": true,
+        "logical_offline_sizes_without_content_reads": true,
+        "native_identity_checks_for_differently_spelled_scope_aliases": true
+      },
+      "runtime_limits": "Classification fixtures and cross-compilation are validated. Real provider/Narrator behavior is not claimed."
     }
-  ]
+  ],
+  "integrated_validation": {
+    "upstream_merged": "a3d2e8bc259c691ee51d8a7efe98c6e4406ae3d6",
+    "portable_workspace_tests_passed": 934,
+    "portable_app_tests_passed": 668,
+    "platform_exclusions": 2,
+    "ignored_opt_in_benchmarks": 2,
+    "windows_gnu_workspace_and_test_sources": "passed",
+    "ci_tooling_tests_passed": 23,
+    "windows_msvc_runtime_ci": "pending PR creation",
+    "manual_acceptance": [
+      "Narrator/NVDA speech and interaction",
+      "real cloud provider callbacks and hydration",
+      "Windows release GPU/frame latency on reference hardware"
+    ]
+  },
+  "final_persistence_fixture": {
+    "original_baseline_pretty_bytes": 339555,
+    "current_schema_pretty_bytes": 339579,
+    "current_compact_bytes": 74022,
+    "workspace_bytes": 56833,
+    "shared_preferences_bytes": 17231,
+    "stored_total_bytes": 74064,
+    "tabs": 4,
+    "navigation_entries_per_tab": 64,
+    "saved_layouts": 3
+  },
+  "query_worker_lane_comparison": {
+    "records": 100000,
+    "window_rows": 768,
+    "runs": 5,
+    "poll_ms": 1,
+    "query": "report",
+    "results": {
+      "before": {
+        "first": {
+          "complete_window_ms": 12.1488,
+          "first_coordinator_turn_ms": 12.148739
+        },
+        "nearby_crossing": {
+          "complete_window_ms": 19.399805999999998,
+          "first_coordinator_turn_ms": 19.399625
+        },
+        "cross_head": {
+          "complete_window_ms": 122.94493700000001,
+          "first_coordinator_turn_ms": 122.944727
+        },
+        "arbitrary_seek": {
+          "complete_window_ms": 3.2935019999999997,
+          "first_coordinator_turn_ms": 3.293442
+        },
+        "warm_deep": {
+          "complete_window_ms": 2.355325,
+          "first_coordinator_turn_ms": 2.355295
+        }
+      },
+      "after": {
+        "first": {
+          "complete_window_ms": 14.440100000000001,
+          "first_coordinator_turn_ms": 0.018258
+        },
+        "nearby_crossing": {
+          "complete_window_ms": 15.182295,
+          "first_coordinator_turn_ms": 0.017306
+        },
+        "cross_head": {
+          "complete_window_ms": 2.4999599999999997,
+          "first_coordinator_turn_ms": 0.01323
+        },
+        "arbitrary_seek": {
+          "complete_window_ms": 129.598116,
+          "first_coordinator_turn_ms": 0.011718000000000001
+        },
+        "warm_deep": {
+          "complete_window_ms": 2.4839049999999996,
+          "first_coordinator_turn_ms": 0.018758
+        }
+      }
+    },
+    "idle_reader_bound": 2,
+    "idle_readers_shared_between_workers": true
+  }
 }

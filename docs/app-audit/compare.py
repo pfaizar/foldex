@@ -53,7 +53,7 @@ def additions(repo, improved):
             path = repo / target
             original = path.read_bytes()
             if b"mod app_comparison_probes" in original: raise RuntimeError("Probe already appended")
-            addition = (HERE / "probes" / probe).read_text().replace("/* AFTER_DIRECTORY */", AFTER if improved else "").replace("/* BEFORE_REFRESH */", "" if improved else BEFORE).encode()
+            addition = (HERE / "probes" / probe).read_text().replace("/* AFTER_DIRECTORY */", AFTER if improved else "").replace("/* BEFORE_REFRESH */", "" if improved else BEFORE).replace("/* POOL_SETUP */", "let pool = paging::Pool::new(hub.shared.clone()).unwrap();" if improved else "").replace("/* POOL_DROP */", "drop(pool);" if improved else "").replace("/* STEP_CALL */", "context.step(&cache_base, false, &cancel, &cancel, Some(&pool)).unwrap()" if improved else "context.step(&cache_base, false, &cancel, &cancel).unwrap()").encode()
             expected = original + addition
             originals.append((path, original, expected))
             path.write_bytes(expected)
@@ -69,11 +69,12 @@ def main():
     parser.add_argument("--improved", action="store_true")
     parser.add_argument("--cargo", default="cargo")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--mode", choices=["all", "coordinator"], default="all")
     parser.add_argument("--runs", type=int, default=5)
     args = parser.parse_args()
     if not 1 <= args.runs <= 10: parser.error("--runs must be 1–10")
     env = dict(os.environ, FOLDEX_COMPARISON_RUNS=str(args.runs))
-    command = [args.cargo, "test", "--locked", "--offline", "-p", "foldex", "--no-default-features", "--features", "renderer-glow", "app_comparison_", "--", "--nocapture", "--test-threads=1"]
+    command = [args.cargo, "test", "--locked", "--offline", "-p", "foldex", "--no-default-features", "--features", "renderer-glow", "app_comparison_query_lane" if args.mode == "coordinator" else "app_comparison_", "--", "--nocapture", "--test-threads=1"]
     with additions(args.repo, args.improved):
         result = subprocess.run(command, cwd=args.repo, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     args.output.with_suffix(".log").write_text(result.stdout)
@@ -83,6 +84,6 @@ def main():
     for row in records:
         if "elapsed_ms" in row: groups.setdefault((row["probe"], row.get("query"), row.get("phase")), []).append(row["elapsed_ms"])
     medians = [{"probe": key[0], "query": key[1], "phase": key[2], "runs":len(times), "median_ms":statistics.median(times)} for key, times in groups.items()]
-    args.output.write_text(json.dumps({"environment":"Linux dev profile; warm file cache; full 768-row windows; synthetic 100k names and 150k real empty files; no Windows/GPU latency claim", "improved":args.improved, "records":records, "medians":medians}, indent=2)+"\n")
+    args.output.write_text(json.dumps({"environment":("Linux development profile; 100k synthetic names; Context.step query-worker lane; 1ms polling; no Windows/GPU latency claim" if args.mode == "coordinator" else "Linux dev profile; warm file cache; full 768-row windows; synthetic 100k names and 150k real empty files; no Windows/GPU latency claim"), "improved":args.improved, "records":records, "medians":medians}, indent=2)+"\n")
     print(json.dumps({"records":len(records), "output":str(args.output)}))
 if __name__ == "__main__": main()

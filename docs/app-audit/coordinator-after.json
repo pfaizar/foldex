@@ -1,0 +1,939 @@
+{
+  "environment": "Linux development profile; 100k synthetic names; full 768-row windows through Context.step; 1ms coordinator polling while pending; no Windows/GPU latency claim",
+  "improved": true,
+  "records": [
+    {
+      "elapsed_ms": 14.750734,
+      "first_coordinator_turn_ms": 0.032509,
+      "offset": 0,
+      "phase": "first",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 11.042622,
+      "first_coordinator_turn_ms": 0.020241000000000002,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 2.6553039999999997,
+      "first_coordinator_turn_ms": 0.015243,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 99.798925,
+      "first_coordinator_turn_ms": 0.013411,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 3.9781699999999995,
+      "first_coordinator_turn_ms": 0.023606000000000002,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 14.440100000000001,
+      "first_coordinator_turn_ms": 0.016515000000000002,
+      "offset": 0,
+      "phase": "first",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 19.674278,
+      "first_coordinator_turn_ms": 0.025117999999999998,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 2.4629339999999997,
+      "first_coordinator_turn_ms": 0.007401,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 142.5083,
+      "first_coordinator_turn_ms": 0.015302999999999999,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 2.4603810000000004,
+      "first_coordinator_turn_ms": 0.010846999999999999,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 12.154577999999999,
+      "first_coordinator_turn_ms": 0.017106,
+      "offset": 0,
+      "phase": "first",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 13.484836,
+      "first_coordinator_turn_ms": 0.115204,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 2.482203,
+      "first_coordinator_turn_ms": 0.03272,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 121.710987,
+      "first_coordinator_turn_ms": 0.016996,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 2.4693739999999997,
+      "first_coordinator_turn_ms": 0.019489,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 0
+    },
+    {
+      "elapsed_ms": 8.975895,
+      "first_coordinator_turn_ms": 0.021021,
+      "offset": 0,
+      "phase": "first",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 10.097427000000001,
+      "first_coordinator_turn_ms": 0.016784999999999998,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 2.503886,
+      "first_coordinator_turn_ms": 0.021352000000000003,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 102.479717,
+      "first_coordinator_turn_ms": 0.012238,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 3.562112,
+      "first_coordinator_turn_ms": 0.02003,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 13.288048,
+      "first_coordinator_turn_ms": 0.018258,
+      "offset": 0,
+      "phase": "first",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 16.939238999999997,
+      "first_coordinator_turn_ms": 0.021703,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 2.532439,
+      "first_coordinator_turn_ms": 0.012147999999999999,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 124.003064,
+      "first_coordinator_turn_ms": 0.009554,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 3.608141,
+      "first_coordinator_turn_ms": 0.018758,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 12.558116,
+      "first_coordinator_turn_ms": 0.015813,
+      "offset": 0,
+      "phase": "first",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 12.91103,
+      "first_coordinator_turn_ms": 0.012789,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 2.582905,
+      "first_coordinator_turn_ms": 0.007501,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 124.15299,
+      "first_coordinator_turn_ms": 0.010476,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 3.622157,
+      "first_coordinator_turn_ms": 0.013631,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 1
+    },
+    {
+      "elapsed_ms": 8.583222999999998,
+      "first_coordinator_turn_ms": 0.022024000000000002,
+      "offset": 0,
+      "phase": "first",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 8.647711000000001,
+      "first_coordinator_turn_ms": 0.011457,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 2.467711,
+      "first_coordinator_turn_ms": 0.011888000000000001,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 99.57447599999999,
+      "first_coordinator_turn_ms": 0.008713,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 2.535905,
+      "first_coordinator_turn_ms": 0.033411,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 14.405013,
+      "first_coordinator_turn_ms": 0.017216,
+      "offset": 0,
+      "phase": "first",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 14.902201999999999,
+      "first_coordinator_turn_ms": 0.008282,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 2.4999599999999997,
+      "first_coordinator_turn_ms": 0.01323,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 143.226162,
+      "first_coordinator_turn_ms": 0.003626,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 3.601791,
+      "first_coordinator_turn_ms": 0.021703,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 11.718641,
+      "first_coordinator_turn_ms": 0.017145,
+      "offset": 0,
+      "phase": "first",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 12.0427,
+      "first_coordinator_turn_ms": 0.018548,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 2.456795,
+      "first_coordinator_turn_ms": 0.016054,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 140.390902,
+      "first_coordinator_turn_ms": 0.012288,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 3.55393,
+      "first_coordinator_turn_ms": 0.017206000000000003,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 2
+    },
+    {
+      "elapsed_ms": 9.180143,
+      "first_coordinator_turn_ms": 0.024406,
+      "offset": 0,
+      "phase": "first",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 10.702019,
+      "first_coordinator_turn_ms": 0.016155,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 2.452258,
+      "first_coordinator_turn_ms": 0.015083,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 109.12870400000001,
+      "first_coordinator_turn_ms": 0.010155,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 3.5679499999999997,
+      "first_coordinator_turn_ms": 0.020541,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 17.050142,
+      "first_coordinator_turn_ms": 0.021423,
+      "offset": 0,
+      "phase": "first",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 15.182295,
+      "first_coordinator_turn_ms": 0.017306,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 2.517667,
+      "first_coordinator_turn_ms": 0.01957,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 129.598116,
+      "first_coordinator_turn_ms": 0.011968,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 2.4839049999999996,
+      "first_coordinator_turn_ms": 0.023595,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 23.548445,
+      "first_coordinator_turn_ms": 0.020401,
+      "offset": 0,
+      "phase": "first",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 17.637306,
+      "first_coordinator_turn_ms": 0.022253,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 2.4878069999999997,
+      "first_coordinator_turn_ms": 0.017106,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 123.050761,
+      "first_coordinator_turn_ms": 0.012258,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 3.5156810000000003,
+      "first_coordinator_turn_ms": 0.01988,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 3
+    },
+    {
+      "elapsed_ms": 8.617335,
+      "first_coordinator_turn_ms": 0.020971999999999998,
+      "offset": 0,
+      "phase": "first",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 9.324726,
+      "first_coordinator_turn_ms": 0.015733999999999998,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 2.492674,
+      "first_coordinator_turn_ms": 0.014161,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 97.281271,
+      "first_coordinator_turn_ms": 0.0131,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 3.592352,
+      "first_coordinator_turn_ms": 0.019680000000000003,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "query_lane_window",
+      "query": "",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 16.902274,
+      "first_coordinator_turn_ms": 0.018758,
+      "offset": 0,
+      "phase": "first",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 13.833041000000001,
+      "first_coordinator_turn_ms": 0.017166,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 2.449494,
+      "first_coordinator_turn_ms": 0.014932999999999998,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 123.967769,
+      "first_coordinator_turn_ms": 0.011718000000000001,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 2.478958,
+      "first_coordinator_turn_ms": 0.018017000000000002,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "query_lane_window",
+      "query": "report",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 12.307284,
+      "first_coordinator_turn_ms": 0.014992,
+      "offset": 0,
+      "phase": "first",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 14.110879,
+      "first_coordinator_turn_ms": 0.016224,
+      "offset": 640,
+      "phase": "nearby_crossing",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 2.47344,
+      "first_coordinator_turn_ms": 0.014832,
+      "offset": 1024,
+      "phase": "cross_head",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 120.892076,
+      "first_coordinator_turn_ms": 0.011718000000000001,
+      "offset": 50000,
+      "phase": "arbitrary_seek",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    },
+    {
+      "elapsed_ms": 2.4797000000000002,
+      "first_coordinator_turn_ms": 0.020151000000000002,
+      "offset": 50512,
+      "phase": "warm_deep",
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "records": 100000,
+      "rows": 768,
+      "run": 4
+    }
+  ],
+  "medians": [
+    {
+      "probe": "query_lane_window",
+      "query": "",
+      "phase": "first",
+      "runs": 5,
+      "median_ms": 8.975895
+    },
+    {
+      "probe": "query_lane_window",
+      "query": "",
+      "phase": "nearby_crossing",
+      "runs": 5,
+      "median_ms": 10.097427000000001
+    },
+    {
+      "probe": "query_lane_window",
+      "query": "",
+      "phase": "cross_head",
+      "runs": 5,
+      "median_ms": 2.492674
+    },
+    {
+      "probe": "query_lane_window",
+      "query": "",
+      "phase": "arbitrary_seek",
+      "runs": 5,
+      "median_ms": 99.798925
+    },
+    {
+      "probe": "query_lane_window",
+      "query": "",
+      "phase": "warm_deep",
+      "runs": 5,
+      "median_ms": 3.5679499999999997
+    },
+    {
+      "probe": "query_lane_window",
+      "query": "report",
+      "phase": "first",
+      "runs": 5,
+      "median_ms": 14.440100000000001
+    },
+    {
+      "probe": "query_lane_window",
+      "query": "report",
+      "phase": "nearby_crossing",
+      "runs": 5,
+      "median_ms": 15.182295
+    },
+    {
+      "probe": "query_lane_window",
+      "query": "report",
+      "phase": "cross_head",
+      "runs": 5,
+      "median_ms": 2.4999599999999997
+    },
+    {
+      "probe": "query_lane_window",
+      "query": "report",
+      "phase": "arbitrary_seek",
+      "runs": 5,
+      "median_ms": 129.598116
+    },
+    {
+      "probe": "query_lane_window",
+      "query": "report",
+      "phase": "warm_deep",
+      "runs": 5,
+      "median_ms": 2.4839049999999996
+    },
+    {
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "phase": "first",
+      "runs": 5,
+      "median_ms": 12.307284
+    },
+    {
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "phase": "nearby_crossing",
+      "runs": 5,
+      "median_ms": 13.484836
+    },
+    {
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "phase": "cross_head",
+      "runs": 5,
+      "median_ms": 2.482203
+    },
+    {
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "phase": "arbitrary_seek",
+      "runs": 5,
+      "median_ms": 123.050761
+    },
+    {
+      "probe": "query_lane_window",
+      "query": "rpt",
+      "phase": "warm_deep",
+      "runs": 5,
+      "median_ms": 3.5156810000000003
+    }
+  ],
+  "coordinator_poll_ms": 1
+}
