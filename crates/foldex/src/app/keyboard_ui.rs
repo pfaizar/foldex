@@ -215,13 +215,6 @@ impl Foldex {
             570.0 * scale,
             &mut open,
             |ui| {
-                ui.label(
-                    egui::RichText::new(
-                        "Tab moves between controls. Arrow keys move inside a collection.",
-                    )
-                    .color(t.dim()),
-                );
-                ui.add_space(4.0 * scale);
                 let scroll_id = Id::new("keyboard-guide-focus");
                 let mut scroll_state = ctx
                     .data(|data| data.get_temp::<(f32, f32, f32)>(scroll_id))

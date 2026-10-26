@@ -2732,12 +2732,6 @@ impl Hotkeys {
                             ui.close();
                         }
                     });
-                    ui.label(
-                        egui::RichText::new(
-                            "Tab reviews controls · Enter activates · Escape cancels",
-                        )
-                        .weak(),
-                    );
                 },
             );
             if components::dialog_is_closing(ctx, Id::new("hotkey-recording")) {

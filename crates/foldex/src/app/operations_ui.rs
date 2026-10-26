@@ -84,7 +84,6 @@ impl Foldex {
                 if records.iter().any(|op| op.state().active()) {
                     ctx.request_repaint_after(Duration::from_millis(100));
                 }
-                ui.label("Cancellation preserves completed changes. Reversible changes remain available through Undo.");
             },
         );
         self.operations_open = open;

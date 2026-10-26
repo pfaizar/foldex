@@ -210,7 +210,6 @@ impl Foldex {
                 400.0 * self.theme.metrics().scale,
                 &mut open,
                 |ui| {
-                    ui.label("Remember these tabs, panels, view sizes and sidebar.");
                     let (field, _) = ui.allocate_exact_size(
                         vec2(ui.available_width(), self.theme.metrics().control),
                         Sense::hover(),
@@ -298,7 +297,7 @@ impl Foldex {
                 &mut open,
                 |ui| {
                     if self.saved_layouts.is_empty() {
-                        ui.label("Save a layout from the command menu to find it here.");
+                        ui.label("No saved layouts");
                     }
                     for (i, layout) in self.saved_layouts.iter().enumerate() {
                         ui.horizontal(|ui| {
