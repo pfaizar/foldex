@@ -124,6 +124,9 @@ impl Pool {
     fn with_workers(shared: Arc<Shared>, workers: usize) -> io::Result<Self> {
         let (sender, receiver) = mpsc::sync_channel::<Job>(4);
         let receiver = Arc::new(Mutex::new(receiver));
+        // Idle readers belong to the lane, so a different worker can reuse a
+        // completed query's head/continuation/spool. A job owns its reader exclusively.
+        let readers = Arc::new(Mutex::new(Vec::<NativeIndex>::with_capacity(2)));
         let stop = Arc::new(AtomicBool::new(false));
         let mut pool = Self {
             sender: Some(sender),
@@ -132,6 +135,7 @@ impl Pool {
         };
         for number in 0..workers.clamp(1, 2) {
             let receiver = receiver.clone();
+            let readers = readers.clone();
             let stop = pool.stop.clone();
             let shared = shared.clone();
             pool.threads.push(
@@ -145,7 +149,6 @@ impl Pool {
                             };
                             SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
                         }
-                        let mut reader: Option<NativeIndex> = None;
                         loop {
                             let job = { lock(&receiver).recv() };
                             let Ok(job) = job else { break };
@@ -156,6 +159,18 @@ impl Pool {
                                 shared.work_ready();
                                 continue;
                             }
+                            let mut reader = {
+                                let mut available = lock(&readers);
+                                available
+                                    .iter()
+                                    .rposition(|index| {
+                                        index.status().database_path == job.source.database_path
+                                    })
+                                    .map(|at| available.remove(at))
+                                    .or_else(|| {
+                                        (!available.is_empty()).then(|| available.remove(0))
+                                    })
+                            };
                             let result = (|| {
                                 let reopen = reader.as_ref().is_none_or(|index| {
                                     index.status().database_path != job.source.database_path
@@ -205,6 +220,13 @@ impl Pool {
                                 }
                                 Ok(page)
                             })();
+                            if let Some(reader) = reader {
+                                let mut available = lock(&readers);
+                                debug_assert!(available.len() < 2);
+                                if available.len() < 2 {
+                                    available.push(reader);
+                                }
+                            }
                             if !job.cancel.is_cancelled() {
                                 *lock(&job.result) = Some(result);
                             }

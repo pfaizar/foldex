@@ -259,3 +259,56 @@ fn cached_seek_reader_observes_a_completed_revision_with_the_same_row_count() {
     drop(pool);
     drop(index);
 }
+
+#[cfg(unix)]
+#[test]
+fn a_completed_reader_and_ordered_cache_transfer_to_the_other_worker_without_reopening() {
+    let (_fixture, hub, _client, context) = context(4096);
+    let pool = Pool::new(hub.shared.clone()).unwrap();
+    let source = context.backend.as_ref().unwrap().status();
+    let cancel = Cancellation::new();
+    // The first worker publishes its result, then waits on this notification
+    // gate. Only the other worker can execute the next job.
+    let gate = lock(&hub.shared.changed);
+    let first = pool
+        .submit(
+            source.clone(),
+            QuerySpec::default(),
+            3000,
+            None,
+            None,
+            &cancel,
+        )
+        .unwrap()
+        .unwrap();
+    fn take(work: &Work) -> Page {
+        let until = Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(result) = work.take() {
+                return result.unwrap();
+            }
+            assert!(Instant::now() < until);
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+    assert_eq!(take(&first).rows[0].name, "report00003000.txt");
+    let moved = source.database_path.with_extension("temporarily-moved");
+    std::fs::rename(&source.database_path, &moved).unwrap();
+    struct Restore(PathBuf, PathBuf);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            let _ = std::fs::rename(&self.0, &self.1);
+        }
+    }
+    let restore = Restore(moved, source.database_path.clone());
+    let second = pool
+        .submit(source, QuerySpec::default(), 3500, None, None, &cancel)
+        .unwrap()
+        .unwrap();
+    assert_eq!(take(&second).rows[0].name, "report00003500.txt");
+    drop(restore);
+    drop(gate);
+    drop(pool);
+    drop(context);
+    hub.shutdown();
+}
