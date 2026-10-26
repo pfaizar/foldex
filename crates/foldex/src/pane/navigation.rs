@@ -13,6 +13,8 @@ impl Pane {
             "Home".into()
         } else if self.is_recycle_bin() {
             "Recycle Bin".into()
+        } else if matches!(self.route(), Route::Search(_)) {
+            format!("Search: {}", path_label(&self.path))
         } else {
             path_label(&self.path)
         }
@@ -31,6 +33,19 @@ impl Pane {
             Route::Home => self.navigate_home(remember),
             Route::RecycleBin => self.navigate_recycle_bin(remember),
             Route::Folder(path) => self.navigate(path, remember),
+            Route::Search(location) => {
+                if let Err(error) = location.validate() {
+                    self.error = Some(error);
+                    return;
+                }
+                self.navigate(location.scope.clone(), false);
+                if remember {
+                    self.navigation.visit(Route::Search(location.clone()));
+                }
+                self.install_search(location);
+                self.refilter();
+                self.needs_refresh = self.search.is_none();
+            }
         }
     }
     /// Restore a virtual route without ever scheduling its fallback folder.
@@ -46,10 +61,29 @@ impl Pane {
                 self.filter_lower = self.filter.to_lowercase();
                 self.query = query;
             }
+            Route::Search(location) => self.install_search(location),
             Route::Folder(path) => {
                 self.path = path;
                 self.address = self.path.to_string_lossy().into_owned();
             }
+        }
+    }
+    fn install_search(&mut self, location: crate::navigation::SearchLocation) {
+        self.path = location.scope.clone();
+        self.address = self.path.to_string_lossy().into_owned();
+        self.query = location.resolved_query();
+        self.columns.enter_recursive(&mut self.query);
+        self.filter = self.query.text.clone();
+        self.filter_lower = self.filter.to_lowercase();
+        self.browser.cancel_navigation();
+        self.browser.cancel_filter();
+        self.browser.set_active(false);
+        self.recursive = true;
+        self.directory_only = location.directory_only;
+        self.needs_refresh = true;
+        self.loading = true;
+        if let Some(search) = &self.search {
+            search.set_active(self.active);
         }
     }
     pub fn navigate_home(&mut self, remember: bool) {
@@ -99,6 +133,7 @@ impl Pane {
         self.filter.clear();
         self.filter_lower.clear();
         self.query.text.clear();
+        self.query.conditions = Default::default();
         self.breadcrumb_active = None;
         self.breadcrumb_anchor = None;
         self.breadcrumb_menu.menu.close();
@@ -163,5 +198,54 @@ mod tests {
         assert!(pane.snapshot.is_none());
         assert_eq!(pane.nav_generation, 0);
         assert!(pane.take_folder_visit().is_none());
+    }
+}
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+    #[test]
+    fn search_route_restores_conditions_through_history_and_workspace() {
+        let engine = Engine::new(Arc::new(|| {})).unwrap();
+        let scope = std::env::temp_dir();
+        let mut pane = Pane::dormant(88, &engine, scope.clone());
+        let location = crate::navigation::SearchLocation {
+            scope: scope.clone(),
+            directory_only: false,
+            query: Query {
+                text: "report".into(),
+                conditions: foldex_query::Conditions {
+                    modified_within_days: Some(7),
+                    min_bytes: Some(1024),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+        };
+        pane.navigate_route(Route::Search(location.clone()), true);
+        assert!(pane.recursive && !pane.is_virtual());
+        assert!(pane.query.conditions.modified_after.is_some());
+        assert!(pane.query.conditions.modified_within_days.is_none());
+        pane.filter = "invoice".into();
+        pane.refilter();
+        let saved = pane.route().clone();
+        pane.navigate(scope.join("next"), true);
+        assert!(pane.query.conditions.is_empty());
+        pane.back();
+        assert_eq!(pane.route(), &saved);
+        assert_eq!(pane.filter, "invoice");
+        pane.back();
+        assert!(matches!(pane.route(), Route::Folder(_)));
+        pane.forward();
+        assert_eq!(pane.route(), &saved);
+        let state = crate::workspace::PaneState::capture(&pane);
+        let restored: crate::workspace::PaneState =
+            serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
+        let mut other = Pane::dormant(89, &engine, scope);
+        other.restore_navigation(restored.navigation.unwrap());
+        assert_eq!(other.route(), &saved);
+        assert_eq!(other.filter, "invoice");
+        assert_eq!(other.query.conditions.min_bytes, Some(1024));
+        assert_eq!(other.nav_generation, 0);
     }
 }

@@ -847,7 +847,9 @@ fn common_cache_ancestor_is_excluded_for_all_scope_generations() {
         &cache,
         &f.scope(),
         &BuildOptions {
+            excluded_subtrees: Vec::new(),
             excluded_root: Some(common.clone()),
+            ..BuildOptions::default()
         },
         &c,
     )

@@ -17,7 +17,8 @@ mod native;
 mod scan;
 use scan::Walk;
 
-pub const MAX_VIEWS: usize = 2;
+// View subscriptions are cheap; active DFS walks retain their independent bound.
+pub const MAX_VIEWS: usize = 32;
 pub const MAX_REQUESTS_PER_VIEW: usize = 32;
 pub const MAX_ACTIVE_WALKS: usize = 4;
 pub const MAX_DEPTH: usize = 32;
@@ -123,7 +124,7 @@ impl FolderStatsService {
         })
     }
 
-    /// Complete visible set, in visual priority order. At most two views and
+    /// Complete visible set, in visual priority order. At most 32 subscribed views and
     /// 32 folders/view. A higher epoch explicitly refreshes cached results for
     /// this view, including folders first requested later in that epoch.
     /// Same-epoch viewport changes retain matching in-flight work. Busy retries
@@ -893,7 +894,7 @@ fn invalid(message: &str) -> io::Error {
 fn busy() -> io::Error {
     io::Error::new(
         io::ErrorKind::WouldBlock,
-        "folder statistics mailbox busy or two views already registered",
+        "folder statistics mailbox busy or visible-view subscription limit reached",
     )
 }
 

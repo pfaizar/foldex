@@ -7,6 +7,10 @@ license.workspace = true
 description = "Bounded background filesystem and query engine for Foldex"
 
 [dependencies]
+foldex-fs = { path = "../foldex-fs" }
+
+serde.workspace = true
+foldex-query = { path = "../foldex-query" }
 foldex-match = { path = "../foldex-match" }
 tokio = { version = "=1.53.2", default-features = false, features = ["rt", "sync", "time", "macros"] }
 

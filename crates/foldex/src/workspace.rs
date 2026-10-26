@@ -134,6 +134,18 @@ pub struct WorkspaceState {
     pub inspector: bool,
     pub inspector_width: f32,
 }
+impl WorkspaceState {
+    /// A named layout describes destinations and presentation. Replaying the
+    /// navigation history from when it was saved is unrelated to that layout.
+    pub fn clear_navigation_history(&mut self) {
+        for tab in &mut self.tabs {
+            tab.left.navigation = None;
+            if let Some(right) = &mut tab.right {
+                right.navigation = None;
+            }
+        }
+    }
+}
 #[derive(Clone, Serialize, Deserialize)]
 pub struct NamedWorkspace {
     pub name: String,

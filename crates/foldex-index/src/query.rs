@@ -123,6 +123,36 @@ impl Index {
         boundary: Option<&IndexStatus>,
     ) -> Result<QueryPage> {
         cancel.check()?;
+        spec.conditions.validate().map_err(Error::InvalidPath)?;
+        let conditions = spec.conditions.clone();
+        self.connection.create_scalar_function(
+            "foldex_metadata",
+            4,
+            rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC
+                | rusqlite::functions::FunctionFlags::SQLITE_INNOCUOUS,
+            move |ctx| {
+                let bytes: [u8; 8] = ctx
+                    .get_raw(2)
+                    .as_blob()?
+                    .try_into()
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?;
+                if !conditions.matches_metadata(
+                    ctx.get::<bool>(1)?,
+                    u64::from_be_bytes(bytes),
+                    ctx.get(3)?,
+                ) {
+                    return Ok(false);
+                }
+                if !conditions.needs_path() {
+                    return Ok(true);
+                }
+                let path = PathBuf::from(
+                    codec::decode(ctx.get_raw(0).as_blob()?)
+                        .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?,
+                );
+                Ok(conditions.matches_path(&path))
+            },
+        )?;
         let started = Instant::now();
         #[cfg(feature = "diagnostics")]
         {
@@ -139,7 +169,9 @@ impl Index {
             self.status = load_status(&self.connection, &self.status.database_path)?;
             self.status.from_cache = from_cache;
             if let Some(boundary) = boundary {
-                if boundary.generation != self.status.generation
+                if boundary.excluded_subtrees != self.status.excluded_subtrees
+                    || boundary.directory_only != self.status.directory_only
+                    || boundary.generation != self.status.generation
                     || boundary.scope != self.status.scope
                     || boundary.entries > self.status.entries
                     || boundary.revision > self.status.revision
@@ -172,6 +204,7 @@ impl Index {
             let count = if spec.include_total || (offset > 0 && cursor.is_none()) {
                 if spec.text.is_empty()
                     && spec.type_filter.is_none()
+                    && spec.conditions.is_empty()
                     && spec.show_hidden
                     && upper_id.is_none_or(|bound| bound == self.status.entries)
                 {
@@ -299,7 +332,7 @@ impl Index {
 
     fn ensure_sort(&self, sort: SortColumn) -> Result<()> {
         let sql = match sort {
-            SortColumn::Name => return Ok(()),
+            SortColumn::Name | SortColumn::Created | SortColumn::Accessed => return Ok(()),
             SortColumn::Size => {
                 "CREATE INDEX IF NOT EXISTS entries_size ON entries(is_dir,size_key,natural_key,raw_sort,id)"
             }
@@ -868,6 +901,9 @@ fn make_predicate(spec: &QuerySpec, use_fts: bool, upper_id: Option<u64>) -> Res
         Vec::new()
     };
     let mut conditions = vec!["1=1".to_string()];
+    if !spec.conditions.is_empty() {
+        conditions.push("foldex_metadata(e.relative,e.is_dir,e.size_key,e.modified)".into());
+    }
     let mut fuzzy_verification = None;
     if !spec.show_hidden {
         conditions.push("e.hidden=0".into());
@@ -992,13 +1028,16 @@ pub(crate) fn fingerprint(spec: &QuerySpec, upper_id: Option<u64>) -> u64 {
     spec.show_hidden.hash(&mut hasher);
     spec.kind.hash(&mut hasher);
     spec.type_filter.hash(&mut hasher);
+    spec.conditions.hash(&mut hasher);
     upper_id.hash(&mut hasher);
     hasher.finish()
 }
 
 fn sort_columns(column: SortColumn) -> &'static str {
     match column {
-        SortColumn::Name => "e.natural_key,e.raw_sort,e.id",
+        SortColumn::Name | SortColumn::Created | SortColumn::Accessed => {
+            "e.natural_key,e.raw_sort,e.id"
+        }
         SortColumn::Size => "e.size_key,e.natural_key,e.raw_sort,e.id",
         SortColumn::Modified => "e.modified,e.natural_key,e.raw_sort,e.id",
         SortColumn::Kind => "e.extension,e.natural_key,e.raw_sort,e.id",
@@ -1007,7 +1046,7 @@ fn sort_columns(column: SortColumn) -> &'static str {
 fn cursor_values(row: &IndexRow, column: SortColumn) -> Vec<Value> {
     let mut values = Vec::with_capacity(4);
     match column {
-        SortColumn::Name => {}
+        SortColumn::Name | SortColumn::Created | SortColumn::Accessed => {}
         SortColumn::Size => values.push(Value::Blob(row.size.to_be_bytes().to_vec())),
         SortColumn::Modified => values.push(Value::Integer(row.modified_secs)),
         SortColumn::Kind => values.push(Value::Text(row.extension.clone())),
@@ -1030,6 +1069,8 @@ fn decode_row(row: &rusqlite::Row<'_>, scope: &std::path::Path) -> Result<IndexR
     let name = raw_name.to_string_lossy().into_owned();
     let size: [u8; 8] = row.get(5)?;
     Ok(IndexRow {
+        availability: foldex_fs::capabilities::Availability::from_code(row.get(10)?)
+            .ok_or_else(|| Error::InvalidIndex("invalid availability".into()))?,
         id: row.get::<_, i64>(0)?.max(0) as u64,
         path: scope.join(&relative_path),
         relative_path,
@@ -1040,6 +1081,8 @@ fn decode_row(row: &rusqlite::Row<'_>, scope: &std::path::Path) -> Result<IndexR
         symlink: row.get(4)?,
         size: u64::from_be_bytes(size),
         modified_secs: row.get(6)?,
+        created_secs: None,
+        accessed_secs: None,
         natural_key: row.get(7)?,
         raw_sort: row.get(8)?,
         extension: row.get(9)?,

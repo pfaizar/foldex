@@ -20,8 +20,12 @@ mod launcher_ui;
 pub(crate) mod lifecycle_probe;
 #[cfg(test)]
 mod lifecycle_tests;
+mod operations_ui;
 mod options_ui;
+#[cfg(test)]
+mod persistence_tests;
 pub(crate) mod recycle_ui;
+mod searches_ui;
 mod stress;
 mod update_ui;
 pub(crate) mod window_transfer;
@@ -50,6 +54,7 @@ pub struct Session {
     pub sidebar: bool,
     pub sidebar_collapsed: u8,
     pub workspace: Option<crate::workspace::WorkspaceState>,
+    pub saved_searches: Vec<crate::navigation::SavedSearch>,
     pub saved_layouts: Vec<crate::workspace::NamedWorkspace>,
     pub folder_views: Vec<crate::workspace::SavedFolderView>,
     pub command_bookmarks: Option<Vec<crate::commands::Command>>,
@@ -69,12 +74,20 @@ impl Default for Session {
             sidebar: true,
             sidebar_collapsed: 0,
             workspace: None,
+            saved_searches: vec![],
             saved_layouts: vec![],
             folder_views: vec![],
             command_bookmarks: None,
             context_pins: vec![],
             hotkeys: None,
             launcher: Default::default(),
+        }
+    }
+}
+impl Session {
+    pub fn compact_layouts(&mut self) {
+        for layout in &mut self.saved_layouts {
+            layout.state.clear_navigation_history();
         }
     }
 }
@@ -180,6 +193,7 @@ pub struct Foldex {
     first_frame: Option<f64>,
     frames: VecDeque<f64>,
     show_stats: bool,
+    operations_open: bool,
     keyboard_help: bool,
     pending_focus_exit: Option<(bool, u64)>,
     process_samples: Vec<ProcessSample>,
@@ -196,6 +210,8 @@ pub struct Foldex {
     adapter_info: String,
     frame_count: u64,
     renderer_cpu_ms: f64,
+    search_editor: Option<searches_ui::SearchEditor>,
+    saved_searches: Vec<crate::navigation::SavedSearch>,
     saved_layouts: Vec<crate::workspace::NamedWorkspace>,
     folder_views: Vec<crate::workspace::SavedFolderView>,
     closed_tabs: VecDeque<crate::workspace::TabState>,
@@ -240,11 +256,22 @@ impl Foldex {
         initial: Option<PathBuf>,
         theme_path: PathBuf,
         session_path: PathBuf,
+        preferences_path: PathBuf,
         session: Session,
         started: Instant,
         benchmark: Option<crate::performance::UiRun>,
         launcher_runtime: crate::launcher::Runtime,
     ) -> std::io::Result<Self> {
+        let mut session = session;
+        session.compact_layouts();
+        let persistence = crate::persistence::Persistence::new_session(
+            Arc::new({
+                let context = cc.egui_ctx.clone();
+                move || context.request_repaint_of(egui::ViewportId::ROOT)
+            }),
+            preferences_path,
+            &serde_json::to_value(&session)?,
+        )?;
         let ctx = cc.egui_ctx.clone();
         // Workers and the tray are serviced by the root, even if a launcher
         // callback happens to be the active viewport when a worker finishes.
@@ -339,7 +366,6 @@ impl Foldex {
         sidebar_data.network.set_owner_window(window_owner);
         let mut home_history = session.home_history;
         home_history.migrate_recent(session.recent.iter().cloned());
-        let persistence = crate::persistence::Persistence::new(wake, launcher_runtime.auxiliary)?;
         let native_frame = crate::native_frame::NativeFrame::new(window_owner, &cc.egui_ctx);
         let file_drag = crate::drag_drop::Native::new(window_owner, &cc.egui_ctx)?;
         #[cfg(feature = "renderer-glow")]
@@ -498,6 +524,7 @@ impl Foldex {
             first_frame: None,
             frames: VecDeque::with_capacity(240),
             show_stats: false,
+            operations_open: false,
             keyboard_help: false,
             pending_focus_exit: None,
             process_samples: vec![],
@@ -514,6 +541,8 @@ impl Foldex {
             adapter_info,
             frame_count: 0,
             renderer_cpu_ms: 0.0,
+            search_editor: None,
+            saved_searches: crate::navigation::normalize_searches(session.saved_searches),
             saved_layouts: session.saved_layouts.into_iter().take(16).collect(),
             folder_views: session.folder_views.into_iter().take(128).collect(),
             closed_tabs: VecDeque::new(),
@@ -854,6 +883,15 @@ impl Foldex {
                     crate::keyboard::request_id(&self.ui_context, Id::new("breadcrumb-filter"));
                 }
             }
+            Action::Search(location) => self
+                .pane_mut()
+                .navigate_route(crate::navigation::Route::Search(location), true),
+            Action::SearchBuilder => self.open_search_editor(),
+            Action::RemoveSearch(name) => {
+                self.saved_searches.retain(|s| s.name != name);
+                self.session_dirty = true;
+                self.save_due = Some(Instant::now());
+            }
             Action::Navigate(p) => {
                 self.pane_mut().navigate(p, true);
                 self.apply_folder_view();
@@ -863,7 +901,8 @@ impl Foldex {
                     match route {
                         crate::navigation::Route::Home => self.navigate_home(),
                         crate::navigation::Route::RecycleBin => self.navigate_recycle_bin(),
-                        crate::navigation::Route::Folder(_) => unreachable!(),
+                        crate::navigation::Route::Folder(_)
+                        | crate::navigation::Route::Search(_) => unreachable!(),
                     }
                     return;
                 }
@@ -1729,6 +1768,7 @@ mod tests {
             Some(file),
             root.join("theme.toml"),
             root.join("session.json"),
+            root.join("preferences.json"),
             Session::default(),
             Instant::now(),
             None,
@@ -1780,6 +1820,26 @@ mod tests {
         }
         panic!("Generated input fixture did not load");
     }
+    #[test]
+    fn operations_command_opens_a_modal_with_a_bounded_history() {
+        let (mut app, ctx, frame) = ready_fixture();
+        app.execute_command(&ctx, crate::commands::Command::Operations);
+        assert!(app.operations_open && app.popup_active());
+        for index in 0..3 {
+            ctx.run_ui(
+                egui::RawInput {
+                    time: Some((frame + index) as f64 / 60.0),
+                    screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1200.0, 760.0))),
+                    ..Default::default()
+                },
+                |ui| app.operations_ui(ui.ctx()),
+            )
+            .drop_without_applying_deltas();
+        }
+        app.operations_open = false;
+        assert!(!app.operations_open);
+    }
+
     #[test]
     fn root_panel_widths_advance_once_per_frame_and_later_resize_still_snaps() {
         for resize_on_second_pass in [false, true] {
@@ -3190,6 +3250,8 @@ impl eframe::App for Foldex {
             self.keyboard(&ctx, true);
         }
         self.dialogs(&ctx);
+        self.operations_ui(&ctx);
+        self.searches_ui(&ctx);
         if !self.popup_active() {
             self.updates.notification(&ctx, &self.theme);
         }
@@ -3544,6 +3606,7 @@ impl Foldex {
             sidebar: self.sidebar,
             sidebar_collapsed: self.sidebar_sections.bits(),
             workspace: Some(self.workspace_state()),
+            saved_searches: self.saved_searches.clone(),
             saved_layouts: self.saved_layouts.clone(),
             folder_views: self.folder_views.clone(),
             command_bookmarks: Some(self.commands.bookmarks()),
@@ -3554,6 +3617,31 @@ impl Foldex {
     }
     fn service_session(&mut self, ctx: &egui::Context) {
         self.service_window_transfers(ctx);
+        if self.persistence.preferences_pending() {
+            let local = serde_json::to_value(self.session_snapshot());
+            if let Ok(local) = local
+                && let Some(result) = self.persistence.poll_preferences(&local)
+            {
+                match result.and_then(|value| {
+                    if crate::persistence::shared::preferences(&value)
+                        == crate::persistence::shared::preferences(&local)
+                    {
+                        Ok(None)
+                    } else {
+                        serde_json::from_value::<Session>(value)
+                            .map(Some)
+                            .map_err(|error| error.to_string())
+                    }
+                }) {
+                    Ok(Some(session)) => self.apply_shared_preferences(session),
+                    Ok(None) => {}
+                    Err(error) => self.toast(
+                        format!("Shared preferences could not be refreshed: {error}"),
+                        true,
+                    ),
+                }
+            }
+        }
         // Benchmark sessions already live in disposable isolated directories.
         // Include normal hashing, debounce and persistence in their timings.
         let now = Instant::now();
@@ -3571,6 +3659,7 @@ impl Foldex {
         self.active.hash(&mut hash);
         self.desk.hash_state(&mut hash);
         self.bookmarks.hash(&mut hash);
+        self.saved_searches.hash(&mut hash);
         self.recent.hash(&mut hash);
         self.home_usage_revision.hash(&mut hash);
         self.sidebar.hash(&mut hash);
@@ -3629,8 +3718,8 @@ impl Foldex {
             self.options_popup.flush_theme_preferences(ctx);
         }
         if self.session_dirty && self.save_due.is_some_and(|due| due <= now) {
-            match serde_json::to_vec_pretty(&self.session_snapshot())
-                .map_err(|e| e.to_string())
+            match serde_json::to_vec(&self.session_snapshot())
+                .map_err(|error| crate::persistence::SubmitError::Invalid(error.to_string()))
                 .and_then(|bytes| self.persistence.save(self.session_path.clone(), bytes))
             {
                 Ok(revision) => {
@@ -3639,12 +3728,16 @@ impl Foldex {
                     self.save_due = None;
                 }
                 Err(e) => {
+                    let retryable = e.retryable();
                     self.toast(format!("Workspace could not be queued: {e}"), true);
                     if self.updates.exit_pending {
                         self.cancel_update_exit(ctx, "The workspace could not be queued for saving. Installation was cancelled.");
                         self.save_due = None;
-                    } else {
+                    } else if retryable {
                         self.save_due = Some(now + Duration::from_millis(50));
+                    } else {
+                        self.save_due = None;
+                        self.close_failed = self.close_requested.is_some();
                     }
                 }
             }
@@ -3682,6 +3775,67 @@ impl Foldex {
         } else if let Some(due) = self.save_due {
             ctx.request_repaint_after(due.saturating_duration_since(now));
         }
+    }
+
+    fn apply_shared_preferences(&mut self, mut session: Session) {
+        self.bookmarks = crate::bookmarks::normalize(session.bookmarks);
+        self.saved_searches = crate::navigation::normalize_searches(session.saved_searches);
+        self.saved_layouts = session.saved_layouts.into_iter().take(16).collect();
+        for layout in &mut self.saved_layouts {
+            layout.state.clear_navigation_history();
+        }
+        self.folder_views = session.folder_views.into_iter().take(128).collect();
+        if self.context.pins() != session.context_pins {
+            self.context.set_pins(&session.context_pins);
+        }
+        if let Some(bookmarks) = session.command_bookmarks {
+            self.commands.set_bookmarks(bookmarks);
+        }
+        if let Some(mut bindings) = session.hotkeys.take() {
+            crate::hotkeys::Hotkeys::add_keyboard_defaults(&mut bindings);
+            if self.hotkeys.bindings() != bindings {
+                self.hotkeys = crate::hotkeys::Hotkeys::from_bindings(bindings);
+            }
+        }
+        if self.sidebar_sections.preferences() != &session.sidebar_preferences {
+            self.sidebar_sections = chrome::SidebarSections::from_preferences(
+                self.sidebar_sections.bits(),
+                session.sidebar_preferences,
+            );
+        }
+        session.home_history.normalize();
+        if self.home_history != session.home_history {
+            self.home_history = session.home_history;
+            self.home_usage_revision = self.home_usage_revision.wrapping_add(1);
+        }
+        self.recent = session.recent.into_iter().take(10).collect();
+        let settings = session.launcher;
+        if self.launcher.settings.background != settings.background
+            || self.launcher.settings.clipboard_history != settings.clipboard_history
+        {
+            self.launcher
+                .set_launcher_flags(settings.background, settings.clipboard_history);
+        }
+        if self.launcher.settings.file_roots != settings.file_roots {
+            let roots = settings
+                .file_roots
+                .iter()
+                .map(|path| path.to_string_lossy())
+                .collect::<Vec<_>>()
+                .join(";");
+            if let Err(error) = self.launcher.apply_launcher_roots(&roots) {
+                self.toast(error, true);
+            }
+        }
+        if self.launcher.settings.hotkey != settings.hotkey
+            && let Err(error) = self.launcher.apply_launcher_shortcut(&settings.hotkey)
+        {
+            self.toast(error, true);
+        }
+        self.hotkeys
+            .set_launcher_shortcut(&self.launcher.settings.hotkey);
+        self.hotkeys.update_palette(&mut self.commands);
+        self.service_sidebar_network();
     }
 
     fn service_benchmark(&mut self, ctx: &egui::Context) {

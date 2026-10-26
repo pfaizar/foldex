@@ -8,6 +8,10 @@ target/
 foldex-cache/
 foldex-session.json
 foldex-session.lock
+foldex-preferences.json
+foldex-preferences.previous.json
+foldex-preferences.lock
+/workspaces/
 foldex-crash.log
 foldex-updates.json
 /updates/

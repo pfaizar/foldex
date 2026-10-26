@@ -1,9 +1,9 @@
 use crate::{Error, IndexRecord, Result};
 use std::{fs, path::PathBuf};
 
-pub(super) const RECORD_BYTES: usize = 80;
+pub(super) const RECORD_BYTES: usize = 96;
 const HEADER_BYTES: usize = 64;
-const MAGIC: &[u8; 8] = b"FLDCAT04";
+const MAGIC: &[u8; 8] = b"FLDCAT06";
 
 /// Conservative fuzzy prefilter. ASCII membership is exact; non-ASCII hash
 /// collisions admit extra candidates. Digit counts saturate at seven.
@@ -77,8 +77,11 @@ impl Signature {
 }
 
 pub(super) struct Metadata {
+    pub availability: foldex_fs::capabilities::Availability,
     pub size: u64,
     pub modified_secs: i64,
+    pub created_secs: Option<i64>,
+    pub accessed_secs: Option<i64>,
     pub is_dir: bool,
     pub hidden: bool,
     pub symlink: bool,
@@ -86,8 +89,11 @@ pub(super) struct Metadata {
 impl From<&IndexRecord> for Metadata {
     fn from(record: &IndexRecord) -> Self {
         Self {
+            availability: record.availability,
             size: record.size,
             modified_secs: record.modified_secs,
+            created_secs: record.created_secs,
+            accessed_secs: record.accessed_secs,
             is_dir: record.is_dir,
             hidden: record.hidden,
             symlink: record.symlink,
@@ -205,7 +211,8 @@ impl Buffer {
         self.records.extend_from_slice(&record.size.to_le_bytes());
         self.records
             .extend_from_slice(&record.modified_secs.to_le_bytes());
-        let flags = u32::from(record.is_dir)
+        let flags = ((record.availability as u32) << 4)
+            | u32::from(record.is_dir)
             | (u32::from(record.hidden) << 1)
             | (u32::from(record.symlink) << 2)
             | (u32::from(substring_safe) << 3);
@@ -218,6 +225,10 @@ impl Buffer {
             .extend_from_slice(&signature.ascii[1].to_le_bytes());
         self.records
             .extend_from_slice(&signature.unicode.to_le_bytes());
+        self.records
+            .extend_from_slice(&record.created_secs.unwrap_or(i64::MIN).to_le_bytes());
+        self.records
+            .extend_from_slice(&record.accessed_secs.unwrap_or(i64::MIN).to_le_bytes());
         self.count += 1;
         Ok(())
     }
@@ -407,6 +418,8 @@ impl View {
             flags: u32_at(header, 48),
             size: u64_at(header, 32),
             modified: u64_at(header, 40) as i64,
+            created: (u64_at(header, 80) as i64 != i64::MIN).then(|| u64_at(header, 80) as i64),
+            accessed: (u64_at(header, 88) as i64 != i64::MIN).then(|| u64_at(header, 88) as i64),
         })
     }
 }
@@ -416,6 +429,8 @@ pub(super) struct Record<'a> {
     pub flags: u32,
     pub size: u64,
     pub modified: i64,
+    pub created: Option<i64>,
+    pub accessed: Option<i64>,
 }
 impl<'a> Record<'a> {
     pub fn name(&self) -> &'a [u8] {

@@ -24,6 +24,8 @@ pub enum ReaderKind {
 }
 
 pub struct WalkOptions {
+    pub excluded_subtrees: Vec<PathBuf>,
+    pub recursive: bool,
     pub workers: usize,
     /// An existing private directory. Overflow is deleted when workers stop.
     pub spool_root: PathBuf,
@@ -63,7 +65,7 @@ pub struct Walk {
 
 impl Walk {
     pub fn start(scope: PathBuf, options: WalkOptions) -> io::Result<Self> {
-        Self::start_with_reader(scope, options, ReaderKind::Standard)
+        Self::start_with_reader(scope, options, ReaderKind::Native)
     }
     pub fn start_with_reader(
         scope: PathBuf,
@@ -245,10 +247,20 @@ fn read_directory(
                     continue;
                 }
             };
+            let relative = batch.parent.join(&entry.name);
+            if shared
+                .options
+                .excluded_subtrees
+                .iter()
+                .any(|p| relative.starts_with(p))
+            {
+                batch.excluded += 1;
+                continue;
+            }
             if !entry.metadata_known {
                 batch.skipped += 1;
             }
-            if entry.is_dir() && !entry.is_reparse() {
+            if shared.options.recursive && entry.capabilities().can_enumerate() {
                 let child = batch.parent.join(&entry.name);
                 shared
                     .queue
@@ -256,6 +268,13 @@ fn read_directory(
                     .unwrap()
                     .push(child, &shared.options.spool_root)?;
                 shared.ready.notify_one();
+            }
+            if shared.options.recursive
+                && entry.is_dir()
+                && !entry.is_opaque()
+                && !entry.capabilities().can_enumerate()
+            {
+                batch.skipped += 1;
             }
             let payload = entry.name.capacity();
             if !batch.entries.is_empty()

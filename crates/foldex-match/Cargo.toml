@@ -7,3 +7,4 @@ license.workspace = true
 description = "Bounded allocation-free candidate matching for Foldex"
 
 [dependencies]
+serde.workspace = true

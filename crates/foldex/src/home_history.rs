@@ -39,7 +39,7 @@ pub struct Entry {
     pub last_used: i64,
     pub uses: u32,
 }
-#[derive(Clone, Default, Debug, Serialize, Deserialize)]
+#[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct History {
     pub entries: Vec<Entry>,

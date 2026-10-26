@@ -6,8 +6,10 @@ use foldex_index::{
     catalog::{NativeIndex, NativeIndexBuilder as IndexBuilder},
 };
 use std::{
+    cell::RefCell,
     io,
     path::{Path, PathBuf},
+    rc::Rc,
     sync::{
         Arc, Condvar, Mutex, MutexGuard, Weak,
         atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
@@ -15,15 +17,26 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+#[cfg(test)]
+mod conditions_tests;
+#[cfg(test)]
+pub(crate) mod live_tests;
+mod paging;
+mod reconcile;
+mod scopes;
 
 const MAX_CLIENTS: usize = 4096;
-const MAX_CONNECTIONS: usize = 2;
+// Subscriptions hold bounded result windows and selected-generation leases.
+// They do not reserve a traversal or a query turn after completing their work.
+const MAX_SUBSCRIPTIONS: usize = 32;
+const QUERY_TURNS: usize = 2;
 const PAGE_ROWS: usize = 256;
 const WINDOW_PAGES: usize = 3;
 pub(crate) const WINDOW_ROWS: usize = WINDOW_PAGES * PAGE_ROWS;
 pub(crate) const WINDOW_LEAD_ROWS: usize = PAGE_ROWS / 2;
 const REFRESH_INTERVAL: Duration = Duration::from_millis(150);
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(80);
+const QUERY_CACHE_BYTES: usize = 16 * 1024 * 1024;
 pub const MAX_ACTION_PATHS: usize = 4096;
 const MAX_ACTION_BYTES: usize = 4 * 1024 * 1024;
 type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -108,6 +121,7 @@ struct Request {
     serial: u64,
     scan_epoch: u64,
     root: PathBuf,
+    directory_only: bool,
     query: Query,
     start: usize,
     refresh: bool,
@@ -316,6 +330,10 @@ impl Shared {
         interrupt.cancel();
         *interrupt = Cancellation::new();
         drop(interrupt);
+        self.work_ready();
+    }
+
+    fn work_ready(&self) {
         let mut changed = lock(&self.changed);
         *changed = changed.wrapping_add(1);
         self.ready.notify_one();
@@ -492,7 +510,18 @@ impl SearchClient {
         refresh: bool,
         boundary: Option<IndexStatus>,
     ) -> u64 {
-        self.request_kind(root, query, start, refresh, boundary, None)
+        self.request_kind(root, query, start, refresh, boundary, None, false)
+    }
+
+    pub fn request_directory_as_of(
+        &self,
+        root: PathBuf,
+        query: Query,
+        start: usize,
+        refresh: bool,
+        boundary: Option<IndexStatus>,
+    ) -> u64 {
+        self.request_kind(root, query, start, refresh, boundary, None, true)
     }
 
     /// Launcher matching bypasses the explorer's subsequence prefilter, retaining
@@ -509,6 +538,7 @@ impl SearchClient {
             false,
             None,
             Some(explicit),
+            false,
         )
     }
 
@@ -521,6 +551,7 @@ impl SearchClient {
         refresh: bool,
         boundary: Option<IndexStatus>,
         launcher: Option<bool>,
+        directory_only: bool,
     ) -> u64 {
         let id = self.state.sequence.fetch_add(1, Ordering::AcqRel) + 1;
         if self.state.closed.load(Ordering::Acquire) {
@@ -530,16 +561,22 @@ impl SearchClient {
         let old = commands.latest.take();
         if refresh
             || old.as_ref().is_none_or(|old| {
-                old.root != root || old.query != query || old.launcher != launcher
+                old.root != root
+                    || old.directory_only != directory_only
+                    || old.query != query
+                    || old.launcher != launcher
             })
         {
             if let Some(selection) = commands.selection.take() {
                 selection.cancel.cancel();
             }
         }
-        let same_scan = old
-            .as_ref()
-            .is_some_and(|old| old.root == root && !refresh && !old.scan_cancel.is_cancelled());
+        let same_scan = old.as_ref().is_some_and(|old| {
+            old.root == root
+                && old.directory_only == directory_only
+                && !refresh
+                && !old.scan_cancel.is_cancelled()
+        });
         if let Some(old) = &old {
             old.query_cancel.cancel();
         }
@@ -562,6 +599,7 @@ impl SearchClient {
             serial,
             scan_epoch: commands.scan_epoch,
             root,
+            directory_only,
             query,
             start,
             refresh,
@@ -692,21 +730,104 @@ enum Backend {
     Cached(NativeIndex),
     Building(IndexBuilder),
     Complete(NativeIndex),
+    Shared(Rc<RefCell<SharedCatalog>>),
+}
+
+struct SharedCatalog {
+    backend: Option<Backend>,
+    stale: bool,
+    last_status: IndexStatus,
+    last_query: Instant,
 }
 
 impl Backend {
-    fn database_path(&self) -> &Path {
+    fn cached_window(&self, spec: &QuerySpec, prefix: u64, start: usize) -> bool {
         match self {
-            Self::Building(builder) => &builder.status().database_path,
-            Self::Cached(index) | Self::Complete(index) => &index.status().database_path,
-            Self::Legacy(index) => &index.status().database_path,
+            Self::Building(index) => index.cached_window(spec, prefix, start, WINDOW_ROWS),
+            Self::Cached(index) | Self::Complete(index) => {
+                index.cached_window(spec, prefix, start, WINDOW_ROWS)
+            }
+            Self::Shared(catalog) => catalog
+                .borrow()
+                .backend
+                .as_ref()
+                .is_some_and(|backend| backend.cached_window(spec, prefix, start)),
+            Self::Legacy(_) => false,
         }
     }
-    fn status(&self) -> &IndexStatus {
+    fn retained_query_bytes(&self) -> usize {
         match self {
-            Self::Building(builder) => builder.status(),
-            Self::Cached(index) | Self::Complete(index) => index.status(),
-            Self::Legacy(index) => index.status(),
+            Self::Building(index) => index.retained_query_bytes(),
+            Self::Cached(index) | Self::Complete(index) => index.retained_query_bytes(),
+            Self::Shared(catalog) => catalog
+                .borrow()
+                .backend
+                .as_ref()
+                .map_or(0, Self::retained_query_bytes),
+            Self::Legacy(_) => 0,
+        }
+    }
+    fn release_query_cache(&mut self) {
+        match self {
+            Self::Building(index) => index.release_query_cache(),
+            Self::Cached(index) | Self::Complete(index) => index.release_query_cache(),
+            Self::Shared(catalog) => {
+                if let Some(index) = &mut catalog.borrow_mut().backend {
+                    index.release_query_cache();
+                }
+            }
+            Self::Legacy(_) => {}
+        }
+    }
+    fn database_path(&self) -> PathBuf {
+        match self {
+            Self::Building(builder) => builder.status().database_path.clone(),
+            Self::Cached(index) | Self::Complete(index) => index.status().database_path.clone(),
+            Self::Legacy(index) => index.status().database_path.clone(),
+            Self::Shared(catalog) => {
+                let catalog = catalog.borrow();
+                catalog.backend.as_ref().map_or_else(
+                    || catalog.last_status.database_path.clone(),
+                    Backend::database_path,
+                )
+            }
+        }
+    }
+    fn status(&self) -> IndexStatus {
+        match self {
+            Self::Building(builder) => builder.status().clone(),
+            Self::Cached(index) | Self::Complete(index) => index.status().clone(),
+            Self::Legacy(index) => index.status().clone(),
+            Self::Shared(catalog) => {
+                let catalog = catalog.borrow();
+                let mut status = catalog
+                    .backend
+                    .as_ref()
+                    .map_or_else(|| catalog.last_status.clone(), Backend::status);
+                status.from_cache |= catalog.stale;
+                status
+            }
+        }
+    }
+    fn complete(&self) -> bool {
+        match self {
+            Self::Complete(_) => true,
+            Self::Shared(catalog) => {
+                let catalog = catalog.borrow();
+                !catalog.stale && catalog.backend.as_ref().is_some_and(Backend::complete)
+            }
+            _ => false,
+        }
+    }
+    fn legacy(&self) -> bool {
+        match self {
+            Self::Legacy(_) => true,
+            Self::Shared(catalog) => catalog
+                .borrow()
+                .backend
+                .as_ref()
+                .is_some_and(Backend::legacy),
+            _ => false,
         }
     }
     fn open_database(path: &Path) -> foldex_index::Result<Self> {
@@ -719,6 +840,27 @@ impl Backend {
             Index::open_database(path).map(Self::Legacy)
         }
     }
+    fn checkpoint_status(&mut self) -> foldex_index::Result<Option<IndexStatus>> {
+        match self {
+            Self::Building(builder) => builder.checkpoint().map(|progress| Some(progress.status)),
+            Self::Complete(index) | Self::Cached(index) => Ok(Some(index.status().clone())),
+            Self::Legacy(_) => Ok(None),
+            Self::Shared(catalog) => {
+                let mut catalog = catalog.borrow_mut();
+                let stale = catalog.stale;
+                let mut status = catalog
+                    .backend
+                    .as_mut()
+                    .ok_or_else(|| io::Error::other("Search scope is unavailable"))?
+                    .checkpoint_status()?;
+                if let Some(status) = &mut status {
+                    status.from_cache |= stale;
+                }
+                Ok(status)
+            }
+        }
+    }
+
     fn query(
         &mut self,
         spec: &QuerySpec,
@@ -727,6 +869,19 @@ impl Backend {
         cancel: &Cancellation,
         boundary: Option<&IndexStatus>,
     ) -> foldex_index::Result<foldex_index::QueryPage> {
+        if let Self::Shared(catalog) = self {
+            let mut catalog = catalog.borrow_mut();
+            catalog.last_query = Instant::now();
+            let mut page = catalog
+                .backend
+                .as_mut()
+                .ok_or_else(|| {
+                    foldex_index::Error::InvalidIndex("Search scope is unavailable".into())
+                })?
+                .query(spec, start, size, cancel, boundary)?;
+            page.status.from_cache |= catalog.stale;
+            return Ok(page);
+        }
         match (self, boundary) {
             (Self::Building(builder), Some(boundary)) => {
                 builder.query_as_of(spec, boundary, start, size, cancel)
@@ -742,6 +897,7 @@ impl Backend {
                 index.query_as_of(spec, boundary, start, size, cancel)
             }
             (Self::Legacy(index), None) => index.query(spec, start, size, cancel),
+            (Self::Shared(_), _) => unreachable!(),
         }
     }
 
@@ -753,6 +909,19 @@ impl Backend {
         cancel: &Cancellation,
         boundary: Option<&IndexStatus>,
     ) -> foldex_index::Result<foldex_index::QueryPage> {
+        if let Self::Shared(catalog) = self {
+            let mut catalog = catalog.borrow_mut();
+            catalog.last_query = Instant::now();
+            let mut page = catalog
+                .backend
+                .as_mut()
+                .ok_or_else(|| {
+                    foldex_index::Error::InvalidIndex("Search scope is unavailable".into())
+                })?
+                .query_after(spec, cursor, size, cancel, boundary)?;
+            page.status.from_cache |= catalog.stale;
+            return Ok(page);
+        }
         match (self, boundary) {
             (Self::Building(builder), Some(boundary)) => {
                 builder.query_after_as_of(spec, boundary, cursor, size, cancel)
@@ -768,6 +937,7 @@ impl Backend {
                 index.query_after_as_of(spec, boundary, cursor, size, cancel)
             }
             (Self::Legacy(index), None) => index.query_after(spec, cursor, size, cancel),
+            (Self::Shared(_), _) => unreachable!(),
         }
     }
 
@@ -785,6 +955,21 @@ impl Backend {
             // A legacy cache cannot supply unfiltered native names. The normal
             // worker transition builds a native catalog immediately afterwards.
             Self::Legacy(_) => Ok(None),
+            Self::Shared(catalog) => {
+                let mut catalog = catalog.borrow_mut();
+                catalog.last_query = Instant::now();
+                let mut batch = catalog
+                    .backend
+                    .as_mut()
+                    .ok_or_else(|| {
+                        foldex_index::Error::InvalidIndex("Search scope is unavailable".into())
+                    })?
+                    .candidate_batch(lower, cancel, score)?;
+                if let Some(batch) = &mut batch {
+                    batch.status.from_cache |= catalog.stale;
+                }
+                Ok(batch)
+            }
         }
     }
 
@@ -797,6 +982,14 @@ impl Backend {
             Self::Building(builder) => builder.candidate_rows(hits, cancel),
             Self::Cached(index) | Self::Complete(index) => index.candidate_rows(hits, cancel),
             Self::Legacy(_) => Ok(Vec::new()),
+            Self::Shared(catalog) => catalog
+                .borrow()
+                .backend
+                .as_ref()
+                .ok_or_else(|| {
+                    foldex_index::Error::InvalidIndex("Search scope is unavailable".into())
+                })?
+                .candidate_rows(hits, cancel),
         }
     }
 }
@@ -816,6 +1009,8 @@ struct Context {
     last_progress: Instant,
     selection: Option<SelectionWork>,
     launcher: Option<LauncherWork>,
+    cursors: Vec<foldex_index::PageCursor>,
+    pending_page: Option<paging::Work>,
 }
 
 struct CountCache {
@@ -832,11 +1027,14 @@ impl CountCache {
             && self.query.match_mode == query.match_mode
             && self.query.show_hidden == query.show_hidden
             && self.query.type_filter == query.type_filter
+            && self.query.conditions == query.conditions
     }
 }
 
 fn same_result_prefix(a: &IndexStatus, b: &IndexStatus) -> bool {
-    a.generation == b.generation
+    a.excluded_subtrees == b.excluded_subtrees
+        && a.directory_only == b.directory_only
+        && a.generation == b.generation
         && a.revision == b.revision
         && a.entries == b.entries
         && a.scope == b.scope
@@ -893,7 +1091,26 @@ impl Context {
         request: Request,
         cache_base: &Path,
     ) -> foldex_index::Result<Self> {
-        let cache_dir = Index::cache_dir_for(cache_base, &request.root)?;
+        let source_root = request
+            .boundary
+            .as_ref()
+            .map_or(&request.root, |boundary| &boundary.scope);
+        if request.boundary.as_ref().is_some_and(|boundary| {
+            boundary.directory_only != request.directory_only
+                || boundary.excluded_subtrees != request.query.conditions.excluded_subtrees
+        }) || request.boundary.is_some()
+            && !same_catalog_root(source_root, &std::path::absolute(&request.root)?)
+        {
+            return Err(foldex_index::Error::InvalidCursor);
+        }
+        let cache_dir = Index::cache_dir_for(
+            &scope_policy_base(
+                cache_base,
+                request.directory_only,
+                &request.query.conditions.excluded_subtrees,
+            ),
+            source_root,
+        )?;
         let pinned = if let Some(boundary) = &request.boundary {
             let root = std::fs::canonicalize(&cache_dir)?;
             let path = std::fs::canonicalize(&boundary.database_path)?;
@@ -919,13 +1136,40 @@ impl Context {
                 .map(Backend::Cached)
                 .or_else(|_| Index::open_scope(&cache_dir, &request.root).map(Backend::Legacy))
                 .ok()
+                .filter(|backend| {
+                    backend.status().directory_only == request.directory_only
+                        && backend.status().excluded_subtrees
+                            == request.query.conditions.excluded_subtrees
+                })
         };
         let backend = if let Some(index) = cached {
             index
         } else {
             Backend::Building(new_builder(&cache_dir, cache_base, &request)?)
         };
-        Ok(Self {
+        Ok(Self::with_backend(client, request, cache_dir, backend))
+    }
+
+    fn live(
+        client: &Arc<ClientState>,
+        request: Request,
+        cache_base: &Path,
+        scopes: &mut scopes::Scopes,
+    ) -> foldex_index::Result<Self> {
+        if request.boundary.is_some() {
+            return Self::new(client, request, cache_base);
+        }
+        let (cache_dir, backend) = scopes.backend(&request)?;
+        Ok(Self::with_backend(client, request, cache_dir, backend))
+    }
+
+    fn with_backend(
+        client: &Arc<ClientState>,
+        request: Request,
+        cache_dir: PathBuf,
+        backend: Backend,
+    ) -> Self {
+        Self {
             client: Arc::downgrade(client),
             request,
             cache_dir,
@@ -940,11 +1184,26 @@ impl Context {
             last_progress: Instant::now(),
             selection: None,
             launcher: None,
-        })
+            cursors: Vec::new(),
+            pending_page: None,
+        }
     }
 
     fn replace_request(&mut self, request: Request) {
         if self.request.id != request.id {
+            self.pending_page = None;
+            if self.request.query != request.query
+                || self.request.root != request.root
+                || request.refresh
+                || match (&self.request.boundary, &request.boundary) {
+                    (Some(a), Some(b)) => !same_result_prefix(a, b),
+                    (None, None) => false,
+                    _ => true,
+                }
+            {
+                self.cursors.clear();
+            }
+
             // Only a finished, unpinned native window can be replayed without
             // asking the backend to validate a new prefix or selection boundary.
             let replay = !self.query_dirty
@@ -958,9 +1217,9 @@ impl Context {
                 && self.request.root == request.root
                 && self.request.query == request.query
                 && self.request.start == request.start
-                && matches!(self.backend, Some(Backend::Complete(_)))
+                && self.backend.as_ref().is_some_and(Backend::complete)
                 && self.window_status.as_ref().is_some_and(|status| {
-                    same_result_prefix(status, self.backend.as_ref().unwrap().status())
+                    same_result_prefix(status, &self.backend.as_ref().unwrap().status())
                 });
             let counts = replay.then(|| self.cached_counts()).flatten();
             if self.request.query.text != request.query.text
@@ -988,11 +1247,54 @@ impl Context {
         cleanup_allowed: bool,
         work_cancel: &Cancellation,
         priority_cancel: &Cancellation,
+        paging: Option<&paging::Pool>,
     ) -> foldex_index::Result<bool> {
         if work_cancel.is_cancelled() {
             return Ok(false);
         }
         if self.query_dirty {
+            if self.request.launcher.is_none()
+                && let Some(pool) = paging
+            {
+                if let Some(work) = &self.pending_page {
+                    let Some(page) = work.take() else {
+                        return Ok(false);
+                    };
+                    self.pending_page = None;
+                    self.accept_page(page?)?;
+                    return Ok(true);
+                }
+                if !self.backend.as_ref().is_some_and(Backend::legacy) {
+                    let source = self.backend.as_mut().unwrap().checkpoint_status()?.unwrap();
+                    let boundary = self.request.boundary.clone().unwrap_or(source);
+                    let cursor = self.nearby_cursor(&boundary);
+                    let spec = query_spec(&self.request.query, true);
+                    let cached = self.backend.as_ref().unwrap().cached_window(
+                        &spec,
+                        boundary.entries,
+                        self.request.start,
+                    );
+                    if !cached
+                        && (boundary.entries >= 50_000
+                            || self.request.start > 0 && cursor.is_none())
+                    {
+                        let counts = self
+                            .counts
+                            .as_ref()
+                            .filter(|cache| cache.matches(&self.request.query, &boundary))
+                            .map(|cache| (cache.kind_counts.0 as u64, cache.kind_counts.1 as u64));
+                        self.pending_page = pool.submit(
+                            boundary,
+                            spec,
+                            self.request.start,
+                            cursor,
+                            counts,
+                            &self.request.query_cancel,
+                        )?;
+                        return Ok(self.pending_page.is_some());
+                    }
+                }
+            }
             self.fetch_window(work_cancel)?;
             return Ok(true);
         }
@@ -1002,6 +1304,9 @@ impl Context {
         if self.count_dirty {
             self.fetch_count(work_cancel)?;
             return Ok(true);
+        }
+        if matches!(self.backend, Some(Backend::Shared(_))) {
+            return Ok(false);
         }
         if matches!(self.backend, Some(Backend::Cached(_) | Backend::Legacy(_)))
             && self.request.boundary.is_none()
@@ -1059,44 +1364,78 @@ impl Context {
         Ok(true)
     }
 
+    fn nearby_cursor(&self, status: &IndexStatus) -> Option<foldex_index::PageCursor> {
+        if !self
+            .window_status
+            .as_ref()
+            .is_some_and(|old| same_result_prefix(old, status))
+        {
+            return None;
+        }
+        self.cursors
+            .iter()
+            .filter(|cursor| {
+                cursor.next_offset() <= self.request.start as u64
+                    && (self.request.start as u64 - cursor.next_offset()) <= WINDOW_ROWS as u64
+            })
+            .max_by_key(|cursor| cursor.next_offset())
+            .cloned()
+    }
+
     fn fetch_window(&mut self, cancel: &Cancellation) -> foldex_index::Result<()> {
         if let Some(explicit) = self.request.launcher {
             return self.fetch_launcher(explicit, cancel);
         }
-        let backend = self.backend.as_mut().expect("live backend");
-        // Native pages already compute exact counts while choosing their head.
-        // Carry that total on the first publication instead of temporarily
-        // advertising only the materialized window and counting again later.
-        let native = !matches!(backend, Backend::Legacy(_));
-        let spec = query_spec(&self.request.query, native);
-        let first = backend.query(
-            &spec,
-            self.request.start as u64,
-            PAGE_ROWS,
-            cancel,
-            self.request.boundary.as_ref(),
-        )?;
-        let mut rows = first.rows;
-        let mut cursor = first.next;
-        let mut more = first.has_more;
-        let status = first.status;
+        let source = self
+            .backend
+            .as_mut()
+            .expect("live backend")
+            .checkpoint_status()?;
+        let boundary = self.request.boundary.clone().or(source);
+        let cursor = boundary
+            .as_ref()
+            .and_then(|source| self.nearby_cursor(source));
+        let backend = self.backend.as_mut().unwrap();
+        let spec = query_spec(&self.request.query, !backend.legacy());
+        let mut page = paging::collect(self.request.start, cursor, |offset, cursor, size| {
+            if cursor.is_some() {
+                backend.query_after(&spec, cursor, size, cancel, boundary.as_ref())
+            } else {
+                backend.query(&spec, offset, size, cancel, boundary.as_ref())
+            }
+        })?;
+        if self.request.query.kind != foldex_core::KindFilter::All {
+            page.kind_counts = None;
+        }
+        self.accept_page(page)
+    }
+
+    fn accept_page(&mut self, page: paging::Page) -> foldex_index::Result<()> {
+        let native = !self.backend.as_ref().is_some_and(Backend::legacy);
+        let paging::Page {
+            rows,
+            cursors,
+            total: first_total,
+            kind_counts: first_counts,
+            has_more: more,
+            status,
+        } = page;
         let kind_counts = self
             .counts
             .as_ref()
             .filter(|cache| native && cache.matches(&self.request.query, &status))
             .map(|cache| cache.kind_counts)
             .or_else(|| {
-                (native && self.request.query.kind == foldex_core::KindFilter::All)
-                    .then_some(first.kind_counts)
+                native
+                    .then_some(first_counts)
                     .flatten()
                     .and_then(|(folders, files)| Some((to_usize(folders)?, to_usize(files)?)))
             });
-        let total = first
-            .total
+        let total = first_total
             .and_then(to_usize)
             .or_else(|| kind_counts.map(|counts| filtered_total(&self.request.query, counts)));
-        let first_snapshot = snapshot(
-            &status.scope,
+        let result = snapshot(
+            &self.request.root,
             rows.iter(),
             &status,
             self.request.started.elapsed(),
@@ -1107,7 +1446,7 @@ impl Context {
                 Arc::new(SearchWindow {
                     request: self.request.id,
                     start: self.request.start,
-                    snapshot: first_snapshot.clone(),
+                    snapshot: result.clone(),
                     total,
                     kind_counts,
                     has_more: more,
@@ -1116,45 +1455,7 @@ impl Context {
                 }),
             );
         }
-        let mut result = first_snapshot;
-        for _ in 1..WINDOW_PAGES {
-            if !more || cursor.is_none() {
-                break;
-            }
-            let page = backend.query_after(
-                &spec,
-                cursor.as_ref(),
-                PAGE_ROWS,
-                cancel,
-                self.request.boundary.as_ref(),
-            )?;
-            rows.extend(page.rows);
-            cursor = page.next;
-            more = page.has_more;
-        }
-        if rows.len() != result.entries.len() {
-            result = snapshot(
-                &status.scope,
-                rows.iter(),
-                &status,
-                self.request.started.elapsed(),
-            );
-            if let Some(client) = self.client.upgrade() {
-                client.window(
-                    &self.request,
-                    Arc::new(SearchWindow {
-                        request: self.request.id,
-                        start: self.request.start,
-                        snapshot: result.clone(),
-                        total,
-                        kind_counts,
-                        has_more: more,
-                        status: status.clone(),
-                        elapsed: self.request.started.elapsed(),
-                    }),
-                );
-            }
-        }
+        self.cursors = cursors;
         self.window = Some(result);
         self.window_status = Some(status.clone());
         self.window_has_more = more;
@@ -1295,7 +1596,7 @@ impl Context {
     fn cached_counts(&self) -> Option<(usize, usize)> {
         // Legacy readers can observe another writer between page/count calls.
         // Keep their existing validation query instead of relying on local state.
-        if matches!(self.backend, Some(Backend::Legacy(_))) {
+        if self.backend.as_ref().is_some_and(Backend::legacy) {
             return None;
         }
         let status = self.window_status.as_ref()?;
@@ -1467,6 +1768,31 @@ fn validate_ranges(ranges: &[(u32, u32)]) -> Result<usize, SelectionFailure> {
     Ok(count as usize)
 }
 
+fn same_catalog_root(left: &Path, right: &Path) -> bool {
+    left == right
+        || crate::bookmarks::path_eq(left, right)
+            && foldex_fs::capabilities::same_directory(left, right).unwrap_or(false)
+}
+
+fn scope_cache_base(base: &Path, directory_only: bool) -> PathBuf {
+    if directory_only {
+        base.join("directories")
+    } else {
+        base.to_owned()
+    }
+}
+
+fn scope_policy_base(base: &Path, directory_only: bool, exclusions: &[PathBuf]) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    let base = scope_cache_base(base, directory_only);
+    if exclusions.is_empty() {
+        return base;
+    }
+    let mut hash = std::collections::hash_map::DefaultHasher::new();
+    exclusions.hash(&mut hash);
+    base.join(format!("policy-{:016x}", hash.finish()))
+}
+
 fn new_builder(
     cache_dir: &Path,
     cache_base: &Path,
@@ -1476,7 +1802,9 @@ fn new_builder(
         cache_dir,
         &request.root,
         &BuildOptions {
+            excluded_subtrees: request.query.conditions.excluded_subtrees.clone(),
             excluded_root: Some(cache_base.to_path_buf()),
+            directory_only: request.directory_only,
         },
         &request.scan_cancel,
     )
@@ -1514,9 +1842,12 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
             );
         }
     }
-    let mut contexts = Vec::<Context>::with_capacity(MAX_CONNECTIONS);
+    let mut contexts = Vec::<Context>::with_capacity(8);
+    let mut scopes = scopes::Scopes::new(shared.clone(), cache_base.clone());
+    let paging = paging::Pool::new(shared.clone()).ok();
     let mut cleanup = Vec::<(PathBuf, PathBuf)>::with_capacity(8);
     let mut reconciled = None;
+    let mut next_context = 0usize;
     loop {
         if shared.stopped.load(Ordering::Acquire) {
             break;
@@ -1537,7 +1868,15 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
                     .collect()
             };
             inputs.sort_unstable_by(|a, b| b.1.serial.cmp(&a.1.serial));
-            inputs.truncate(MAX_CONNECTIONS);
+            for (client, request) in inputs.iter().skip(MAX_SUBSCRIPTIONS) {
+                client.failed(
+                    request,
+                    format!(
+                        "At most {MAX_SUBSCRIPTIONS} visible search subscriptions can be active"
+                    ),
+                );
+            }
+            inputs.truncate(MAX_SUBSCRIPTIONS);
             let mut at = 0;
             while at < contexts.len() {
                 let keep = contexts[at].client.upgrade().is_some_and(|client| {
@@ -1545,6 +1884,9 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
                         Arc::ptr_eq(active, &client)
                             && request.scan_epoch == contexts[at].request.scan_epoch
                             && request.root == contexts[at].request.root
+                            && request.directory_only == contexts[at].request.directory_only
+                            && request.query.conditions.excluded_subtrees
+                                == contexts[at].request.query.conditions.excluded_subtrees
                     })
                 });
                 if keep {
@@ -1565,12 +1907,24 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
                         .upgrade()
                         .is_some_and(|state| Arc::ptr_eq(&state, client))
                 }) {
-                    context.replace_request(request.clone());
+                    let shared_backend = matches!(context.backend, Some(Backend::Shared(_)));
+                    if shared_backend == request.boundary.is_some() {
+                        match Context::live(client, request.clone(), &cache_base, &mut scopes) {
+                            Ok(replacement) => *context = replacement,
+                            Err(error) => {
+                                client.failed(request, error.to_string());
+                                reconciled = None;
+                            }
+                        }
+                    } else {
+                        context.replace_request(request.clone());
+                    }
                 } else {
                     match std::fs::create_dir_all(&cache_base)
                         .map_err(foldex_index::Error::from)
-                        .and_then(|_| Context::new(client, request.clone(), &cache_base))
-                    {
+                        .and_then(|_| {
+                            Context::live(client, request.clone(), &cache_base, &mut scopes)
+                        }) {
                         Ok(context) => {
                             let identity =
                                 (context.cache_dir.clone(), context.request.root.clone());
@@ -1591,7 +1945,9 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
             contexts.sort_unstable_by(|a, b| b.request.serial.cmp(&a.request.serial));
         }
         let mut did_work = false;
-        for index in 0..contexts.len() {
+        let mut turns = 0;
+        for offset in 0..contexts.len() {
+            let index = (next_context + offset) % contexts.len();
             let cleanup_allowed = contexts
                 .iter()
                 .filter(|context| context.cache_dir == contexts[index].cache_dir)
@@ -1602,9 +1958,19 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
                 .request
                 .query_cancel
                 .linked(&priority_cancel);
-            match contexts[index].step(&cache_base, cleanup_allowed, &work_cancel, &priority_cancel)
-            {
-                Ok(work) => did_work |= work,
+            match contexts[index].step(
+                &cache_base,
+                cleanup_allowed,
+                &work_cancel,
+                &priority_cancel,
+                paging.as_ref(),
+            ) {
+                Ok(work) => {
+                    if work {
+                        turns += 1;
+                    }
+                    did_work |= work;
+                }
                 Err(foldex_index::Error::Cancelled) => {}
                 Err(error) => {
                     did_work = true;
@@ -1614,9 +1980,94 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
                     }
                 }
             }
+            if turns == QUERY_TURNS {
+                next_context = (index + 1) % contexts.len();
+                break;
+            }
+        }
+        let active_roots = contexts
+            .iter()
+            .filter_map(|context| {
+                context
+                    .client
+                    .upgrade()
+                    .and_then(|client| client.input())
+                    .map(|request| (request.root, request.directory_only))
+            })
+            .collect::<Vec<_>>();
+        for update in scopes.advance(&active_roots) {
+            did_work = true;
+            if update.refetch
+                && let Ok(status) = &update.status
+                && matches!(
+                    status.state,
+                    foldex_index::BuildState::Complete | foldex_index::BuildState::Partial
+                )
+                && let Some(directory) = status.database_path.parent()
+            {
+                let identity = (directory.to_owned(), status.scope.clone());
+                if !cleanup.contains(&identity) {
+                    cleanup.push(identity);
+                }
+            }
+            for context in &mut contexts {
+                let matches = matches!(&context.backend,Some(Backend::Shared(catalog)) if Rc::ptr_eq(catalog,&update.catalog));
+                if !matches {
+                    continue;
+                }
+                match &update.status {
+                    Ok(status) => {
+                        if update.refetch {
+                            if !context.query_dirty && !context.count_dirty {
+                                context.request.started = Instant::now();
+                            }
+                            context.query_dirty = true;
+                            context.count_dirty = false;
+                            context.pending_page = None;
+                            context.cursors.clear();
+                        }
+                        if let Some(client) = context.client.upgrade() {
+                            client.progress(&context.request, status.clone());
+                        }
+                    }
+                    Err(error) => {
+                        if let Some(client) = context.client.upgrade() {
+                            client.failed(&context.request, error.to_string());
+                        }
+                        reconciled = None;
+                    }
+                }
+            }
+        }
+        did_work |= scopes.busy();
+        scopes.trim_query_caches(QUERY_CACHE_BYTES);
+        let mut pinned = contexts
+            .iter()
+            .enumerate()
+            .filter_map(|(index, context)| {
+                let backend = context.backend.as_ref()?;
+                (!matches!(backend, Backend::Shared(_))).then_some((
+                    index,
+                    context.last_window,
+                    backend.retained_query_bytes(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        let mut pinned_bytes = pinned.iter().map(|(_, _, bytes)| *bytes).sum::<usize>();
+        pinned.sort_unstable_by_key(|(_, used, _)| *used);
+        for (index, _, bytes) in pinned {
+            if pinned_bytes <= QUERY_CACHE_BYTES {
+                break;
+            }
+            contexts[index]
+                .backend
+                .as_mut()
+                .unwrap()
+                .release_query_cache();
+            pinned_bytes = pinned_bytes.saturating_sub(bytes);
         }
         for (cache_dir, scope) in cleanup.drain(..) {
-            let active: Vec<_> = contexts
+            let mut active: Vec<_> = contexts
                 .iter()
                 .filter(|context| context.cache_dir == cache_dir)
                 .filter_map(|context| {
@@ -1626,6 +2077,9 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
                         .map(|backend| backend.database_path().to_path_buf())
                 })
                 .collect();
+            active.extend(scopes.active_paths(&cache_dir));
+            active.sort();
+            active.dedup();
             cleanup_cache(&cache_dir, &scope, &active);
         }
         if !did_work {
@@ -1634,15 +2088,28 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
                 && reconciled == Some(observed)
                 && !shared.stopped.load(Ordering::Acquire)
             {
-                drop(
-                    shared
-                        .ready
-                        .wait(changed)
-                        .unwrap_or_else(|poison| poison.into_inner()),
-                );
+                if let Some(deadline) = scopes.deadline() {
+                    drop(
+                        shared
+                            .ready
+                            .wait_timeout(
+                                changed,
+                                deadline.saturating_duration_since(Instant::now()),
+                            )
+                            .unwrap_or_else(|poison| poison.into_inner()),
+                    );
+                } else {
+                    drop(
+                        shared
+                            .ready
+                            .wait(changed)
+                            .unwrap_or_else(|poison| poison.into_inner()),
+                    );
+                }
             }
         }
     }
+    drop(scopes);
     for context in contexts {
         let identity = (context.cache_dir.clone(), context.request.root.clone());
         drop(context);
@@ -1650,6 +2117,7 @@ fn run(shared: Arc<Shared>, cache_base: PathBuf) {
             cleanup.push(identity);
         }
     }
+    drop(paging);
     for (cache_dir, scope) in cleanup {
         cleanup_cache(&cache_dir, &scope, &[]);
     }
@@ -1666,6 +2134,7 @@ fn filtered_total(query: &Query, (folders, files): (usize, usize)) -> usize {
 
 fn query_spec(query: &Query, include_total: bool) -> QuerySpec {
     QuerySpec {
+        conditions: query.conditions.clone(),
         text: query.text.clone(),
         match_mode: match query.match_mode {
             foldex_core::MatchMode::Fuzzy => foldex_index::MatchMode::Fuzzy,
@@ -1686,9 +2155,8 @@ fn query_spec(query: &Query, include_total: bool) -> QuerySpec {
             foldex_core::SortColumn::Name => SortColumn::Name,
             foldex_core::SortColumn::Size => SortColumn::Size,
             foldex_core::SortColumn::Modified => SortColumn::Modified,
-            foldex_core::SortColumn::Created | foldex_core::SortColumn::Accessed => {
-                SortColumn::Name
-            }
+            foldex_core::SortColumn::Created => SortColumn::Created,
+            foldex_core::SortColumn::Accessed => SortColumn::Accessed,
             foldex_core::SortColumn::Kind => SortColumn::Kind,
         },
         kind: match query.kind {
@@ -1715,6 +2183,9 @@ fn snapshot<'a>(
                 row.modified_secs,
             );
             entry.relative_path = Some(row.relative_path.clone());
+            entry.availability = row.availability;
+            entry.created_secs = row.created_secs;
+            entry.accessed_secs = row.accessed_secs;
             entry.hidden = row.hidden;
             entry.symlink = row.symlink;
             entry
@@ -1992,7 +2463,7 @@ mod tests {
         let cancel = Cancellation::new();
         let deadline = Instant::now() + Duration::from_secs(10);
         while context
-            .step(&fixture.cache(), false, &cancel, &cancel)
+            .step(&fixture.cache(), false, &cancel, &cancel, None)
             .unwrap()
         {
             assert!(Instant::now() < deadline);
@@ -2048,6 +2519,7 @@ mod tests {
 
     fn test_status(scope: PathBuf, database_path: PathBuf) -> IndexStatus {
         IndexStatus {
+            excluded_subtrees: Vec::new(),
             generation: "generation".into(),
             revision: 2,
             scope,
@@ -2065,6 +2537,7 @@ mod tests {
             source_root_modified_secs: None,
             from_cache: false,
             synthetic: false,
+            directory_only: false,
         }
     }
 
@@ -2136,7 +2609,7 @@ mod tests {
         let mut hub = unstarted_hub();
         let waiting = hub.client();
         let request = waiting.request(fixture.scope(), Query::default(), 0, false);
-        let failed: Vec<_> = (0..MAX_CONNECTIONS)
+        let failed: Vec<_> = (0..QUERY_TURNS)
             .map(|index| {
                 let client = hub.client();
                 if fail_on_open {

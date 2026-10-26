@@ -916,6 +916,22 @@ impl Foldex {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
+                    if !self.saved_searches.is_empty() {
+                        let header = egui::CollapsingHeader::new("Search collections").default_open(true).show(ui, |ui| {
+                            for search in &self.saved_searches {
+                                if !self.side_filter.is_empty() && !search.name.to_lowercase().contains(&self.side_filter.to_lowercase()) { continue; }
+                                let response = ui.add(egui::Button::new(&search.name).truncate()).on_hover_text(search.location.scope.display().to_string());
+                                crate::keyboard::register(ui, crate::keyboard::Region::Sidebar, response.id, response.rect);
+                                if response.clicked() { actions.push(Action::Search(search.location.clone())); }
+                                response.context_menu(|ui| { if ui.button("Remove collection").clicked() { actions.push(Action::RemoveSearch(search.name.clone())); ui.close(); } });
+                            }
+                        });
+                        crate::keyboard::register(ui, crate::keyboard::Region::Sidebar, header.header_response.id, header.header_response.rect);
+                    }
+                    let editor = ui.small_button("Search conditions / collections…");
+                    crate::keyboard::register(ui, crate::keyboard::Region::Sidebar, editor.id, editor.rect);
+                    if editor.clicked() { actions.push(Action::SearchBuilder); }
+
                     // Home is a destination, with the same icon/text alignment as
                     // category headers and no misleading accordion chevron.
                     let (home, _) = ui

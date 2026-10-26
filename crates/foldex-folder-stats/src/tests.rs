@@ -68,10 +68,14 @@ fn request_counts_views_paths_and_mailbox_are_bounded() {
             )
             .is_err()
     );
-    retry(|| service.set_requests(1, 1, &[]));
-    retry(|| service.set_requests(2, 1, &[]));
+    for view in 1..=MAX_VIEWS as u64 {
+        retry(|| service.set_requests(view, 1, &[]));
+    }
     assert_eq!(
-        service.set_requests(3, 1, &[]).unwrap_err().kind(),
+        service
+            .set_requests(MAX_VIEWS as u64 + 1, 1, &[])
+            .unwrap_err()
+            .kind(),
         io::ErrorKind::WouldBlock
     );
     {
@@ -82,7 +86,68 @@ fn request_counts_views_paths_and_mailbox_are_bounded() {
         );
     }
     retry(|| service.cancel_view(1));
-    retry(|| service.set_requests(3, 1, &[]));
+    retry(|| service.set_requests(MAX_VIEWS as u64 + 1, 1, &[]));
+    join(service);
+}
+
+#[test]
+fn queued_candidates_rotate_between_views_before_a_second_folder_in_one_view() {
+    let mut mailbox = Mailbox::default();
+    for id in 0..6 {
+        mailbox.views.push(View {
+            id,
+            epoch: 1,
+            floor: 0,
+            weight: 0,
+            requests: (0..2)
+                .map(|item| Request {
+                    path: Arc::new(PathBuf::from(format!("C:/view{id}/folder{item}"))),
+                    token: id * 2 + item,
+                    floor: 0,
+                    stage: Stage::Queued,
+                })
+                .collect(),
+        });
+    }
+    for id in 0..6 {
+        let (path, _) = mailbox.candidate().unwrap();
+        assert_eq!(*path, PathBuf::from(format!("C:/view{id}/folder0")));
+        let subscribers = mailbox.claim(&path, false);
+        assert_eq!(subscribers.len(), 1);
+    }
+    assert_eq!(
+        MAX_ACTIVE_WALKS, 4,
+        "view admission must not raise traversal concurrency"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn six_visible_views_complete_with_four_active_walks() {
+    let fixture = Fixture::new();
+    let service = FolderStatsService::new(Arc::new(|| {})).unwrap();
+    for id in 0..6 {
+        let path = fixture.dir(&format!("view{id}"));
+        fixture.file(&format!("view{id}/file.txt"), id as usize + 1);
+        retry(|| service.set_requests(id, 1, &request(&path)));
+    }
+    let start = Instant::now();
+    let mut completed = std::collections::HashSet::new();
+    while completed.len() < 6 {
+        if let Some(event) = service.try_recv()
+            && event.stats.state != State::Scanning
+        {
+            assert_eq!(event.stats.state, State::Complete);
+            assert_eq!(event.stats.files, 1);
+            assert_eq!(event.stats.bytes, event.view + 1);
+            completed.insert(event.view);
+        }
+        let metrics = service.metrics();
+        assert!(metrics.active_walks <= MAX_ACTIVE_WALKS);
+        assert!(metrics.traversal_path_bytes <= WALK_PATH_BUDGET * MAX_ACTIVE_WALKS);
+        assert!(start.elapsed() < Duration::from_secs(10));
+        thread::sleep(Duration::from_millis(1));
+    }
     join(service);
 }
 
@@ -652,7 +717,7 @@ fn generated_junction_and_its_descendant_root_are_never_followed() {
 
 #[cfg(windows)]
 #[test]
-fn offline_file_is_counted_as_an_exclusion_without_reading_its_contents() {
+fn offline_file_contributes_cached_logical_size_without_reading_its_contents() {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::*;
     let fixture = Fixture::new();
@@ -671,9 +736,9 @@ fn offline_file_is_counted_as_an_exclusion_without_reading_its_contents() {
     let service = FolderStatsService::new(Arc::new(|| {})).unwrap();
     retry(|| service.set_requests(1, 1, &request(&root)));
     let result = receive_final(&service, 1, 1);
-    assert_eq!(result.stats.state, State::Partial);
-    assert_eq!(result.stats.issues.skipped_offline, 1);
-    assert_eq!((result.stats.files, result.stats.bytes), (1, 39));
+    assert_eq!(result.stats.state, State::Complete);
+    assert_eq!(result.stats.issues.skipped_offline, 0);
+    assert_eq!((result.stats.files, result.stats.bytes), (2, 4135));
     join(service);
     assert_ne!(unsafe { SetFileAttributesW(wide.as_ptr(), before) }, 0);
 }

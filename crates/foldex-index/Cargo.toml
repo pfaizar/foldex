@@ -11,6 +11,7 @@ diagnostics = []
 catalog-experiment = ["dep:memmap2", "dep:windows-sys", "dep:rayon", "dep:crc32fast"]
 
 [dependencies]
+foldex-query = { path = "../foldex-query" }
 foldex-match = { path = "../foldex-match" }
 foldex-fs = { path = "../foldex-fs" }
 rusqlite = { version = "=0.40.2", default-features = false, features = ["bundled", "cache", "hooks", "functions"] }

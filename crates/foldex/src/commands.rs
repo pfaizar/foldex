@@ -394,6 +394,7 @@ pub enum Command {
     #[serde(rename = "keyboard-navigation-help")]
     KeyboardHelp,
     Properties,
+    Operations,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -422,6 +423,14 @@ macro_rules! entry {
 /// An application can override availability or register replacement descriptions.
 /// Optional source features are visible but disabled until their execution exists.
 pub const COMMANDS: &[CommandEntry] = &[
+    entry!(
+        Operations,
+        "File Operations",
+        "Inspect progress, cancel work, and review recent results",
+        "",
+        "copy move delete queue progress cancel history",
+        true
+    ),
     entry!(
         Commands,
         "Commands",

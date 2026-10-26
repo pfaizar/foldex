@@ -369,6 +369,7 @@ fn effective_operation_flags(mode: Mode, replay: bool) -> u32 {
 
 struct ProgressState {
     stop: Arc<AtomicBool>,
+    operation: Option<Arc<super::operations::Operation>>,
     outcomes: Box<[AtomicU8]>,
     errors: Box<[AtomicI32]>,
     skipped: AtomicBool,
@@ -387,6 +388,7 @@ impl ProgressState {
     fn new(count: usize, stop: Arc<AtomicBool>) -> Arc<Self> {
         Arc::new(Self {
             stop,
+            operation: super::operations::current(),
             outcomes: (0..count).map(|_| AtomicU8::new(PENDING)).collect(),
             errors: (0..count).map(|_| AtomicI32::new(0)).collect(),
             skipped: AtomicBool::new(false),
@@ -515,7 +517,13 @@ unsafe extern "system" fn sink_release(this: *mut c_void) -> u32 {
 fn sink_check(this: *mut c_void) -> i32 {
     let sink = unsafe { &*this.cast::<ProgressSink>() };
     pump_messages();
-    if sink.state.stop.load(Ordering::Acquire) {
+    if sink.state.stop.load(Ordering::Acquire)
+        || sink
+            .state
+            .operation
+            .as_ref()
+            .is_some_and(|op| op.cancel.load(Ordering::Acquire))
+    {
         E_ABORT
     } else {
         0
@@ -677,6 +685,13 @@ fn record_item(
     if ignored {
         sink.state.skipped.store(true, Ordering::Release);
     }
+    // Child callbacks can confirm partial changes before a selected directory
+    // itself finishes. Keep this fact even if its final root outcome fails.
+    if item_outcome(result, !created.is_null(), deletion) == SUCCEEDED
+        && let Some(op) = &sink.state.operation
+    {
+        op.mark_changed();
+    }
     let index = root_index(sink, item);
     #[cfg(test)]
     if std::env::var("FOLDEX_NATIVE_UNDO_PROBE").as_deref() == Ok("1") {
@@ -799,7 +814,13 @@ unsafe extern "system" fn sink_post_new(
 ) -> i32 {
     0
 }
-unsafe extern "system" fn sink_progress(this: *mut c_void, _: u32, _: u32) -> i32 {
+unsafe extern "system" fn sink_progress(this: *mut c_void, total: u32, done: u32) -> i32 {
+    let sink = unsafe { &*this.cast::<ProgressSink>() };
+    if sink.root.is_none()
+        && let Some(op) = &sink.state.operation
+    {
+        op.progress(total, done);
+    }
     sink_check(this)
 }
 
@@ -866,6 +887,10 @@ impl Report {
             && self.outcomes.iter().all(|outcome| *outcome == SUCCEEDED)
     }
     fn message(&self, action: &str) -> io::Result<String> {
+        super::operations::native_outcome(
+            !self.full_success(),
+            self.aborted || is_cancel(self.result),
+        );
         if let Some(error) = &self.setup_error {
             return Err(io::Error::other(error.clone()));
         }
@@ -1786,6 +1811,28 @@ mod tests {
             ..partial
         };
         assert!(failure.message("Moved").is_err());
+    }
+
+    #[test]
+    fn progress_callbacks_keep_the_operation_token_outside_the_worker_thread_scope() {
+        let operations = super::super::operations::Operations::default();
+        let op = operations
+            .track(&super::super::Job::Undo, Arc::new(|| {}))
+            .unwrap()
+            .unwrap();
+        let state = {
+            let _current = super::super::operations::Current::enter(Some(op.clone()));
+            ProgressState::new(1, Arc::new(AtomicBool::new(false)))
+        };
+        let sink = progress_sink(state, None, false);
+        assert_eq!(unsafe { sink_progress(sink.0, 100, 25) }, 0);
+        assert_eq!(op.fraction(), Some(0.25));
+        // Confirm a child delete without a selected-root result.
+        record_item(sink.0, ptr::null_mut(), 0, ptr::null_mut(), true);
+        op.request_cancel();
+        assert_eq!(unsafe { sink_progress(sink.0, 100, 30) }, E_ABORT);
+        op.finish(&Err(io::Error::new(io::ErrorKind::Interrupted, "Stopped")));
+        assert_eq!(op.state(), super::super::operations::State::Partial);
     }
 
     #[test]

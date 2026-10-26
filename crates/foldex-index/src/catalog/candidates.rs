@@ -51,7 +51,11 @@ impl Catalog {
                 .saturating_sub(shard.first_id)
                 .saturating_add(1)
                 .min(shard.count as u64) as usize;
+            let deleted = self.deleted.get(&shard_index);
             for row in first..end {
+                if super::masks::deleted(deleted, row) {
+                    continue;
+                }
                 if row % 128 == 0 {
                     cancel.check()?;
                 }

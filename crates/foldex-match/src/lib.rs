@@ -19,7 +19,9 @@ pub const MAX_TEXT_BYTES: usize = 1024;
 pub const ALTERNATE_CALL_LIMIT: u8 = 10;
 
 /// Matching algorithm. Substring is an explicit reconstruction option.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(
+    Clone, Copy, Debug, Default, Eq, PartialEq, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum MatchMode {
     #[default]
     Fuzzy,

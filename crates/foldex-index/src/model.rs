@@ -117,6 +117,8 @@ impl BuildState {
 
 #[derive(Clone, Debug)]
 pub struct IndexStatus {
+    pub excluded_subtrees: Vec<PathBuf>,
+    pub directory_only: bool,
     pub generation: String,
     pub revision: u64,
     pub scope: PathBuf,
@@ -146,6 +148,7 @@ pub struct BuildProgress {
 
 #[derive(Clone, Debug)]
 pub struct IndexRecord {
+    pub availability: foldex_fs::capabilities::Availability,
     pub relative_path: PathBuf,
     pub raw_name: OsString,
     pub name: String,
@@ -155,6 +158,8 @@ pub struct IndexRecord {
     pub symlink: bool,
     pub size: u64,
     pub modified_secs: i64,
+    pub created_secs: Option<i64>,
+    pub accessed_secs: Option<i64>,
 }
 impl IndexRecord {
     pub fn new(
@@ -172,6 +177,7 @@ impl IndexRecord {
         let lowercase = name.to_lowercase();
         let hidden = name.starts_with('.');
         Ok(Self {
+            availability: Default::default(),
             relative_path,
             raw_name,
             name,
@@ -181,6 +187,8 @@ impl IndexRecord {
             symlink: false,
             size,
             modified_secs,
+            created_secs: None,
+            accessed_secs: None,
         })
     }
     pub(crate) fn heap_bytes(&self) -> usize {
@@ -193,6 +201,7 @@ impl IndexRecord {
 
 #[derive(Clone, Debug)]
 pub struct IndexRow {
+    pub availability: foldex_fs::capabilities::Availability,
     pub id: u64,
     pub path: PathBuf,
     pub relative_path: PathBuf,
@@ -203,6 +212,8 @@ pub struct IndexRow {
     pub symlink: bool,
     pub size: u64,
     pub modified_secs: i64,
+    pub created_secs: Option<i64>,
+    pub accessed_secs: Option<i64>,
     pub(crate) natural_key: Vec<u8>,
     pub(crate) raw_sort: Vec<u8>,
     pub(crate) extension: String,
@@ -228,6 +239,8 @@ pub enum SortColumn {
     Size,
     Modified,
     Kind,
+    Created,
+    Accessed,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum KindFilter {
@@ -264,6 +277,7 @@ pub struct TypeFilter {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct QuerySpec {
+    pub conditions: foldex_query::Conditions,
     pub text: String,
     pub match_mode: MatchMode,
     pub sort: SortColumn,
@@ -277,6 +291,7 @@ pub struct QuerySpec {
 impl Default for QuerySpec {
     fn default() -> Self {
         Self {
+            conditions: Default::default(),
             text: String::new(),
             match_mode: MatchMode::Fuzzy,
             sort: SortColumn::Name,
@@ -371,9 +386,12 @@ pub struct IngestionStats {
 
 #[derive(Clone, Debug, Default)]
 pub struct BuildOptions {
+    pub excluded_subtrees: Vec<PathBuf>,
     /// Exclude the common index-cache ancestor, including caches for other scopes.
     /// It must already exist. This protects against indexing the index itself.
     pub excluded_root: Option<PathBuf>,
+    /// Enumerate only direct children; never enqueue descendant directories.
+    pub directory_only: bool,
 }
 
 #[derive(Clone, Debug, Default)]
