@@ -505,10 +505,15 @@ mod tests {
         drop(old);
         NativeIndex::cleanup_owned(&cache, &scope).unwrap();
         assert!(!manifest.exists());
-        assert!(data.join(PENDING).exists());
-        drop(mapping);
-        NativeIndex::cleanup_owned(&cache, &scope).unwrap();
-        assert!(!data.exists());
+        // Windows that deletes a mapped hardlink name immediately has nothing left to retry.
+        if data.exists() {
+            assert!(data.join(PENDING).exists());
+            drop(mapping);
+            NativeIndex::cleanup_owned(&cache, &scope).unwrap();
+            assert!(!data.exists());
+        } else {
+            drop(mapping);
+        }
         assert_eq!(
             new.query(&QuerySpec::default(), 0, 256, &cancel)
                 .unwrap()

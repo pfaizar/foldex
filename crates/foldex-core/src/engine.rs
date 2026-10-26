@@ -1890,8 +1890,8 @@ mod tests {
         let first = Fixture::new();
         let second = Fixture::new();
         for i in 0..ENTRIES {
-            first.file(&format!("first{i}"));
-            second.file(&format!("second{i}"));
+            first.file(&format!("alpha{i}"));
+            second.file(&format!("omega{i}"));
         }
         // Preserve the original fixture's headroom while charging the two new
         // optional timestamps for every entry and the reserved pending chunk.

@@ -142,10 +142,25 @@ enum Watch {
 struct Monitor {
     signal: Arc<Signal>,
     _watch: Watch,
+    root_id: Option<foldex_fs::capabilities::DirectoryId>,
+    verified: AtomicU64,
 }
 impl Monitor {
     fn native(&self) -> bool {
         matches!(self._watch, Watch::Native { .. })
+    }
+    /// Windows sends no event for the watched folder itself, so a deleted or replaced root is
+    /// found by identity whenever new changes arrive.
+    fn verify_root(&self, root: &Path) {
+        let revision = self.signal.revision.load(Ordering::Acquire);
+        if self.verified.swap(revision, Ordering::AcqRel) == revision {
+            return;
+        }
+        if self.root_id.is_some()
+            && foldex_fs::capabilities::directory_identity(root).ok() != self.root_id
+        {
+            self.signal.healthy.store(false, Ordering::Release);
+        }
     }
 }
 impl Monitor {
@@ -212,6 +227,8 @@ impl Monitor {
         Self {
             signal,
             _watch: watch,
+            root_id: foldex_fs::capabilities::directory_identity(root).ok(),
+            verified: AtomicU64::new(0),
         }
     }
 }
@@ -751,6 +768,9 @@ impl Scopes {
                         refetch: false,
                     });
                 }
+            }
+            if scope.live {
+                scope.monitor.verify_root(&scope.root);
             }
             if scope.live
                 && (!scope.monitor.signal.healthy.load(Ordering::Acquire)

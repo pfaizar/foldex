@@ -476,45 +476,46 @@ pub(super) fn location(path: &Path) -> capabilities::Location {
     }
 }
 
-pub(super) fn same_directory(left: &Path, right: &Path) -> io::Result<bool> {
-    fn identity(path: &Path) -> io::Result<(u64, [u8; 16])> {
-        let path = wide_path(path)?;
-        let raw = unsafe {
-            CreateFileW(
-                path.as_ptr(),
-                FILE_READ_ATTRIBUTES,
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                ptr::null(),
-                OPEN_EXISTING,
-                FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
-                ptr::null_mut(),
-            )
-        };
-        if raw == INVALID_HANDLE_VALUE {
-            return Err(io::Error::last_os_error());
-        }
-        let _guard = unsafe { OwnedHandle::from_raw_handle(raw.cast()) };
-        if !probe_handle(raw)?.is_dir() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "Expected a directory",
-            ));
-        }
-        let mut info = FILE_ID_INFO::default();
-        if unsafe {
-            GetFileInformationByHandleEx(
-                raw,
-                FileIdInfo,
-                (&mut info as *mut FILE_ID_INFO).cast(),
-                std::mem::size_of_val(&info) as u32,
-            )
-        } == 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-        Ok((info.VolumeSerialNumber, info.FileId.Identifier))
+pub(super) fn directory_identity(path: &Path) -> io::Result<capabilities::DirectoryId> {
+    let path = wide_path(path)?;
+    let raw = unsafe {
+        CreateFileW(
+            path.as_ptr(),
+            FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
+            ptr::null_mut(),
+        )
+    };
+    if raw == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
     }
-    Ok(identity(left)? == identity(right)?)
+    let _guard = unsafe { OwnedHandle::from_raw_handle(raw.cast()) };
+    if !probe_handle(raw)?.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Expected a directory",
+        ));
+    }
+    let mut info = FILE_ID_INFO::default();
+    if unsafe {
+        GetFileInformationByHandleEx(
+            raw,
+            FileIdInfo,
+            (&mut info as *mut FILE_ID_INFO).cast(),
+            std::mem::size_of_val(&info) as u32,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok((info.VolumeSerialNumber, info.FileId.Identifier))
+}
+
+pub(super) fn same_directory(left: &Path, right: &Path) -> io::Result<bool> {
+    Ok(directory_identity(left)? == directory_identity(right)?)
 }
 
 #[cfg(test)]

@@ -253,3 +253,25 @@ pub fn same_directory(left: &Path, right: &Path) -> io::Result<bool> {
         Ok(fs::canonicalize(left)? == fs::canonicalize(right)?)
     }
 }
+
+/// Volume and file identity of a directory; a deleted and recreated directory gets a new one.
+pub type DirectoryId = (u64, [u8; 16]);
+
+pub fn directory_identity(path: &Path) -> io::Result<DirectoryId> {
+    #[cfg(windows)]
+    {
+        super::windows::directory_identity(path)
+    }
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let metadata = fs::metadata(path)?;
+        if !metadata.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Expected a directory",
+            ));
+        }
+        Ok((metadata.dev(), u128::from(metadata.ino()).to_ne_bytes()))
+    }
+}
