@@ -1,0 +1,291 @@
+---
+import { getImage } from 'astro:assets';
+import { loops, type LoopName } from '../data/loops';
+import palette from '../assets/media/palette.png';
+import search from '../assets/media/search.png';
+import navigate from '../assets/media/navigate.png';
+import theme from '../assets/media/theme.png';
+import launcher from '../assets/media/launcher.png';
+
+const posters = { palette, search, navigate, theme, launcher };
+
+interface Props {
+  name: LoopName;
+  /** Describes what the loop shows, for people who cannot see it. */
+  label: string;
+  /** The hero loop loads immediately; others wait until they are near. */
+  priority?: boolean;
+  /** Show the recorded key presses over the video. */
+  keycast?: boolean;
+  class?: string;
+}
+
+// The rest carries the parent's style scope, so it can size the figure.
+const {
+  name,
+  label,
+  priority = false,
+  keycast = true,
+  class: className,
+  ...rest
+} = Astro.props;
+const source = posters[name];
+const poster = await getImage({
+  src: source,
+  format: 'webp',
+  width: source.width,
+  quality: 82,
+});
+---
+
+<figure
+  {...rest}
+  class:list={['loop', className]}
+  data-loop={name}
+  data-keys={JSON.stringify(keycast ? loops[name].keys : [])}
+>
+  <div class="loop-frame">
+    <video
+      muted
+      loop
+      playsinline
+      disablepictureinpicture
+      preload={priority ? 'auto' : 'none'}
+      poster={poster.src}
+      width={source.width}
+      height={source.height}
+      aria-label={label}
+    >
+      <source src={`/media/${name}.webm`} type="video/webm" />
+      <source src={`/media/${name}.mp4`} type="video/mp4" />
+    </video>
+    <div class="keycast" aria-hidden="true"></div>
+    <button class="loop-toggle" type="button" aria-label="Pause video">
+      <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
+        <path class="i-pause" d="M3 2h2v8H3zM7 2h2v8H7z"></path>
+        <path class="i-play" d="M3 2l7 4-7 4z"></path>
+      </svg>
+    </button>
+  </div>
+  <slot />
+</figure>
+
+<script>
+  const names: Record<string, string> = {
+    ENTER: 'Enter',
+    ESC: 'Esc',
+    UP: '↑',
+    DOWN: '↓',
+    LEFT: '←',
+    RIGHT: '→',
+    BACKSPACE: '⌫',
+    TAB: 'Tab',
+  };
+  const modifiers: Record<string, string> = {
+    '^': 'Ctrl',
+    '+': 'Shift',
+    '%': 'Alt',
+  };
+
+  /** SendKeys notation, as recorded, to keycap labels. */
+  function parse(code: string): { typed?: string; caps?: string[] } {
+    const caps: string[] = [];
+    let rest = code;
+    while (rest.length > 1 && rest[0]! in modifiers) {
+      caps.push(modifiers[rest[0]!]!);
+      rest = rest.slice(1);
+    }
+    const named = /^\{(\w+)\}$/.exec(rest);
+    if (named) caps.push(names[named[1]!] ?? named[1]!);
+    else if (caps.length) caps.push(rest.toUpperCase());
+    else return { typed: rest };
+    return { caps };
+  }
+
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+  document.querySelectorAll<HTMLElement>('[data-loop]').forEach((figure) => {
+    const video = figure.querySelector('video')!;
+    const cast = figure.querySelector<HTMLElement>('.keycast')!;
+    const toggle = figure.querySelector<HTMLButtonElement>('.loop-toggle')!;
+    const events = (
+      JSON.parse(figure.dataset.keys ?? '[]') as [number, string][]
+    ).map(([t, code]) => ({ t, ...parse(code) }));
+    let userPaused = reduced.matches;
+    let visible = false;
+    let shown = '';
+
+    const render = (t: number) => {
+      let i = -1;
+      while (i + 1 < events.length && events[i + 1]!.t <= t) i++;
+      const last = events[i];
+      let html = '';
+      if (last?.typed !== undefined && t - last.t < 1.4) {
+        let text = '';
+        for (let j = i; j >= 0 && events[j]!.typed !== undefined; j--)
+          text = events[j]!.typed + text;
+        html = `<span class="typed">${text.replace(/[<&]/g, '')}<i></i></span>`;
+      } else if (last?.caps && t - last.t < 1.1) {
+        html = last.caps.map((cap) => `<kbd class="key">${cap}</kbd>`).join('');
+      }
+      const key = `${i}:${html}`;
+      if (key === shown) return;
+      const fresh = !shown.startsWith(`${i}:`) && html !== '';
+      shown = key;
+      cast.innerHTML = html;
+      cast.classList.toggle('is-on', html !== '');
+      if (fresh) {
+        cast.classList.remove('is-hit');
+        void cast.offsetWidth;
+        cast.classList.add('is-hit');
+      }
+    };
+
+    let frame = 0;
+    const tick = () => {
+      render(video.currentTime);
+      frame = requestAnimationFrame(tick);
+    };
+    video.addEventListener('play', () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(tick);
+    });
+    video.addEventListener('pause', () => cancelAnimationFrame(frame));
+
+    const sync = () => {
+      const run = visible && !userPaused && !document.hidden;
+      if (run && video.paused) video.play().catch(() => setPaused(true));
+      if (!run && !video.paused) video.pause();
+    };
+    const setPaused = (paused: boolean) => {
+      userPaused = paused;
+      figure.classList.toggle('is-paused', paused);
+      toggle.setAttribute('aria-label', paused ? 'Play video' : 'Pause video');
+      sync();
+    };
+    toggle.addEventListener('click', () => setPaused(!userPaused));
+    setPaused(userPaused);
+
+    new IntersectionObserver(
+      (entries) => {
+        visible = entries.some((entry) => entry.isIntersecting);
+        if (visible && video.preload === 'none') video.preload = 'auto';
+        sync();
+      },
+      { rootMargin: '200px 0px' },
+    ).observe(figure);
+    document.addEventListener('visibilitychange', sync);
+  });
+</script>
+
+<style>
+  .loop {
+    margin: 0;
+  }
+  .loop-frame {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid #ffffff1f;
+    border-radius: var(--radius);
+    background: var(--night);
+    box-shadow:
+      0 0 0 1px #00000059,
+      0 30px 60px -30px #00000080;
+  }
+  video {
+    width: 100%;
+  }
+  .keycast {
+    position: absolute;
+    left: 50%;
+    bottom: 18px;
+    display: flex;
+    gap: 6px;
+    padding: 8px;
+    border-radius: 8px;
+    background: #0b0e10e6;
+    color: #f4f6f6;
+    font-size: clamp(13px, 1.4vw, 17px);
+    box-shadow: 0 0 0 1px #ffffff1a;
+    opacity: 0;
+    transform: translate(-50%, 6px);
+    transition:
+      opacity 180ms var(--ease-out),
+      transform 180ms var(--ease-out);
+    pointer-events: none;
+  }
+  .keycast.is-on {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  .keycast.is-hit :global(.key) {
+    animation: press 160ms var(--ease-out);
+  }
+  .keycast :global(.key) {
+    min-width: 2.2em;
+    height: 2.2em;
+    border-color: #ffffff59;
+    background: #ffffff0d;
+  }
+  .keycast :global(.typed) {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0.35em 0.6em;
+    font-family: var(--font-mono);
+  }
+  .keycast :global(.typed i) {
+    width: 0.55em;
+    height: 1.1em;
+    background: var(--yellow);
+    animation: caret 1s steps(1) infinite;
+  }
+  @keyframes press {
+    from {
+      transform: translateY(2px);
+      border-bottom-width: 1px;
+    }
+  }
+  @keyframes caret {
+    50% {
+      opacity: 0;
+    }
+  }
+  .loop-toggle {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 1px solid #ffffff26;
+    border-radius: 6px;
+    background: #0b0e10b3;
+    color: #f4f6f6;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 150ms var(--ease-out);
+  }
+  .loop-frame:hover .loop-toggle,
+  .loop-toggle:focus-visible,
+  .is-paused .loop-toggle {
+    opacity: 1;
+  }
+  .loop-toggle path {
+    fill: currentColor;
+  }
+  .i-play,
+  .is-paused .i-pause {
+    display: none;
+  }
+  .is-paused .i-play {
+    display: block;
+  }
+  @media (hover: none) {
+    .loop-toggle {
+      opacity: 1;
+    }
+  }
+</style>
