@@ -538,11 +538,11 @@ impl Hotkeys {
             return;
         }
         let lost_focus = native.lost_focus
-            || !input.focused
-            || input
-                .events
-                .iter()
-                .any(|event| matches!(event, Event::WindowFocused(false)));
+            || !self.native_capture.running()
+                && input
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, Event::WindowFocused(false)));
         if lost_focus || native.overflow || native.cancelled {
             self.cancel_recording();
             discard_recorded_events(&mut input.events);
@@ -1071,7 +1071,7 @@ impl Hotkeys {
     ) -> Option<Command> {
         let allow_file_ops = allow_file_ops && !crate::keyboard::composing(ctx);
         let now = self.begin_frame(ctx, allow_file_ops);
-        if !ctx.input(|input| input.focused) {
+        if !ctx.input(|input| input.focused) && !self.native_capture.running() {
             if self.recording.is_some() {
                 self.cancel_recording();
             }
@@ -1328,7 +1328,7 @@ impl Hotkeys {
         }
     }
     fn poll_recording(&mut self, ctx: &egui::Context) {
-        if !ctx.input(|input| input.focused) {
+        if !ctx.input(|input| input.focused) && !self.native_capture.running() {
             self.cancel_recording();
             return;
         }

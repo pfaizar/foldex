@@ -3794,7 +3794,9 @@ impl Foldex {
         if let Some(mut bindings) = session.hotkeys.take() {
             crate::hotkeys::Hotkeys::add_keyboard_defaults(&mut bindings);
             if self.hotkeys.bindings() != bindings {
-                self.hotkeys = crate::hotkeys::Hotkeys::from_bindings(bindings);
+                // Keep the instance: it owns the native recorder attached to
+                // this window. A fresh map would record without the keyboard hook.
+                self.hotkeys.replace_bindings(bindings);
             }
         }
         if self.sidebar_sections.preferences() != &session.sidebar_preferences {
