@@ -1,0 +1,278 @@
+---
+import { Image } from 'astro:assets';
+import workspaceDark from '../../assets/screenshots/workspace-dark.png';
+import workspaceLight from '../../assets/screenshots/workspace-light.png';
+
+// Each line of the card cycles through these, and the page restyles to match,
+// the way Foldex restyles when theme.toml is saved.
+const settings = [
+  {
+    key: 'accent',
+    css: '--teal',
+    values: [
+      [23, 161, 204],
+      [139, 124, 246],
+      [52, 178, 112],
+      [236, 106, 82],
+    ],
+  },
+  {
+    key: 'folder',
+    css: '--yellow',
+    values: [
+      [255, 205, 79],
+      [255, 166, 94],
+      [130, 200, 255],
+      [255, 150, 186],
+    ],
+  },
+] as const;
+const radii = [5, 0, 10];
+const sizes = '(max-width: 900px) 100vw, 840px';
+---
+
+<section class="themes" data-tone="night" aria-labelledby="themes-title">
+  <div class="dither-edge" style="--from: var(--paper)"></div>
+  <div class="wrap layout">
+    <div class="compare" data-compare style="--pos: 50%">
+      <Image
+        src={workspaceLight}
+        widths={[720, 1080, 1446]}
+        sizes={sizes}
+        alt="Foldex in light mode, with two folders side by side."
+        loading="lazy"
+      />
+      <div class="dark">
+        <Image
+          src={workspaceDark}
+          widths={[720, 1080, 1446]}
+          sizes={sizes}
+          alt="The same Foldex window in dark mode."
+          loading="lazy"
+        />
+      </div>
+      <span class="handle" aria-hidden="true"></span>
+      <input
+        type="range"
+        min="0"
+        max="100"
+        value="50"
+        aria-label="Reveal dark or light mode"
+      />
+    </div>
+
+    <div class="side">
+      <h2 id="themes-title" class="pixel">
+        Dark, light, or yours.
+      </h2>
+      <div class="toml mono" data-toml>
+        <p class="file">theme.toml</p>
+        <p class="line">
+          <span class="k">name</span> = <span class="s">"Graphite"</span>
+        </p>
+        {settings.map(({ key, css, values }) => (
+          <button
+            type="button"
+            class="line"
+            data-css={css}
+            data-values={JSON.stringify(values)}
+            aria-label={`Change the ${key} colour`}
+          >
+            <span class="k">{key}</span> ={' '}
+            <span class="v">[{values[0].join(', ')}]</span>
+            <i
+              class="swatch"
+              style={`background: rgb(${values[0].join(' ')})`}
+            />
+          </button>
+        ))}
+        <button
+          type="button"
+          class="line"
+          data-css="--radius"
+          data-values={JSON.stringify(radii)}
+          aria-label="Change the corner radius"
+        >
+          <span class="k">radius</span> = <span class="v">{radii[0]}</span>
+        </button>
+        <p class="line">
+          <span class="k">motion_ms</span> = <span class="v">145.0</span>
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+  document.querySelectorAll<HTMLElement>('[data-compare]').forEach((root) => {
+    const input = root.querySelector('input')!;
+    input.addEventListener('input', () =>
+      root.style.setProperty('--pos', `${input.value}%`),
+    );
+  });
+
+  document
+    .querySelectorAll<HTMLButtonElement>('[data-toml] button')
+    .forEach((line) => {
+      const values = JSON.parse(line.dataset.values!) as (number | number[])[];
+      const value = line.querySelector('.v')!;
+      const swatch = line.querySelector<HTMLElement>('.swatch');
+      let index = 0;
+      line.addEventListener('click', () => {
+        index = (index + 1) % values.length;
+        const next = values[index]!;
+        const root = document.documentElement.style;
+        if (Array.isArray(next)) {
+          value.textContent = `[${next.join(', ')}]`;
+          swatch!.style.background = `rgb(${next.join(' ')})`;
+          if (index === 0) root.removeProperty(line.dataset.css!);
+          else root.setProperty(line.dataset.css!, `rgb(${next.join(' ')})`);
+        } else {
+          value.textContent = String(next);
+          root.setProperty(line.dataset.css!, `${next * 2}px`);
+        }
+        line.classList.remove('is-saved');
+        void line.offsetWidth;
+        line.classList.add('is-saved');
+      });
+    });
+</script>
+
+<style>
+  .themes {
+    position: relative;
+    background: var(--night);
+    color: #f1f4f4;
+  }
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 8fr) minmax(0, 4fr);
+    gap: 48px clamp(32px, 4vw, 64px);
+    align-items: center;
+    padding: clamp(48px, 7vw, 112px) 0 clamp(96px, 11vw, 160px);
+  }
+
+  .compare {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid #ffffff1f;
+    border-radius: var(--radius);
+    box-shadow: 0 30px 60px -30px #000;
+    aspect-ratio: 1446 / 853;
+  }
+  .compare :global(img) {
+    width: 100%;
+  }
+  .dark {
+    position: absolute;
+    inset: 0;
+    clip-path: inset(0 calc(100% - var(--pos)) 0 0);
+  }
+  .handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: var(--pos);
+    width: 2px;
+    margin-left: -1px;
+    background: var(--teal);
+    pointer-events: none;
+  }
+  .handle::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 14px;
+    height: 36px;
+    border-radius: 3px;
+    background: var(--teal);
+    translate: -50% -50%;
+  }
+  .compare input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: ew-resize;
+  }
+  .compare:has(input:focus-visible) {
+    outline: 2px solid var(--teal);
+    outline-offset: 3px;
+  }
+
+  h2 {
+    font-size: clamp(40px, 4.2vw, 64px);
+    line-height: 0.95;
+  }
+  .toml {
+    margin-top: 32px;
+    padding: 4px 0 10px;
+    border: 1px solid var(--night-line);
+    border-radius: var(--radius);
+    background: var(--night-2);
+    font-size: 13px;
+  }
+  .file {
+    margin-bottom: 6px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--night-line);
+    color: #6f7b80;
+    font-size: 12px;
+  }
+  .line {
+    display: flex;
+    align-items: center;
+    gap: 0.6ch;
+    width: 100%;
+    padding: 5px 14px;
+    border: 0;
+    background: none;
+    color: #8b969b;
+    font: inherit;
+    text-align: left;
+    white-space: pre;
+  }
+  button.line {
+    cursor: pointer;
+    transition: background-color 120ms var(--ease-out);
+  }
+  button.line:hover {
+    background: #ffffff0a;
+  }
+  button.line .v {
+    border-bottom: 1px dashed #ffffff40;
+  }
+  .k {
+    color: var(--night-text);
+  }
+  .v,
+  .s {
+    color: var(--yellow);
+  }
+  .swatch {
+    width: 12px;
+    height: 12px;
+    margin-left: auto;
+    border-radius: 2px;
+  }
+  .is-saved {
+    animation: saved 600ms var(--ease-out);
+  }
+  @keyframes saved {
+    from {
+      background: color-mix(in srgb, var(--teal) 30%, transparent);
+    }
+  }
+
+  @media (max-width: 900px) {
+    .layout {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .side {
+      order: -1;
+    }
+  }
+</style>

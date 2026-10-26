@@ -1,6 +1,6 @@
 ---
 import PageLayout from '../layouts/PageLayout.astro';
-import Button from '../components/ui/Button.astro';
+import DitherField from '../components/DitherField.astro';
 import Icon from '../components/ui/Icon.astro';
 ---
 
@@ -9,37 +9,54 @@ import Icon from '../components/ui/Icon.astro';
   description="This page could not be found. Return to Foldex."
   noindex
 >
-  <main id="main" class="container not-found" tabindex="-1">
-    <p>404</p>
-    <h1>This folder’s empty.</h1>
-    <p>The page you’re looking for isn’t here.</p>
-    <Button href="/">
-      Back to Foldex <Icon name="arrow-right" size={16} />
-    </Button>
+  <main id="main" class="not-found" tabindex="-1">
+    <DitherField />
+    <div class="wrap copy">
+      <h1 class="pixel">404</h1>
+      <p>This folder is empty.</p>
+      <a class="back" href="/">
+        <Icon name="arrow-right" size={16} />
+        Back to Foldex
+      </a>
+    </div>
   </main>
 </PageLayout>
 
 <style>
   .not-found {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    justify-content: center;
+    position: relative;
+    display: grid;
+    align-items: center;
     min-height: 100svh;
-    padding-block: 70px;
+    background: var(--night);
+    color: #f1f4f4;
+  }
+  .copy {
+    position: relative;
   }
   h1 {
-    margin: 13px 0;
-    font-size: clamp(40px, 6vw, 68px);
-    line-height: 1.1;
-    font-weight: 500;
-    letter-spacing: -0.06em;
+    font-size: clamp(120px, 24vw, 320px);
+    line-height: 0.8;
   }
   p {
-    color: var(--muted);
-    line-height: 1.7;
+    margin-top: 24px;
+    color: var(--night-text);
+    font-size: 20px;
   }
-  .not-found > p:last-of-type {
-    margin-bottom: 29px;
+  .back {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    height: 48px;
+    margin-top: 32px;
+    padding: 0 20px;
+    border-radius: 6px;
+    background: var(--yellow);
+    color: var(--ink);
+    font-weight: 600;
+    box-shadow: inset 0 -3px var(--folder-back);
+  }
+  .back :global(svg) {
+    rotate: 180deg;
   }
 </style>

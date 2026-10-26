@@ -1,0 +1,293 @@
+---
+// A keyboard that names Foldex's default shortcuts. Holding a modifier lights
+// every key that completes one; a full combination shows its command. It
+// follows the visitor's own keyboard, or taps, and plays a demo while idle.
+import { shortcuts } from '../data/shortcuts';
+import { keyId } from '../data/keys';
+
+interface Props {
+  class?: string;
+}
+const { class: className, ...rest } = Astro.props;
+
+type Cap = string | [label: string, units: number];
+const letters = (s: string): Cap[] => [...s];
+const rows: Cap[][] = [
+  ['Esc', ...Array.from({ length: 12 }, (_, i) => `F${i + 1}`), ['Del', 2]],
+  [...letters('`1234567890-='), ['⌫', 2]],
+  [['Tab', 1.5], ...letters('QWERTYUIOP[]'), ['\\', 1.5]],
+  [['Caps', 1.75], ...letters("ASDFGHJKL;'"), ['Enter', 2.25]],
+  [['Shift', 2.25], ...letters('ZXCVBNM,./'), ['Shift', 2.75]],
+  [
+    ['Ctrl', 1.5],
+    ['Win', 1.25],
+    ['Alt', 1.25],
+    ['Space', 5.75],
+    ['Alt', 1.25],
+    '←',
+    '↑',
+    '↓',
+    '→',
+  ],
+];
+const used = new Set(shortcuts.flatMap(({ keys }) => keys.map(keyId)));
+const table = shortcuts.map(({ name, keys }) => ({
+  name,
+  keys,
+  ids: keys.map(keyId),
+}));
+---
+
+<figure {...rest} class:list={['board', className]} data-board>
+  <div class="readout" aria-hidden="true">
+    <p class="name pixel" data-name>
+      Hold Ctrl
+    </p>
+    <p class="combo mono" data-combo></p>
+  </div>
+  <div class="keyboard" aria-hidden="true">
+    {rows.map((row) => (
+      <div class="row">
+        {row.map((cap) => {
+          const [label, units] = typeof cap === 'string' ? [cap, 1] : cap;
+          const id = keyId(label);
+          return (
+            <button
+              type="button"
+              tabindex="-1"
+              class:list={['cap', { used: used.has(id) }]}
+              data-id={id}
+              style={`--u:${units}`}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+    ))}
+  </div>
+  <script
+    is:inline
+    type="application/json"
+    data-table
+    set:html={JSON.stringify(table).replace(/</g, '\\u003c')}
+  />
+  <slot />
+  <dl class="sr-only">
+    {shortcuts.map(({ name, keys }) => (
+      <div>
+        <dt>{name}</dt>
+        <dd>{keys.join(' + ')}</dd>
+      </div>
+    ))}
+  </dl>
+</figure>
+
+<script>
+  import { eventKeyId, modifiers } from '../data/keys';
+
+  type Shortcut = { name: string; keys: string[]; ids: string[] };
+  const demo = [
+    'Commands',
+    'Search subfolders',
+    'Up a folder',
+    'New tab',
+    'Split right',
+    'Rename',
+    'Launcher',
+  ];
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+
+  document.querySelectorAll<HTMLElement>('[data-board]').forEach((board) => {
+    const table: Shortcut[] = JSON.parse(
+      board.querySelector('[data-table]')!.textContent!,
+    );
+    const caps = [...board.querySelectorAll<HTMLButtonElement>('.cap')];
+    const name = board.querySelector<HTMLElement>('[data-name]')!;
+    const combo = board.querySelector<HTMLElement>('[data-combo]')!;
+    const physical = new Set<string>();
+    const tapped = new Set<string>();
+    let shown: Set<string> = new Set();
+    let lastInput = 0;
+    let clearTap = 0;
+
+    const same = (a: string[], b: Set<string>) =>
+      a.length === b.size && a.every((id) => b.has(id));
+
+    const paint = (held: Set<string>) => {
+      shown = held;
+      const match = table.find((s) => same(s.ids, held));
+      const mods = [...held].filter((id) => modifiers.has(id));
+      // Keys that would finish a shortcut from what is held now.
+      const next = new Set(
+        held.size && mods.length === held.size
+          ? table
+              .filter((s) => mods.every((m) => s.ids.includes(m)))
+              .filter((s) => s.ids.length === mods.length + 1)
+              .flatMap((s) => s.ids.filter((id) => !held.has(id)))
+          : [],
+      );
+      for (const cap of caps) {
+        cap.classList.toggle('is-down', held.has(cap.dataset.id!));
+        cap.classList.toggle('is-next', next.has(cap.dataset.id!));
+      }
+      board.classList.toggle('is-holding', held.size > 0);
+      if (match) {
+        name.textContent = match.name;
+        combo.textContent = match.keys.join(' + ');
+        name.classList.remove('is-hit');
+        void name.offsetWidth;
+        name.classList.add('is-hit');
+      } else if (held.size) {
+        const labels = caps.filter((c) => held.has(c.dataset.id!));
+        combo.textContent = [
+          ...new Set(labels.map((c) => c.textContent!.trim())),
+        ]
+          .join(' + ')
+          .concat(' + …');
+      } else {
+        combo.textContent = '';
+      }
+    };
+
+    const fromKeyboard = () => paint(new Set(physical));
+    addEventListener('keydown', (event) => {
+      lastInput = Date.now();
+      physical.add(eventKeyId(event));
+      fromKeyboard();
+    });
+    addEventListener('keyup', (event) => {
+      physical.delete(eventKeyId(event));
+      if (['Control', 'Alt', 'Shift', 'Meta'].includes(event.key))
+        physical.clear();
+      // Keep a completed shortcut on screen until the next one.
+      if (physical.size) fromKeyboard();
+      else paint(new Set());
+    });
+    addEventListener('blur', () => {
+      physical.clear();
+      paint(new Set());
+    });
+
+    // Taps latch modifiers, so a touch screen can spell out a combination.
+    board.addEventListener('click', (event) => {
+      const cap = (event.target as Element).closest<HTMLButtonElement>('.cap');
+      if (!cap) return;
+      lastInput = Date.now();
+      const id = cap.dataset.id!;
+      if (modifiers.has(id) && tapped.has(id)) tapped.delete(id);
+      else tapped.add(id);
+      paint(new Set(tapped));
+      clearTimeout(clearTap);
+      if (!modifiers.has(id)) {
+        tapped.clear();
+        clearTap = window.setTimeout(() => {
+          if (!tapped.size) paint(new Set());
+        }, 1600);
+      }
+    });
+
+    let visible = false;
+    new IntersectionObserver((entries) => {
+      visible = entries.some((entry) => entry.isIntersecting);
+    }).observe(board);
+    let step = 0;
+    window.setInterval(() => {
+      if (reduced.matches || !visible || Date.now() - lastInput < 5000) return;
+      if (physical.size || tapped.size) return;
+      const shortcut = table.find((s) => s.name === demo[step % demo.length])!;
+      step++;
+      const ids = shortcut.ids;
+      // Press the modifiers first, then the key, as a person would.
+      paint(new Set(ids.slice(0, -1)));
+      window.setTimeout(() => paint(new Set(ids)), 380);
+      window.setTimeout(() => {
+        if (Date.now() - lastInput > 5000 && same(ids, shown)) paint(new Set());
+      }, 1500);
+    }, 2200);
+  });
+</script>
+
+<style>
+  .board {
+    margin: 0;
+  }
+  .readout {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 64px;
+    margin-bottom: 16px;
+  }
+  .name {
+    font-size: clamp(28px, 3.4vw, 48px);
+    line-height: 1;
+    white-space: nowrap;
+  }
+  .name.is-hit {
+    animation: settle 500ms var(--ease-out);
+  }
+  @keyframes settle {
+    from {
+      font-variation-settings: 'ELSH' 40;
+    }
+  }
+  .combo {
+    color: var(--muted);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .keyboard {
+    --gap: clamp(2px, 0.4vw, 5px);
+    display: grid;
+    gap: var(--gap);
+    padding: clamp(6px, 1vw, 12px);
+    border-radius: 10px;
+    background: var(--paper-2);
+    box-shadow: inset 0 0 0 1px var(--line);
+    user-select: none;
+  }
+  .row {
+    display: flex;
+    gap: var(--gap);
+  }
+  .cap {
+    flex: var(--u) 1 0;
+    min-width: 0;
+    height: clamp(22px, 3.2vw, 44px);
+    padding: 0 0 0 clamp(2px, 0.4vw, 6px);
+    border: 1px solid var(--line);
+    border-bottom-width: 3px;
+    border-radius: 4px;
+    background: var(--paper);
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: clamp(7px, 0.85vw, 11px);
+    text-align: left;
+    cursor: pointer;
+    transition:
+      transform 80ms var(--ease-out),
+      background-color 120ms var(--ease-out),
+      color 120ms var(--ease-out);
+  }
+  .cap.used {
+    color: var(--ink);
+    border-color: #b5bfbf;
+  }
+  .is-holding .cap:not(.is-down, .is-next) {
+    color: #9aa3a6;
+  }
+  .cap.is-next {
+    border-color: var(--teal);
+    background: color-mix(in srgb, var(--teal) 14%, var(--paper));
+    color: var(--teal-ink);
+  }
+  .cap.is-down {
+    transform: translateY(2px);
+    border-bottom-width: 1px;
+    border-color: var(--teal-ink);
+    background: var(--teal);
+    color: #fff;
+  }
+</style>

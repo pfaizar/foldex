@@ -1,51 +1,145 @@
 ---
-import { site } from '../config/site';
-import Brand from './ui/Brand.astro';
+import { navigation, site } from '../config/site';
+
+const project = [
+  site.repository && { label: 'GitHub', href: site.repository },
+  site.download && { label: 'Releases', href: site.download },
+  site.repository && {
+    label: 'Issues',
+    href: site.repository.replace(/\/$/, '') + '/issues',
+  },
+  { label: 'License', href: site.license },
+].filter((link) => !!link);
 ---
 
-<footer class="site-footer">
-  <div class="container footer-inner">
-    <Brand />
-    <nav aria-label="Footer navigation">
-      <a href="#features">Features</a>
-      {site.repository && <a href={site.repository}>GitHub</a>}
-      <a href={site.license}>AGPL-3.0 License</a>
+<footer class="site-footer" data-tone="night">
+  <div class="dither-edge" style="--from: var(--paper)"></div>
+  <div class="wrap top">
+    <img
+      class="art"
+      src="/dither/folder-160.png"
+      alt=""
+      width="160"
+      height="160"
+      loading="lazy"
+    />
+    <nav class="links" aria-label="Footer">
+      <ul>
+        {navigation.map(({ label, href }) => (
+          <li>
+            <a href={href}>{label}</a>
+          </li>
+        ))}
+      </ul>
+      <ul>
+        {project.map(({ label, href }) => (
+          <li>
+            <a href={href}>{label}</a>
+          </li>
+        ))}
+      </ul>
     </nav>
+  </div>
+  <p class="wordmark pixel" aria-hidden="true">
+    {[...'Foldex'].map((char) => (
+      <span>{char}</span>
+    ))}
+  </p>
+  <div class="status mono">
+    <div class="wrap row">
+      <span>Foldex {site.version}</span>
+      <span>Made with Rust</span>
+      <span class="legal">
+        Not affiliated with Microsoft. Windows is a trademark of Microsoft.
+      </span>
+    </div>
   </div>
 </footer>
 
 <style>
   .site-footer {
-    border-top: 1px solid var(--line);
+    position: relative;
+    overflow: hidden;
+    background: var(--night);
+    color: var(--night-text);
   }
-  .footer-inner {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 24px;
-    min-height: 112px;
-    padding-block: 28px;
-  }
-  nav {
+  .top {
     display: flex;
     flex-wrap: wrap;
-    gap: 28px;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 40px;
+    padding-top: clamp(32px, 5vw, 64px);
   }
-  nav a {
-    color: var(--muted);
-    font-size: 13px;
+  .art {
+    width: clamp(96px, 10vw, 160px);
+    height: auto;
+    image-rendering: pixelated;
   }
-  nav a:hover {
-    color: var(--text);
-    text-decoration: underline;
-    text-underline-offset: 4px;
+  .links {
+    display: flex;
+    gap: clamp(40px, 6vw, 96px);
+    font-size: 14px;
   }
-  @media (max-width: 440px) {
-    .footer-inner {
-      align-items: flex-start;
-      flex-direction: column;
-      gap: 25px;
-      padding-block: 30px;
+  ul {
+    display: grid;
+    gap: 10px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .links a {
+    color: #8b969b;
+    transition: color 150ms var(--ease-out);
+  }
+  .links a:hover {
+    color: #fff;
+  }
+  /* The name, set large in the pixel face's grid shape. Each letter fills in
+     as the pointer passes over it. */
+  .wordmark {
+    display: flex;
+    justify-content: space-between;
+    width: min(var(--page), 100% - var(--gutter) * 2);
+    margin: clamp(32px, 5vw, 64px) auto -0.16em;
+    color: #1f262a;
+    font-size: clamp(96px, 22vw, 330px);
+    font-variation-settings: 'ELSH' 40;
+    line-height: 0.8;
+    user-select: none;
+  }
+  .wordmark span {
+    transition:
+      font-variation-settings 500ms var(--ease-out),
+      color 500ms var(--ease-out);
+  }
+  .wordmark span:hover {
+    color: var(--yellow);
+    font-variation-settings: 'ELSH' 0;
+    transition-duration: 60ms;
+  }
+  .status {
+    position: relative;
+    border-top: 1px solid var(--night-line);
+    background: var(--night-2);
+    color: #6f7b80;
+    font-size: 11px;
+  }
+  .row {
+    display: flex;
+    gap: 24px;
+    padding: 10px 0;
+  }
+  .legal {
+    margin-left: auto;
+  }
+  @media (max-width: 700px) {
+    .row {
+      flex-wrap: wrap;
+      gap: 6px 16px;
+    }
+    .legal {
+      margin-left: 0;
     }
   }
 </style>

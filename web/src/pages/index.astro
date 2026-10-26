@@ -1,20 +1,34 @@
 ---
+import { getImage } from 'astro:assets';
 import PageLayout from '../layouts/PageLayout.astro';
 import SiteHeader from '../components/SiteHeader.astro';
 import SiteFooter from '../components/SiteFooter.astro';
 import Hero from '../components/sections/Hero.astro';
+import Benchmarks from '../components/sections/Benchmarks.astro';
 import Features from '../components/sections/Features.astro';
-import Keyboard from '../components/sections/Keyboard.astro';
-import OpenSource from '../components/sections/OpenSource.astro';
+import Themes from '../components/sections/Themes.astro';
+import Launcher from '../components/sections/Launcher.astro';
+import Download from '../components/sections/Download.astro';
+import heroPoster from '../assets/media/palette.png';
+
+// Same options as LoopVideo uses, so this resolves to the poster it renders.
+const poster = await getImage({
+  src: heroPoster,
+  format: 'webp',
+  width: heroPoster.width,
+  quality: 82,
+});
 ---
 
-<PageLayout>
+<PageLayout preloadImage={poster.src}>
   <SiteHeader />
   <main id="main" tabindex="-1">
     <Hero />
+    <Benchmarks />
     <Features />
-    <Keyboard />
-    <OpenSource />
+    <Themes />
+    <Launcher />
+    <Download />
   </main>
   <SiteFooter />
 </PageLayout>

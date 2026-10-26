@@ -1,0 +1,378 @@
+---
+import Folder from '../ui/Folder.astro';
+import { benchmarkInfo, benchmarks } from '../../data/benchmarks';
+
+const rows = benchmarks.map((benchmark) => {
+  const [foldex, explorer] = benchmark.results;
+  const ratio = explorer!.value / foldex!.value;
+  return {
+    ...benchmark,
+    foldex: `${foldex!.value} ${benchmark.unit}`,
+    explorer: `${explorer!.value} ${benchmark.unit}`,
+    share: foldex!.value / explorer!.value,
+    times: ratio < 10 ? ratio.toFixed(1) : Math.round(ratio).toString(),
+  };
+});
+const first = rows[0]!;
+---
+
+<section
+  class="benchmarks"
+  id="benchmarks"
+  data-tone="paper"
+  aria-labelledby="benchmarks-title"
+>
+  <div class="dither-edge" style="--from: var(--night)"></div>
+  <div class="wrap layout">
+    <div class="head">
+      <h2 id="benchmarks-title" class="pixel">
+        Keeps up with you.
+      </h2>
+      {benchmarkInfo.placeholder && (
+        <p class="sample mono">Sample data. Measured results coming soon.</p>
+      )}
+    </div>
+
+    <div class="listing">
+      <table data-bench-table>
+        <caption class="sr-only">
+          Foldex compared with File Explorer. Lower is better.
+        </caption>
+        <thead>
+          <tr>
+            <th scope="col">Name</th>
+            <th scope="col">Foldex</th>
+            <th scope="col">File Explorer</th>
+            <th scope="col">
+              <span class="sr-only">Difference</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, i) => (
+            <tr
+              data-selected={i === 0 ? '' : undefined}
+              data-times={row.times}
+              data-claim={row.claim}
+              data-share={row.share}
+              data-foldex={row.foldex}
+              data-explorer={row.explorer}
+              data-detail={row.detail}
+            >
+              <th scope="row">
+                <button type="button" aria-pressed={i === 0}>
+                  <Folder />
+                  {row.title}
+                </button>
+              </th>
+              <td class="mono">{row.foldex}</td>
+              <td class="mono">{row.explorer}</td>
+              <td class="mono times">{row.times}×</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p class="method mono">{benchmarkInfo.method}</p>
+    </div>
+
+    <div class="readout" data-readout aria-live="polite">
+      <p class="figure pixel">
+        <span data-times>{first.times}</span>
+        <span class="x">×</span>
+      </p>
+      <p class="claim" data-claim>
+        {first.claim}
+      </p>
+      <div class="race" style={`--share:${first.share}`}>
+        <div class="lane lane--foldex">
+          <span>Foldex</span>
+          <span class="mono" data-foldex>
+            {first.foldex}
+          </span>
+          <i class="bar"></i>
+        </div>
+        <div class="lane lane--explorer">
+          <span>File Explorer</span>
+          <span class="mono" data-explorer>
+            {first.explorer}
+          </span>
+          <i class="bar"></i>
+        </div>
+      </div>
+      <p class="detail mono" data-detail>
+        {first.detail}
+      </p>
+    </div>
+  </div>
+</section>
+
+<script>
+  const section = document.querySelector<HTMLElement>('.benchmarks')!;
+  const rows = [...section.querySelectorAll<HTMLTableRowElement>('tbody tr')];
+  const readout = section.querySelector<HTMLElement>('[data-readout]')!;
+  const race = readout.querySelector<HTMLElement>('.race')!;
+  race.classList.add('is-armed');
+  const field = (name: string) =>
+    readout.querySelector<HTMLElement>(`[data-${name}]`)!;
+
+  // Both bars start together; each finishes in time proportional to its value.
+  const run = () => {
+    race.classList.remove('is-running');
+    void race.offsetWidth;
+    race.classList.add('is-running');
+  };
+
+  const choose = (row: HTMLTableRowElement, focus = false) => {
+    rows.forEach((other) => {
+      const on = other === row;
+      other.toggleAttribute('data-selected', on);
+      other.querySelector('button')!.setAttribute('aria-pressed', String(on));
+    });
+    for (const name of ['times', 'claim', 'foldex', 'explorer', 'detail'])
+      field(name).textContent = row.dataset[name]!;
+    race.style.setProperty('--share', row.dataset.share!);
+    readout.classList.remove('is-new');
+    void readout.offsetWidth;
+    readout.classList.add('is-new');
+    run();
+    if (focus) row.querySelector('button')!.focus();
+  };
+
+  rows.forEach((row, i) => {
+    const button = row.querySelector('button')!;
+    button.addEventListener('click', () => choose(row));
+    button.addEventListener('keydown', (event) => {
+      const step = { ArrowDown: 1, ArrowUp: -1 }[event.key];
+      if (!step) return;
+      event.preventDefault();
+      choose(rows[(i + step + rows.length) % rows.length]!, true);
+    });
+  });
+
+  new IntersectionObserver(
+    (entries, observer) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      run();
+      observer.disconnect();
+    },
+    { threshold: 0.4 },
+  ).observe(race);
+</script>
+
+<style>
+  .benchmarks {
+    position: relative;
+    padding-bottom: clamp(96px, 12vw, 160px);
+  }
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+    gap: 40px clamp(40px, 6vw, 96px);
+    margin-top: clamp(32px, 4vw, 56px);
+  }
+  .head {
+    grid-column: 1 / -1;
+    max-width: 44%;
+    min-height: clamp(120px, 14vw, 180px);
+  }
+  h2 {
+    font-size: clamp(40px, 4.6vw, 68px);
+    line-height: 0.95;
+  }
+  .sample {
+    display: inline-block;
+    margin-top: 20px;
+    padding: 4px 8px;
+    background: var(--yellow);
+    color: var(--ink);
+    font-size: 12px;
+    rotate: -1.5deg;
+  }
+
+  /* The table is drawn as a Foldex details view. */
+  .listing {
+    align-self: start;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  thead th {
+    height: 34px;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 400;
+    text-align: right;
+  }
+  thead th:first-child {
+    text-align: left;
+  }
+  thead th + th {
+    box-shadow: inset 1px 0 var(--line);
+  }
+  tbody tr {
+    position: relative;
+    transition: background-color 120ms var(--ease-out);
+  }
+  tbody tr:hover {
+    background: #17a1cc12;
+  }
+  tbody tr[data-selected] {
+    background: #17a1cc2b;
+  }
+  tbody th,
+  td {
+    height: 48px;
+    padding: 0 12px;
+    font-weight: 400;
+    text-align: right;
+    white-space: nowrap;
+  }
+  tbody th {
+    text-align: left;
+  }
+  td {
+    color: var(--ink-2);
+    font-size: 13px;
+  }
+  td.times {
+    color: var(--teal-ink);
+  }
+  tbody button {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    text-align: left;
+  }
+  /* The whole row is the button's hit area. */
+  tbody button::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+  }
+  tbody button:focus-visible {
+    outline: none;
+  }
+  tbody tr:has(button:focus-visible) {
+    outline: 2px solid var(--teal);
+    outline-offset: -2px;
+  }
+  .method {
+    margin-top: 16px;
+    padding-left: 12px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .readout {
+    align-self: start;
+    padding-top: 4px;
+  }
+  .figure {
+    display: flex;
+    align-items: baseline;
+    font-size: clamp(96px, 13vw, 200px);
+    line-height: 0.8;
+  }
+  .x {
+    color: var(--teal);
+    font-size: 0.5em;
+  }
+  .is-new .figure,
+  .is-new .claim {
+    animation: settle 600ms var(--ease-out);
+  }
+  @keyframes settle {
+    from {
+      font-variation-settings: 'ELSH' 40;
+      opacity: 0.4;
+    }
+  }
+  .claim {
+    margin-top: 12px;
+    font-size: 20px;
+  }
+  .race {
+    display: grid;
+    gap: 14px;
+    margin-top: 36px;
+  }
+  .lane {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 6px 12px;
+    font-size: 13px;
+  }
+  .lane .mono {
+    color: var(--ink-2);
+  }
+  .bar {
+    grid-column: 1 / -1;
+    height: 20px;
+    transform-origin: left;
+  }
+  .lane--foldex .bar {
+    width: calc(var(--share) * 100%);
+    min-width: 4px;
+    background: var(--teal);
+  }
+  /* The slower bar is dithered: a 2px checkerboard of ink. */
+  .lane--explorer .bar {
+    width: 100%;
+    background: repeating-conic-gradient(var(--ink-2) 0 25%, transparent 0 50%)
+      0 0 / 4px 4px;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    /* Bars start empty only once the script is there to fill them. */
+    .race.is-armed .bar {
+      transform: scaleX(0);
+    }
+    .race.is-running .bar {
+      animation: fill linear forwards;
+    }
+    .race.is-running .lane--explorer .bar {
+      animation-duration: 1.6s;
+    }
+    .race.is-running .lane--foldex .bar {
+      animation-duration: max(0.12s, calc(var(--share) * 1.6s));
+    }
+    @keyframes fill {
+      to {
+        transform: none;
+      }
+    }
+  }
+  .detail {
+    margin-top: 20px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  @media (max-width: 900px) {
+    .layout {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .head {
+      max-width: none;
+      min-height: 0;
+    }
+    .listing {
+      order: 1;
+    }
+    tbody th,
+    td,
+    thead th {
+      padding: 0 8px;
+    }
+    tbody button :global(.folder) {
+      display: none;
+    }
+  }
+</style>
