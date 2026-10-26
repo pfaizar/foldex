@@ -436,8 +436,12 @@ mod imp {
     };
     const TRAY: u32 = WM_APP + 0x464;
     const RECONFIGURE: u32 = WM_APP + 0x465;
+    const HOOK_HOTKEY: u32 = WM_APP + 0x467;
     const HOTKEY: i32 = 0x4649;
     const ICON: u32 = 1;
+    /// Marks the key tap that keeps a released Win key from opening Start, so
+    /// neither Foldex hook treats it as user input.
+    const MASK_MARKER: usize = 0x464f_4c59;
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().chain(Some(0)).collect()
     }
@@ -447,8 +451,111 @@ mod imp {
         taskbar: u32,
         version4: Cell<bool>,
         hotkey: Cell<Option<(i32, u32, u32)>>,
+        win_hook: Cell<HHOOK>,
         clipboard_listener: Cell<bool>,
         tray_allowed: bool,
+    }
+
+    // The low-level hook runs on the tray thread that installed it.
+    thread_local! {
+        static WIN_CHORD: Cell<Option<(HWND, u32, u32)>> = const { Cell::new(None) };
+        static WIN_TRIGGER_DOWN: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// Windows reserves most Win chords (Win+Space switches input language):
+    /// RegisterHotKey fails or the shell acts first. A low-level hook sees the
+    /// keys before shell hotkey processing and can claim them.
+    fn hook_win_chord(data: &WindowData, hwnd: HWND, modifiers: u32, key: u32) -> bool {
+        if data.win_hook.get().is_null() {
+            let hook = unsafe {
+                SetWindowsHookExW(
+                    WH_KEYBOARD_LL,
+                    Some(win_chord_hook),
+                    GetModuleHandleW(ptr::null()),
+                    0,
+                )
+            };
+            if hook.is_null() {
+                return false;
+            }
+            data.win_hook.set(hook);
+        }
+        WIN_CHORD.set(Some((hwnd, modifiers & 0xf, key)));
+        WIN_TRIGGER_DOWN.set(false);
+        true
+    }
+
+    fn unhook_win_chord(data: &WindowData) {
+        let hook = data.win_hook.replace(ptr::null_mut());
+        if !hook.is_null() {
+            unsafe {
+                UnhookWindowsHookEx(hook);
+            }
+        }
+        WIN_CHORD.set(None);
+        WIN_TRIGGER_DOWN.set(false);
+    }
+
+    fn held_modifiers() -> u32 {
+        let down = |vk: u16| unsafe { GetAsyncKeyState(vk as i32) } < 0;
+        (down(VK_MENU) as u32 * MOD_ALT)
+            | (down(VK_CONTROL) as u32 * MOD_CONTROL)
+            | (down(VK_SHIFT) as u32 * MOD_SHIFT)
+            | ((down(VK_LWIN) || down(VK_RWIN)) as u32 * MOD_WIN)
+    }
+
+    /// A Win press followed only by its release opens Start. Inject an unmapped
+    /// key between them, as keyboard remappers do.
+    fn mask_start_menu() {
+        let key = |flags| INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: 0xe8,
+                    wScan: 0,
+                    dwFlags: flags,
+                    time: 0,
+                    dwExtraInfo: MASK_MARKER,
+                },
+            },
+        };
+        let inputs = [key(0), key(KEYEVENTF_KEYUP)];
+        unsafe {
+            SendInput(
+                inputs.len() as u32,
+                inputs.as_ptr(),
+                std::mem::size_of::<INPUT>() as i32,
+            );
+        }
+    }
+
+    unsafe extern "system" fn win_chord_hook(code: i32, message: WPARAM, data: LPARAM) -> LRESULT {
+        if code == HC_ACTION as i32
+            && data != 0
+            && let Some((hwnd, modifiers, vk)) = WIN_CHORD.get()
+        {
+            // Windows owns this structure for the duration of this callback.
+            let key = unsafe { &*(data as *const KBDLLHOOKSTRUCT) };
+            if key.vkCode == vk && key.dwExtraInfo != MASK_MARKER {
+                let pressed = matches!(message as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
+                if pressed {
+                    if held_modifiers() == modifiers {
+                        // Repeats of a claimed press are swallowed without toggling.
+                        if !WIN_TRIGGER_DOWN.replace(true) {
+                            mask_start_menu();
+                            unsafe {
+                                PostMessageW(hwnd, HOOK_HOTKEY, 0, 0);
+                            }
+                        }
+                        return 1;
+                    }
+                    WIN_TRIGGER_DOWN.set(false);
+                } else if WIN_TRIGGER_DOWN.replace(false) {
+                    return 1;
+                }
+            }
+        }
+        unsafe { CallNextHookEx(ptr::null_mut(), code, message, data) }
     }
     fn tray(data: &WindowData, hwnd: HWND, add: bool) -> bool {
         let mut icon = NOTIFYICONDATAW {
@@ -492,8 +599,26 @@ mod imp {
             {
                 error = Some("Windows could not add Foldex to the system tray".into());
             }
-            if hotkey.is_empty() || parse_hotkey(&hotkey).is_some() {
-                if !replace_hotkey(
+            if let Some((modifiers, key)) =
+                parse_hotkey(&hotkey).filter(|(modifiers, _)| modifiers & MOD_WIN != 0)
+            {
+                if hook_win_chord(data, hwnd, modifiers, key) {
+                    replace_hotkey(
+                        &mut current,
+                        None,
+                        HOTKEY,
+                        |_, _, _| false,
+                        |id| unsafe {
+                            UnregisterHotKey(hwnd, id);
+                        },
+                    );
+                } else {
+                    shortcut_error = Some(format!(
+                        "Windows could not reserve {hotkey}. Your previous shortcut is still active."
+                    ));
+                }
+            } else if hotkey.is_empty() || parse_hotkey(&hotkey).is_some() {
+                if replace_hotkey(
                     &mut current,
                     parse_hotkey(&hotkey),
                     HOTKEY,
@@ -502,6 +627,8 @@ mod imp {
                         UnregisterHotKey(hwnd, id);
                     },
                 ) {
+                    unhook_win_chord(data);
+                } else {
                     shortcut_error = Some(format!(
                         "{hotkey} is already in use. Your previous shortcut is still active."
                     ));
@@ -514,6 +641,7 @@ mod imp {
             if data.state.tray_ready.load(Ordering::Acquire) {
                 tray(data, hwnd, false);
             }
+            unhook_win_chord(data);
             replace_hotkey(
                 &mut current,
                 None,
@@ -535,7 +663,8 @@ mod imp {
             // one. Keep its pending request; the queued message will settle it.
             if feedback.requested == hotkey {
                 if shortcut_error.is_none() {
-                    feedback.active = current.map(|_| hotkey.clone());
+                    feedback.active = (current.is_some() || !data.win_hook.get().is_null())
+                        .then(|| hotkey.clone());
                 }
                 feedback.error = shortcut_error;
                 feedback.pending = false;
@@ -614,13 +743,15 @@ mod imp {
                 data.state.event(ACTIVATE);
                 1
             }
-            WM_HOTKEY => {
-                if !data.state.enabled.load(Ordering::Acquire)
-                    || !data
-                        .hotkey
+            WM_HOTKEY | HOOK_HOTKEY => {
+                let registered = if msg == HOOK_HOTKEY {
+                    !data.win_hook.get().is_null()
+                } else {
+                    data.hotkey
                         .get()
                         .is_some_and(|(id, _, _)| wp == id as usize)
-                {
+                };
+                if !data.state.enabled.load(Ordering::Acquire) || !registered {
                     return 0;
                 }
                 if !data.state.opened.load(Ordering::Acquire) {
@@ -722,6 +853,7 @@ mod imp {
                     if let Some((id, _, _)) = data.hotkey.take() {
                         UnregisterHotKey(hwnd, id);
                     }
+                    unhook_win_chord(data);
                     RemoveClipboardFormatListener(hwnd);
                     PostQuitMessage(0);
                 }
@@ -838,6 +970,7 @@ mod imp {
             taskbar: unsafe { RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()) },
             version4: Cell::new(false),
             hotkey: Cell::new(None),
+            win_hook: Cell::new(ptr::null_mut()),
             clipboard_listener: Cell::new(false),
             tray_allowed,
         });

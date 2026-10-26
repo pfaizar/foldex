@@ -112,12 +112,6 @@ impl Foldex {
                     pending.paths.len(),
                     if pending.paths.len() == 1 { "" } else { "s" }
                 ));
-                ui.label(
-                    egui::RichText::new(
-                        "These items will be deleted permanently. This cannot be undone.",
-                    )
-                    .color(t.dim()),
-                );
                 ui.add_space(4.0 * scale);
                 for (index, path) in pending.paths.iter().take(4).enumerate() {
                     let (rect, _) = ui.allocate_exact_size(

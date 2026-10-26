@@ -419,9 +419,8 @@ impl Updates {
                         self.settings = previous;
                     }
                 }
-                ui.label("Installing always requires your confirmation. Foldex saves your workspace before restarting.");
                 if !self.managed {
-                    ui.label("This is a portable copy. Download the installer to enable in-app installation. Your portable folder stays separate.");
+                    ui.label("Portable copy: in-app install is unavailable.");
                 }
                 if self.downloading {
                     let total = self.available.as_ref().map_or(1, Update::size);
@@ -505,7 +504,7 @@ impl Updates {
                     }
                 });
                 if !can_install && self.ready.is_some() {
-                    ui.label("Finish file operations, tab transfers and editing dialogs before installing.");
+                    ui.label("Finish file operations first.");
                 }
                 if let Some(remaining) = cooling_down_for(self.last_attempt) {
                     ctx.request_repaint_after(remaining);

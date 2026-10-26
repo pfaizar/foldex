@@ -10,7 +10,7 @@ use std::{
 
 const APP_ID: i64 = 0x4649_4c49;
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
-pub(crate) const SELECT_ROW: &str = "SELECT e.id,e.relative,e.is_dir,e.hidden,e.symlink,e.size_key,e.modified,e.natural_key,e.raw_sort,e.extension FROM entries e WHERE e.id=?1";
+pub(crate) const SELECT_ROW: &str = "SELECT e.id,e.relative,e.is_dir,e.hidden,e.symlink,e.size_key,e.modified,e.natural_key,e.raw_sort,e.extension,e.availability FROM entries e WHERE e.id=?1";
 
 const SCHEMA: &str = "
 CREATE TABLE manifest(single INTEGER PRIMARY KEY CHECK(single=1),schema_version INTEGER NOT NULL,
@@ -18,8 +18,11 @@ CREATE TABLE manifest(single INTEGER PRIMARY KEY CHECK(single=1),schema_version 
  scope BLOB NOT NULL,state INTEGER NOT NULL,entries INTEGER NOT NULL,files INTEGER NOT NULL,folders INTEGER NOT NULL,
  skipped INTEGER NOT NULL,links INTEGER NOT NULL,excluded_cache INTEGER NOT NULL,started INTEGER NOT NULL,updated INTEGER NOT NULL,
  scope_modified INTEGER,synthetic INTEGER NOT NULL);
+CREATE TABLE exclusions(path BLOB NOT NULL);
+CREATE TABLE traversal_policy(single INTEGER PRIMARY KEY CHECK(single=1),directory_only INTEGER NOT NULL CHECK(directory_only IN(0,1)));
+INSERT INTO traversal_policy VALUES(1,0);
 CREATE TABLE entries(id INTEGER PRIMARY KEY,relative BLOB NOT NULL,
- lower_name TEXT NOT NULL,source_key TEXT,is_dir INTEGER NOT NULL CHECK(is_dir IN(0,1)),hidden INTEGER NOT NULL,symlink INTEGER NOT NULL,
+ lower_name TEXT NOT NULL,source_key TEXT,is_dir INTEGER NOT NULL CHECK(is_dir IN(0,1)),hidden INTEGER NOT NULL,symlink INTEGER NOT NULL,availability INTEGER NOT NULL,
  size_key BLOB NOT NULL CHECK(length(size_key)=8),modified INTEGER NOT NULL,natural_key BLOB NOT NULL,raw_sort BLOB NOT NULL,extension TEXT NOT NULL);
 CREATE INDEX entries_name ON entries(is_dir,natural_key,raw_sort,id);
 CREATE INDEX entries_hidden ON entries(hidden,is_dir);
@@ -196,7 +199,7 @@ impl Index {
                     connection.pragma_query_value(None, "application_id", |row| row.get(0))?;
                 let schema: i64 =
                     connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
-                if application != APP_ID || schema != 2 {
+                if application != APP_ID || !matches!(schema, 2 | 3) {
                     return Err(Error::InvalidIndex("generation ownership mismatch".into()));
                 }
                 let (generation, owned_scope) = cleanup_identity(&connection)?;
@@ -340,7 +343,7 @@ fn cleanup_identity(connection: &Connection) -> Result<(String, PathBuf)> {
             [],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )?;
-    if version != 2 || generation.len() > 100 || raw.len() > 128 * 1024 {
+    if !matches!(version, 2 | 3) || generation.len() > 100 || raw.len() > 128 * 1024 {
         return Err(Error::InvalidIndex(
             "unrecognized generation ownership".into(),
         ));
@@ -392,6 +395,7 @@ pub struct IndexBuilder {
     pub(crate) mode: Mode,
     pub(crate) current: Option<crate::walk::CurrentDirectory>,
     pub(crate) scan_workers: usize,
+    pub(crate) directory_only: bool,
     pub(crate) walker: Option<foldex_fs::Walk>,
     pub(crate) walk_batch: Option<crate::parallel_walk::CurrentBatch>,
     pub(crate) walk_done: bool,
@@ -454,7 +458,7 @@ impl IndexBuilder {
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         )?;
         configure(&connection, true)?;
-        connection.execute_batch("PRAGMA application_id=1179208777; PRAGMA user_version=2;")?;
+        connection.execute_batch("PRAGMA application_id=1179208777; PRAGMA user_version=3;")?;
         connection.execute_batch(SCHEMA)?;
         // The pinned bundled SQLite supports this FTS5 hash bound; verify at runtime.
         connection.execute(
@@ -496,9 +500,11 @@ impl IndexBuilder {
             source_root_modified_secs,
             from_cache: false,
             synthetic: false,
+            directory_only: options.directory_only,
+            excluded_subtrees: options.excluded_subtrees.clone(),
         };
         connection.execute(
-            "INSERT INTO manifest VALUES(1,2,?1,?2,?3,0,?4,0,0,0,0,0,0,0,?5,?5,?6,0)",
+            "INSERT INTO manifest VALUES(1,3,?1,?2,?3,0,?4,0,0,0,0,0,0,0,?5,?5,?6,0)",
             params![
                 codec::CODEC,
                 normalization(),
@@ -508,6 +514,11 @@ impl IndexBuilder {
                 source_root_modified_secs
             ],
         )?;
+        connection.execute(
+            "UPDATE traversal_policy SET directory_only=?1 WHERE single=1",
+            params![options.directory_only],
+        )?;
+        save_exclusions(&connection, &options.excluded_subtrees)?;
         write_pointer(&cache_dir, "building.index", &status.database_path)?;
         Ok(Self {
             index: Some(Index {
@@ -530,6 +541,7 @@ impl IndexBuilder {
             mode: Mode::None,
             current: None,
             scan_workers: 0,
+            directory_only: options.directory_only,
             walker: None,
             walk_batch: None,
             walk_done: false,
@@ -595,7 +607,7 @@ impl IndexBuilder {
         }
         self.ensure_transaction()?;
         let index = self.index.as_mut().unwrap();
-        let mut insert = index.connection.prepare_cached("INSERT INTO entries(relative,lower_name,source_key,is_dir,hidden,symlink,size_key,modified,natural_key,raw_sort,extension) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)")?;
+        let mut insert = index.connection.prepare_cached("INSERT INTO entries(relative,lower_name,source_key,is_dir,hidden,symlink,size_key,modified,natural_key,raw_sort,extension,availability) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)")?;
         let mut fts = index
             .connection
             .prepare_cached("INSERT INTO names_fts(rowid,lower_name) VALUES(?1,?2)")?;
@@ -608,6 +620,15 @@ impl IndexBuilder {
         for record in records {
             cancel.check()?;
             let relative = codec::relative(&record.relative_path, false)?;
+            if index
+                .status
+                .excluded_subtrees
+                .iter()
+                .any(|p| relative.starts_with(p))
+            {
+                index.status.excluded_cache += 1;
+                continue;
+            }
             let encoded = codec::encode(relative.as_os_str());
             if encoded.len() > 128 * 1024 {
                 return Err(Error::InvalidPath(
@@ -635,7 +656,8 @@ impl IndexBuilder {
                 record.modified_secs,
                 natural,
                 raw_name.as_encoded_bytes(),
-                extension(&lower, record.is_dir)
+                extension(&lower, record.is_dir),
+                record.availability as u8
             ])?;
             self.stats.entry_write += entry_started.elapsed();
             let id = index.connection.last_insert_rowid();
@@ -646,7 +668,7 @@ impl IndexBuilder {
             characters.execute(params![id, crate::fuzzy::tokens(&folded, false)])?;
             self.stats.character_write += character_started.elapsed();
             self.stats.records += 1;
-            if enqueue_directories && record.is_dir && !record.symlink {
+            if enqueue_directories && !self.directory_only && record.is_dir && !record.symlink {
                 pending.execute([&encoded])?;
             }
             index.status.entries += 1;
@@ -889,7 +911,7 @@ pub(crate) fn load_status(connection: &Connection, database_path: &Path) -> Resu
           row.get::<_,Vec<u8>>(5)?,row.get::<_,i64>(6)?,row.get::<_,i64>(7)?,row.get::<_,i64>(8)?,row.get::<_,i64>(9)?,
           row.get::<_,i64>(10)?,row.get::<_,i64>(11)?,row.get::<_,i64>(12)?,row.get::<_,i64>(13)?,row.get::<_,i64>(14)?,row.get::<_,Option<i64>>(15)?,row.get::<_,bool>(16)?))
     })?;
-    if value.0 != 2 || value.1 != codec::CODEC || value.2 != normalization() {
+    if value.0 != 3 || value.1 != codec::CODEC || value.2 != normalization() {
         return Err(Error::InvalidIndex(
             "schema, path codec, or normalization version mismatch".into(),
         ));
@@ -899,6 +921,24 @@ pub(crate) fn load_status(connection: &Connection, database_path: &Path) -> Resu
         return Err(Error::InvalidIndex("scope must be absolute".into()));
     }
     let state = BuildState::decode(value.6)?;
+    let policy: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='traversal_policy')",
+        [],
+        |row| row.get(0),
+    )?;
+    let directory_only = if policy {
+        match connection.query_row(
+            "SELECT directory_only FROM traversal_policy WHERE single=1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )? {
+            0 => false,
+            1 => true,
+            _ => return Err(Error::InvalidIndex("invalid traversal policy".into())),
+        }
+    } else {
+        false
+    };
     Ok(IndexStatus {
         generation: value.3,
         revision: value.4.max(0) as u64,
@@ -917,6 +957,8 @@ pub(crate) fn load_status(connection: &Connection, database_path: &Path) -> Resu
         source_root_modified_secs: value.15,
         from_cache: false,
         synthetic: value.16,
+        directory_only,
+        excluded_subtrees: load_exclusions(connection)?,
     })
 }
 
@@ -965,4 +1007,42 @@ pub(crate) fn unix_secs(time: SystemTime) -> i64 {
                 .min(i64::MAX as u64) as i64)
         }
     }
+}
+
+pub(crate) fn save_exclusions(connection: &Connection, paths: &[PathBuf]) -> Result<()> {
+    foldex_query::Conditions {
+        excluded_subtrees: paths.to_vec(),
+        ..Default::default()
+    }
+    .validate()
+    .map_err(Error::InvalidPath)?;
+    for path in paths {
+        connection.execute(
+            "INSERT INTO exclusions(path) VALUES(?1)",
+            [codec::encode(path.as_os_str())],
+        )?;
+    }
+    Ok(())
+}
+fn load_exclusions(connection: &Connection) -> Result<Vec<PathBuf>> {
+    let exists: bool = connection.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='exclusions')",
+        [],
+        |r| r.get(0),
+    )?;
+    if !exists {
+        return Ok(Vec::new());
+    }
+    let mut statement = connection.prepare("SELECT path FROM exclusions LIMIT 33")?;
+    let mut paths = Vec::new();
+    for raw in statement.query_map([], |r| r.get::<_, Vec<u8>>(0))? {
+        paths.push(PathBuf::from(codec::decode(&raw?)?));
+    }
+    foldex_query::Conditions {
+        excluded_subtrees: paths.clone(),
+        ..Default::default()
+    }
+    .validate()
+    .map_err(Error::InvalidIndex)?;
+    Ok(paths)
 }

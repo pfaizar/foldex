@@ -99,6 +99,7 @@ fn run_inner(args: &[OsString]) -> io::Result<()> {
                 Some("foldex:home".into()),
                 directory.join("source-state/theme.toml"),
                 directory.join("source-state/session.json"),
+                directory.join("source-state/preferences.json"),
                 session,
                 Instant::now(),
                 None,

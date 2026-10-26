@@ -1,230 +1,215 @@
-//! A coalesced atomic session writer independent of slow shell/file operations.
+//! Coalesced atomic workspace writes and independently merged shared preferences.
+pub(crate) mod shared;
+use serde_json::Value;
 use std::{
-    borrow::Cow,
-    io::{self, Read},
-    path::PathBuf,
+    fs, io,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicU64, Ordering},
         mpsc::{self, SyncSender, TrySendError},
     },
     thread,
+    time::{Duration, SystemTime},
 };
 
+pub const MAX_SESSION_BYTES: usize = shared::MAX_BYTES;
+type Wake = Arc<dyn Fn() + Send + Sync>;
+
+#[derive(Debug)]
+pub enum SubmitError {
+    Busy,
+    TooLarge,
+    Unavailable,
+    Invalid(String),
+}
+impl SubmitError {
+    pub fn retryable(&self) -> bool {
+        matches!(self, Self::Busy)
+    }
+}
+impl std::fmt::Display for SubmitError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Busy => "Workspace writer is busy",
+            Self::TooLarge => "Workspace exceeds 4 MiB; close unused tabs or remove saved layouts before saving again",
+            Self::Unavailable => "Workspace writer is unavailable",
+            Self::Invalid(error) => error,
+        })
+    }
+}
 struct Request {
     revision: u64,
     path: PathBuf,
     bytes: Vec<u8>,
-    preserve_launcher: bool,
+    shared: Option<(PathBuf, Arc<Value>)>,
 }
 #[derive(Default)]
 struct Mailbox {
     request: Mutex<Option<Request>>,
     result: Mutex<Option<(u64, Result<(), String>)>>,
+    preferences: Mutex<Option<Result<Value, String>>>,
     sequence: AtomicU64,
 }
 pub struct Persistence {
     mailbox: Arc<Mailbox>,
     signal: SyncSender<()>,
-    preserve_launcher: bool,
+    shared_path: Option<PathBuf>,
+    baseline: Arc<Value>,
 }
 
 impl Persistence {
-    pub fn new(wake: Arc<dyn Fn() + Send + Sync>, preserve_launcher: bool) -> io::Result<Self> {
+    #[cfg(test)]
+    pub fn new(wake: Wake) -> io::Result<Self> {
+        Self::start(wake, None, Value::Null)
+    }
+    pub fn new_session(wake: Wake, shared_path: PathBuf, session: &Value) -> io::Result<Self> {
+        Self::start(wake, Some(shared_path), shared::preferences(session))
+    }
+    fn start(wake: Wake, shared_path: Option<PathBuf>, baseline: Value) -> io::Result<Self> {
         let mailbox = Arc::new(Mailbox::default());
         let (signal, rx) = mpsc::sync_channel(1);
         let worker = mailbox.clone();
+        let watched = shared_path.clone();
         thread::Builder::new()
             .name("foldex-session".into())
             .spawn(move || {
-                while rx.recv().is_ok() {
+                let mut stamp = None;
+                loop {
+                    match rx.recv_timeout(Duration::from_secs(2)) {
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                        _ => {}
+                    }
                     loop {
-                        let request = worker.request.lock().ok().and_then(|mut s| s.take());
+                        let request = worker.request.lock().ok().and_then(|mut slot| slot.take());
                         let Some(request) = request else { break };
-                        let result = save_request(&request).map_err(|e| e.to_string());
+                        let result = save_request(&request, |preferences| {
+                            if let Ok(mut slot) = worker.preferences.lock() {
+                                *slot = Some(Ok(preferences));
+                            }
+                            wake();
+                        })
+                        .map_err(|error| error.to_string());
                         if let Ok(mut slot) = worker.result.lock() {
                             *slot = Some((request.revision, result));
                         }
+                        // Re-read under a stamp captured before reading: another process
+                        // may commit immediately after our cross-process lock is released.
+                        stamp = None;
                         wake();
+                    }
+                    if let Some(path) = watched.as_deref() {
+                        let next = file_stamp(path);
+                        if next != stamp {
+                            stamp = next;
+                            let result = shared::current(path).map_err(|error| error.to_string());
+                            if let Some(result) = result.transpose() {
+                                if let Ok(mut slot) = worker.preferences.lock() {
+                                    *slot = Some(result);
+                                }
+                                wake();
+                            }
+                        }
                     }
                 }
             })?;
         Ok(Self {
             mailbox,
             signal,
-            preserve_launcher,
+            shared_path,
+            baseline: Arc::new(baseline),
         })
     }
-    pub fn save(&self, path: PathBuf, bytes: Vec<u8>) -> Result<u64, String> {
-        if bytes.len() > 256 * 1024 {
-            return Err("Workspace state exceeds its 256 KiB budget".into());
+    pub fn save(&self, path: PathBuf, bytes: Vec<u8>) -> Result<u64, SubmitError> {
+        if bytes.len() > MAX_SESSION_BYTES {
+            return Err(SubmitError::TooLarge);
         }
         let mut slot = self
             .mailbox
             .request
             .try_lock()
-            .map_err(|_| "Workspace writer is busy".to_owned())?;
+            .map_err(|_| SubmitError::Busy)?;
         let revision = self.mailbox.sequence.fetch_add(1, Ordering::Relaxed) + 1;
         *slot = Some(Request {
             revision,
             path,
             bytes,
-            preserve_launcher: self.preserve_launcher,
+            shared: self
+                .shared_path
+                .clone()
+                .map(|path| (path, self.baseline.clone())),
         });
         drop(slot);
         match self.signal.try_send(()) {
             Ok(()) | Err(TrySendError::Full(())) => Ok(revision),
-            Err(TrySendError::Disconnected(())) => Err("Workspace writer is unavailable".into()),
+            Err(TrySendError::Disconnected(())) => Err(SubmitError::Unavailable),
         }
     }
     pub fn poll(&self) -> Option<(u64, Result<(), String>)> {
         self.mailbox.result.try_lock().ok()?.take()
     }
+    pub fn preferences_pending(&self) -> bool {
+        self.mailbox
+            .preferences
+            .try_lock()
+            .is_ok_and(|slot| slot.is_some())
+    }
+    /// Apply remote deltas around unsaved local edits. Each queued save captures
+    /// its own immutable UI baseline, so coalescing cannot erase another writer.
+    pub fn poll_preferences(&mut self, local: &Value) -> Option<Result<Value, String>> {
+        let remote = match self.mailbox.preferences.try_lock().ok()?.take()? {
+            Ok(remote) => remote,
+            Err(error) => return Some(Err(error)),
+        };
+        let merged = shared::merge(&self.baseline, &remote, &shared::preferences(local));
+        self.baseline = Arc::new(remote);
+        let mut session = local.clone();
+        shared::overlay(&mut session, &merged);
+        Some(Ok(session))
+    }
 }
 
-fn save_request(request: &Request) -> io::Result<()> {
-    // Serialize portable-session writers across processes. Auxiliary windows
-    // can save their workspace without overwriting the owner's launcher settings.
-    // This lock is held only on the sleeping persistence worker, never the UI.
-    let lock = std::fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .read(true)
-        .write(true)
-        .open(request.path.with_extension("lock"))?;
-    lock.lock()?;
-    let mut bytes = Cow::Borrowed(request.bytes.as_slice());
-    let mut previous = None;
-    if request.preserve_launcher {
-        match std::fs::File::open(&request.path) {
-            Ok(file) => {
-                let mut current = Vec::new();
-                file.take(256 * 1024 + 1).read_to_end(&mut current)?;
-                if current.len() > 256 * 1024 {
-                    return Err(io::Error::other("Existing workspace exceeds 256 KiB"));
-                }
-                let state: serde_json::Value = serde_json::from_slice(&current)?;
-                if let Some(launcher) = state.get("launcher") {
-                    let mut next: serde_json::Value = serde_json::from_slice(&bytes)?;
-                    if next.get("launcher") != Some(launcher) {
-                        next["launcher"] = launcher.clone();
-                        bytes = Cow::Owned(serde_json::to_vec_pretty(&next)?);
-                    }
-                }
-                previous = Some(current);
-            }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
-        }
+fn file_stamp(path: &Path) -> Option<(SystemTime, u64)> {
+    let metadata = fs::metadata(path).ok()?;
+    Some((metadata.modified().ok()?, metadata.len()))
+}
+
+/// Auxiliary saves never replace the primary window's workspace. Names contain
+/// no user-controlled data, and each auxiliary process gets independent state.
+pub fn window_path(directory: &Path, auxiliary: bool) -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    if auxiliary {
+        let time = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        directory.join("workspaces").join(format!(
+            "window-{}-{time}-{}.json",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ))
+    } else {
+        directory.join("foldex-session.json")
     }
-    if bytes.len() > 256 * 1024 {
-        return Err(io::Error::other("Workspace state exceeds 256 KiB"));
-    }
-    // The existing auxiliary-session read already supplies an exact comparison.
-    // Check under the cross-process lock so a no-op never hides an owner's edit.
-    if previous.as_deref() == Some(bytes.as_ref()) {
-        return Ok(());
+}
+
+fn save_request(request: &Request, publish: impl FnOnce(Value)) -> io::Result<()> {
+    let bytes = if let Some((path, baseline)) = &request.shared {
+        let mut session: Value = serde_json::from_slice(&request.bytes)?;
+        let merged = shared::save(path, baseline, &shared::preferences(&session))?;
+        // Acknowledging preferences before the independent workspace write also
+        // makes retries safe when a workspace disk error follows a successful merge.
+        publish(merged);
+        shared::strip(&mut session);
+        serde_json::to_vec(&session)?
+    } else {
+        request.bytes.clone()
+    };
+    if let Some(parent) = request.path.parent() {
+        fs::create_dir_all(parent)?;
     }
     crate::platform::atomic_save(&request.path, &bytes)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::time::{Duration, Instant};
-
-    #[test]
-    fn identical_auxiliary_save_keeps_the_existing_file_and_modification_time() {
-        let base =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/session-test-fixtures");
-        std::fs::create_dir_all(&base).unwrap();
-        let path = base.join(format!("owned-aux-noop-{}.json", std::process::id()));
-        let bytes = br#"{"launcher":{"background":false},"active":3}"#;
-        std::fs::write(&path, bytes).unwrap();
-        let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
-        let modified = std::time::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
-        file.set_times(std::fs::FileTimes::new().set_modified(modified))
-            .unwrap();
-        let modified = file.metadata().unwrap().modified().unwrap();
-        drop(file);
-        save_request(&Request {
-            revision: 1,
-            path: path.clone(),
-            preserve_launcher: true,
-            bytes: bytes.to_vec(),
-        })
-        .unwrap();
-        assert_eq!(std::fs::read(&path).unwrap(), bytes);
-        assert_eq!(
-            std::fs::metadata(&path).unwrap().modified().unwrap(),
-            modified
-        );
-        std::fs::remove_file(path).unwrap();
-    }
-
-    #[test]
-    fn latest_session_is_saved_atomically_without_a_window() {
-        let base =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/session-test-fixtures");
-        std::fs::create_dir_all(&base).unwrap();
-        let path = base.join(format!("owned-{}.json", std::process::id()));
-        let worker = Persistence::new(Arc::new(|| {}), false).unwrap();
-        let mut revision = 0;
-        for n in 0..40 {
-            loop {
-                match worker.save(path.clone(), format!("{{\"revision\":{n}}}").into_bytes()) {
-                    Ok(r) => {
-                        revision = r;
-                        break;
-                    }
-                    Err(_) => thread::yield_now(),
-                }
-            }
-        }
-        let deadline = Instant::now() + Duration::from_secs(3);
-        let mut saved = false;
-        while Instant::now() < deadline {
-            if let Some((r, result)) = worker.poll() {
-                result.unwrap();
-                if r == revision {
-                    saved = true;
-                    break;
-                }
-            }
-            thread::yield_now();
-        }
-        assert!(saved);
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"revision\":39}");
-        let resolved = path.canonicalize().unwrap();
-        let root = base.canonicalize().unwrap();
-        assert!(resolved.starts_with(root));
-        std::fs::remove_file(resolved).unwrap();
-    }
-
-    #[test]
-    fn auxiliary_session_preserves_the_owners_latest_launcher_settings() {
-        let base =
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/session-test-fixtures");
-        std::fs::create_dir_all(&base).unwrap();
-        let path = base.join(format!("owned-aux-{}.json", std::process::id()));
-        std::fs::write(
-            &path,
-            br#"{"launcher":{"background":false,"hotkey":"Ctrl+Shift+K"},"active":1}"#,
-        )
-        .unwrap();
-        save_request(&Request {
-            revision: 1,
-            path: path.clone(),
-            preserve_launcher: true,
-            bytes: br#"{"launcher":{"background":true,"hotkey":"Ctrl+Alt+Space"},"active":3}"#
-                .to_vec(),
-        })
-        .unwrap();
-        let state: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-        assert_eq!(state["launcher"]["background"], false);
-        assert_eq!(state["launcher"]["hotkey"], "Ctrl+Shift+K");
-        assert_eq!(state["active"], 3);
-        std::fs::remove_file(path).unwrap();
-    }
-}
+mod tests;

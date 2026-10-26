@@ -14,12 +14,7 @@ use windows_sys::{
             DIB_RGB_COLORS, DeleteDC, DeleteObject, GdiFlush, GetDIBits, GetObjectW, HBITMAP, HDC,
             HGDIOBJ, SelectObject,
         },
-        Storage::FileSystem::{
-            FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_OFFLINE,
-            FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS, FILE_ATTRIBUTE_RECALL_ON_OPEN,
-            FILE_ATTRIBUTE_REPARSE_POINT, GetDriveTypeW, GetFileAttributesW,
-            INVALID_FILE_ATTRIBUTES,
-        },
+        Storage::FileSystem::{FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL},
         System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx, CoUninitialize},
         UI::{
             Shell::{
@@ -63,7 +58,7 @@ impl Backend for Native {
             if let Ok(factory) = factory {
                 if key.thumbnail {
                     let flags = SIIGBF_THUMBNAILONLY
-                        | if self.options.extract_local_thumbnails {
+                        | if self.options.extract_local_thumbnails && !location.cache_only {
                             0
                         } else {
                             SIIGBF_INCACHEONLY
@@ -79,7 +74,9 @@ impl Backend for Native {
                 {
                     return Ok(image);
                 }
-                if let Ok(image) = factory.image(key.size, SIIGBF_ICONONLY, false) {
+                if !location.cache_only
+                    && let Ok(image) = factory.image(key.size, SIIGBF_ICONONLY, false)
+                {
                     return Ok(image);
                 }
             }
@@ -664,61 +661,30 @@ fn bgra_to_rgba(pixels: &mut [u8], opaque: bool) {
 
 struct Location {
     shell_allowed: bool,
+    cache_only: bool,
     directory: Option<bool>,
 }
 
 fn classify(path: &Path) -> Location {
-    // Namespace/UNC/device paths never enter a shell factory. Extended local
-    // disk paths are supported. Drive type is checked before any attributes, so
-    // mapped network drives also avoid thumbnail I/O and placeholder hydration.
     let raw: Vec<u16> = path.as_os_str().encode_wide().collect();
-    let local = local_disk_suffix(&raw);
-    let Some(local) = local else {
+    if local_disk_suffix(&raw).is_none() {
         return Location {
             shell_allowed: false,
-            directory: None,
-        };
-    };
-    let root = [local[0], b':' as u16, b'\\' as u16, 0];
-    let drive_type = unsafe { GetDriveTypeW(root.as_ptr()) };
-    if !matches!(drive_type, 2 | 3 | 5 | 6) {
-        return Location {
-            shell_allowed: false,
+            cache_only: true,
             directory: None,
         };
     }
-    let mut directory = false;
-    for (index, ancestor) in path.ancestors().enumerate() {
-        if ancestor.as_os_str().is_empty() {
-            continue;
-        }
-        let wide = wide(ancestor);
-        let attributes = unsafe { GetFileAttributesW(wide.as_ptr()) };
-        if attributes == INVALID_FILE_ATTRIBUTES {
-            return Location {
-                shell_allowed: false,
-                directory: (index > 0).then_some(directory),
-            };
-        }
-        if index == 0 {
-            directory = attributes & FILE_ATTRIBUTE_DIRECTORY != 0;
-        }
-        if attributes
-            & (FILE_ATTRIBUTE_REPARSE_POINT
-                | FILE_ATTRIBUTE_OFFLINE
-                | FILE_ATTRIBUTE_RECALL_ON_OPEN
-                | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS)
-            != 0
-        {
-            return Location {
-                shell_allowed: false,
-                directory: Some(directory),
-            };
-        }
-    }
-    Location {
-        shell_allowed: true,
-        directory: Some(directory),
+    match foldex_fs::capabilities::background_path(path) {
+        Ok(caps) => Location {
+            shell_allowed: true,
+            cache_only: caps.recall(),
+            directory: Some(caps.is_dir()),
+        },
+        Err(_) => Location {
+            shell_allowed: false,
+            cache_only: true,
+            directory: None,
+        },
     }
 }
 
@@ -928,7 +894,7 @@ pub(super) static NATIVE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new
 pub(super) fn direct_thumbnail_for_test(path: &Path, size: u16) -> Result<RawPixels, String> {
     let _apartment = Apartment::new()?;
     let location = classify(path);
-    if !location.shell_allowed {
+    if !location.shell_allowed || location.cache_only {
         return Err(format!(
             "generated local fixture was not shell-eligible: {path:?}"
         ));

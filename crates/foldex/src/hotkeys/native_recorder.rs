@@ -26,6 +26,10 @@ pub(super) struct Input {
 struct Capture {
     down: [bool; 256],
     owned: [bool; 256],
+    /// Win/Alt keys already held when capture started; their release must not
+    /// activate the Start menu or window menu.
+    inherited: [bool; 256],
+    dummy: bool,
     active: bool,
     events: VecDeque<Event>,
     lost_focus: bool,
@@ -37,9 +41,15 @@ struct Capture {
 #[cfg(any(windows, test))]
 impl Capture {
     fn new(down: [bool; 256]) -> Self {
+        let mut inherited = [false; 256];
+        for vk in [0x5b, 0x5c, 0xa4, 0xa5] {
+            inherited[vk] = down[vk];
+        }
         let mut capture = Self {
             down,
             owned: [false; 256],
+            inherited,
+            dummy: false,
             active: true,
             events: VecDeque::with_capacity(CAPACITY),
             lost_focus: false,
@@ -105,6 +115,12 @@ impl Capture {
         let repeat = pressed && *previous;
         *previous = pressed;
         let owned = self.owned[vk as usize];
+        if !pressed && self.inherited[vk as usize] {
+            // A modifier pressed before capture reaches Windows alone on release,
+            // which would open Start or the window menu. Ask the hook to cancel it.
+            self.inherited[vk as usize] = false;
+            self.dummy = true;
+        }
         if !self.active || !foreground {
             if owned && !pressed {
                 self.owned[vk as usize] = false;
@@ -224,8 +240,45 @@ mod imp {
     use windows_sys::Win32::{
         Foundation::*,
         System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
-        UI::{Input::KeyboardAndMouse::GetAsyncKeyState, WindowsAndMessaging::*},
+        UI::{
+            Input::KeyboardAndMouse::{
+                GetAsyncKeyState, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
+            },
+            WindowsAndMessaging::*,
+        },
     };
+
+    /// Marks the harmless key tap that cancels Start/menu activation so the hook
+    /// never records its own injected input.
+    const DUMMY_MARKER: usize = 0x464f_4c58;
+    fn owns_foreground(owner: HWND) -> bool {
+        let foreground = unsafe { GetForegroundWindow() };
+        !foreground.is_null()
+            && (foreground == owner || unsafe { GetAncestor(foreground, GA_ROOTOWNER) } == owner)
+    }
+
+    fn send_dummy_tap() {
+        let key = |flags| INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: windows_sys::Win32::UI::Input::KeyboardAndMouse::INPUT_0 {
+                ki: KEYBDINPUT {
+                    wVk: 0xe8,
+                    wScan: 0,
+                    dwFlags: flags,
+                    time: 0,
+                    dwExtraInfo: DUMMY_MARKER,
+                },
+            },
+        };
+        let inputs = [key(0), key(KEYEVENTF_KEYUP)];
+        unsafe {
+            SendInput(
+                inputs.len() as u32,
+                inputs.as_ptr(),
+                std::mem::size_of::<INPUT>() as i32,
+            );
+        }
+    }
 
     type Shared = Arc<Mutex<Capture>>;
     struct Session {
@@ -245,6 +298,17 @@ mod imp {
         restore_modifiers: Option<Modifiers>,
     }
     impl Recorder {
+        /// True while the hook thread owns focus tracking for this recording.
+        pub fn running(&self) -> bool {
+            self.thread.is_some()
+                && self.capture.as_ref().is_some_and(|capture| {
+                    capture
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .active
+                })
+        }
+
         pub fn attach(&mut self, owner: isize) {
             self.owner = owner;
         }
@@ -258,17 +322,12 @@ mod imp {
             if self.thread.is_some() {
                 return Err("Release the recorded keys before starting another recording.".into());
             }
-            if unsafe { GetForegroundWindow() } as isize != self.owner {
+            if !owns_foreground(self.owner as HWND) {
                 return Err("Focus Foldex before recording a shortcut.".into());
             }
             let mut down = [false; 256];
             for (vk, held) in down.iter_mut().enumerate() {
                 *held = unsafe { GetAsyncKeyState(vk as i32) } < 0;
-            }
-            // Their original press already reached Windows; their release must
-            // still reach Windows to avoid leaving an OS modifier held down.
-            if down[0x5b] || down[0x5c] || down[0xa4] || down[0xa5] {
-                return Err("Release Win and Alt, then start recording again.".into());
             }
             let capture = Arc::new(Mutex::new(Capture::new(down)));
             let (ready, started) = mpsc::sync_channel(1);
@@ -312,7 +371,7 @@ mod imp {
                 .as_ref()
                 .map_or_else(Input::default, |capture| {
                     let mut capture = capture.lock().unwrap_or_else(|error| error.into_inner());
-                    capture.focus(unsafe { GetForegroundWindow() } as isize == self.owner);
+                    capture.focus(owns_foreground(self.owner as HWND));
                     capture.drain()
                 });
             input.restore_modifiers = self.restore_modifiers.take();
@@ -401,7 +460,12 @@ mod imp {
                     let capture = capture.lock().unwrap_or_else(|error| error.into_inner());
                     !capture.active && !capture.draining()
                 };
-                if done || unsafe { GetMessageW(&mut message, ptr::null_mut(), 0, 0) } <= 0 {
+                let got = if done {
+                    -2
+                } else {
+                    unsafe { GetMessageW(&mut message, ptr::null_mut(), 0, 0) }
+                };
+                if got <= 0 {
                     break;
                 }
                 unsafe {
@@ -426,6 +490,10 @@ mod imp {
         {
             // Windows owns this structure for the duration of this callback.
             let key = unsafe { &*(data as *const KBDLLHOOKSTRUCT) };
+            if key.dwExtraInfo == DUMMY_MARKER {
+                return unsafe { CallNextHookEx(ptr::null_mut(), code, message, data) };
+            }
+            let mut dummy = false;
             let consumed = SESSION.with(|slot| {
                 let slot = slot.borrow();
                 let Some(session) = slot.as_ref() else {
@@ -436,11 +504,11 @@ mod imp {
                         .capture
                         .lock()
                         .unwrap_or_else(|error| error.into_inner());
-                    let consumed = capture.key(
-                        sided_key(key.vkCode, key.scanCode, key.flags & LLKHF_EXTENDED != 0),
-                        matches!(message as u32, WM_KEYDOWN | WM_SYSKEYDOWN),
-                        unsafe { GetForegroundWindow() } == session.owner,
-                    );
+                    let foreground = owns_foreground(session.owner);
+                    let vk = sided_key(key.vkCode, key.scanCode, key.flags & LLKHF_EXTENDED != 0);
+                    let pressed = matches!(message as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
+                    let consumed = capture.key(vk, pressed, foreground);
+                    dummy = std::mem::take(&mut capture.dummy);
                     (
                         consumed,
                         capture.lost_focus,
@@ -462,6 +530,9 @@ mod imp {
             });
             if consumed {
                 return 1;
+            }
+            if dummy {
+                send_dummy_tap();
             }
         }
         unsafe { CallNextHookEx(ptr::null_mut(), code, message, data) }
@@ -516,19 +587,17 @@ mod imp {
     #[derive(Default)]
     pub(crate) struct Recorder;
     impl Recorder {
+        pub fn running(&self) -> bool {
+            false
+        }
         pub fn attach(&mut self, _: isize) {}
         pub fn start(&mut self) -> Result<(), String> {
-            Ok(())
-        }
-        pub fn stop(&mut self) {}
-        pub fn drain(&mut self) -> Input {
             Input::default()
         }
     }
 }
 
 pub(super) use imp::Recorder;
-
 #[cfg(test)]
 mod tests {
     use super::*;

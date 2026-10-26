@@ -25,6 +25,7 @@ pub struct NativeIndexBuilder {
     last_commit: Instant,
     committed_entries: u64,
     workers: usize,
+    directory_only: bool,
 }
 
 impl NativeIndexBuilder {
@@ -50,7 +51,13 @@ impl NativeIndexBuilder {
                 .map(Path::to_path_buf)
         });
         let excluded_fallback = canonical_scope.is_none().then_some(excluded_root);
-        let (manifest, data) = Manifest::create(&cache_dir, scope, cancel)?;
+        let (manifest, data) = Manifest::create(
+            &cache_dir,
+            scope,
+            options.directory_only,
+            &options.excluded_subtrees,
+            cancel,
+        )?;
         Ok(Self {
             index: Some(NativeIndex::new(manifest, data)),
             mode: Mode::None,
@@ -62,7 +69,12 @@ impl NativeIndexBuilder {
             started: Instant::now(),
             last_commit: Instant::now(),
             committed_entries: 0,
-            workers: std::thread::available_parallelism().map_or(1, |count| count.get().min(8)),
+            directory_only: options.directory_only,
+            workers: if options.directory_only {
+                1
+            } else {
+                std::thread::available_parallelism().map_or(1, |count| count.get().min(8))
+            },
         })
     }
     pub fn status(&self) -> &IndexStatus {
@@ -70,6 +82,18 @@ impl NativeIndexBuilder {
     }
     pub fn ingestion_buffer_bytes(&self) -> usize {
         self.index.as_ref().unwrap().ingestion_buffer_bytes()
+    }
+    pub fn retained_query_bytes(&self) -> usize {
+        self.index.as_ref().unwrap().retained_query_bytes()
+    }
+    pub fn cached_window(&self, spec: &QuerySpec, prefix: u64, offset: usize, size: usize) -> bool {
+        self.index
+            .as_ref()
+            .unwrap()
+            .cached_window(spec, prefix, offset, size)
+    }
+    pub fn release_query_cache(&mut self) {
+        self.index.as_mut().unwrap().release_query_cache();
     }
     pub fn set_scan_workers(&mut self, workers: usize) -> Result<()> {
         if self.mode != Mode::None {
@@ -143,6 +167,8 @@ impl NativeIndexBuilder {
             self.walker = Some(foldex_fs::Walk::start(
                 index.status().scope.clone(),
                 foldex_fs::WalkOptions {
+                    excluded_subtrees: index.status().excluded_subtrees.clone(),
+                    recursive: !self.directory_only,
                     workers: self.workers,
                     spool_root: index.data.root.join("queues"),
                     excluded_relative: self.excluded_relative.clone(),
@@ -202,7 +228,7 @@ impl NativeIndexBuilder {
             for entry in &entries[..added] {
                 status.folders += u64::from(entry.is_dir());
                 status.files += u64::from(!entry.is_dir());
-                status.excluded_links += u64::from(entry.is_reparse());
+                status.excluded_links += u64::from(entry.is_opaque());
             }
             pending.next += added;
             remaining = remaining.saturating_sub(added);

@@ -6,6 +6,9 @@ mod cleanup;
 mod format;
 mod index;
 mod manifest;
+mod masks;
+mod reconcile;
+pub use reconcile::{ReconcileMetrics, Reconciled};
 mod rows;
 mod spool;
 pub use index::{NativeIndex, NativeQueryTiming};
@@ -15,6 +18,7 @@ mod search;
 use crate::{Cancellation, Error, IndexRecord, IndexRow, Result, codec};
 pub use search::{CatalogQuery, Hit, SearchResult};
 use std::{
+    collections::HashMap,
     fs,
     io::Write,
     path::{Path, PathBuf},
@@ -33,6 +37,8 @@ pub struct Catalog {
     natural_scratch: Vec<u8>,
     signature_scratch: format::Signature,
     substring_safe: bool,
+    deleted: HashMap<usize, Vec<u8>>,
+    masked: u64,
 }
 
 impl Catalog {
@@ -52,6 +58,8 @@ impl Catalog {
             natural_scratch: Vec::new(),
             signature_scratch: format::Signature::default(),
             substring_safe: false,
+            deleted: HashMap::new(),
+            masked: 0,
         })
     }
 
@@ -92,11 +100,14 @@ impl Catalog {
             self.prepare_name(&entry.name.to_string_lossy());
             self.push_named(
                 format::Metadata {
+                    availability: entry.capabilities().availability(),
                     size: if entry.is_dir() { 0 } else { entry.size },
                     modified_secs: entry.modified_secs,
+                    created_secs: entry.created_secs,
+                    accessed_secs: entry.accessed_secs,
                     is_dir: entry.is_dir(),
                     hidden: entry.is_hidden(),
-                    symlink: entry.is_reparse(),
+                    symlink: entry.is_opaque(),
                 },
                 entry.name.as_encoded_bytes(),
                 &parent,
@@ -231,6 +242,9 @@ impl Catalog {
     }
 
     pub fn relative_path(&self, hit: &Hit) -> Result<PathBuf> {
+        if self.masked(hit.shard, hit.row) {
+            return Err(Error::InvalidCursor);
+        }
         let shard = self.shards.get(hit.shard).ok_or(Error::InvalidCursor)?;
         let view = format::View::open(shard)?;
         let record = view.record(hit.row)?;
@@ -243,6 +257,9 @@ impl Catalog {
         use std::collections::BTreeMap;
         let mut groups = BTreeMap::<usize, Vec<(usize, usize)>>::new();
         for (position, hit) in hits.iter().enumerate() {
+            if self.masked(hit.shard, hit.row) {
+                return Err(Error::InvalidCursor);
+            }
             groups
                 .entry(hit.shard)
                 .or_default()
@@ -328,6 +345,9 @@ impl Catalog {
                 continue;
             }
             let hit = hit_at(position);
+            if self.masked(hit.shard, hit.row) {
+                return Err(Error::InvalidCursor);
+            }
             let shard = self.shards.get(hit.shard).ok_or(Error::InvalidCursor)?;
             if hit.id != shard.first_id.saturating_add(hit.row as u64) {
                 return Err(Error::InvalidCursor);
@@ -433,6 +453,10 @@ impl Catalog {
             .map_err(|_| Error::InvalidIndex("catalog lowercase is not UTF-8".into()))?;
         let is_dir = record.flags & 1 != 0;
         Ok(IndexRow {
+            availability: foldex_fs::capabilities::Availability::from_code(
+                ((record.flags >> 4) & 7) as u8,
+            )
+            .ok_or_else(|| Error::InvalidIndex("invalid availability".into()))?,
             id: hit.id,
             path: scope.join(&relative_path),
             relative_path,
@@ -443,6 +467,8 @@ impl Catalog {
             symlink: record.flags & 4 != 0,
             size: record.size,
             modified_secs: record.modified,
+            created_secs: record.created,
+            accessed_secs: record.accessed,
             natural_key: record.natural().to_vec(),
             raw_sort: record.name().to_vec(),
             extension: crate::model::extension(lower, is_dir).to_owned(),

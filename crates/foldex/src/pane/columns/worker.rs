@@ -99,8 +99,7 @@ struct Slots {
 }
 struct Shared {
     slots: Mutex<Slots>,
-    leases: [AtomicU64; 2],
-    priority: [AtomicBool; 2],
+    leases: [AtomicU64; foldex_folder_stats::MAX_VIEWS],
     stopped: AtomicBool,
     submissions: AtomicU64,
     invalidations: AtomicU64,
@@ -128,8 +127,7 @@ impl ColumnService {
     pub fn new(ctx: egui::Context) -> Self {
         let shared = Arc::new(Shared {
             slots: Mutex::new(Slots::default()),
-            leases: [AtomicU64::new(0), AtomicU64::new(0)],
-            priority: [AtomicBool::new(false), AtomicBool::new(false)],
+            leases: std::array::from_fn(|_| AtomicU64::new(0)),
             stopped: AtomicBool::new(false),
             submissions: AtomicU64::new(0),
             invalidations: AtomicU64::new(0),
@@ -160,25 +158,9 @@ impl ColumnService {
                     .is_ok()
             });
         }
-        if lease.is_none() && input.priority {
-            for (index, slot) in self.shared.leases.iter().enumerate() {
-                if self.shared.priority[index].load(AtomicOrdering::Acquire) {
-                    continue;
-                }
-                let old = slot.load(AtomicOrdering::Acquire);
-                if slot
-                    .compare_exchange(old, token, AtomicOrdering::AcqRel, AtomicOrdering::Acquire)
-                    .is_ok()
-                {
-                    lease = Some(index);
-                    break;
-                }
-            }
-        }
-        let Some(lease) = lease else {
+        if lease.is_none() {
             return Submission::AtCapacity;
-        };
-        self.shared.priority[lease].store(input.priority, AtomicOrdering::Release);
+        }
         let Ok(mut slots) = self.shared.slots.try_lock() else {
             self.thread.unpark();
             return Submission::Busy;
@@ -1251,6 +1233,51 @@ fn volume_capacity(_path: &Path) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn eight_visible_detail_subscriptions_publish_without_focus_evictions() {
+        let fixture = crate::search::live_tests::Fixture::new();
+        std::fs::write(fixture.root().join("file.txt"), b"metadata").unwrap();
+        let service = ColumnService::new(egui::Context::default());
+        for id in 0..8 {
+            let snapshot = Arc::new(Snapshot::from_entries(
+                fixture.root(),
+                vec![Entry::from_name("file.txt", false, 8, 1)],
+            ));
+            let mut request = input(snapshot);
+            request.priority = id == 7;
+            request.dates = true;
+            let until = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                match service.submit(id, request.clone()) {
+                    Submission::Submitted => break,
+                    Submission::Busy => {
+                        assert!(std::time::Instant::now() < until);
+                        thread::yield_now();
+                    }
+                    Submission::AtCapacity => {
+                        panic!("visible details must queue independently of running walks")
+                    }
+                }
+            }
+        }
+        let until = std::time::Instant::now() + Duration::from_secs(10);
+        for id in 0..8 {
+            loop {
+                if service
+                    .output(id)
+                    .is_some_and(|output| output.rows.get(&0).is_some_and(|row| row.metadata_done))
+                {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < until,
+                    "detail view {id} starved"
+                );
+                thread::sleep(Duration::from_millis(1));
+            }
+            assert!(service.shared.active(id));
+        }
+    }
     fn input(snapshot: Arc<Snapshot>) -> ViewInput {
         ViewInput {
             priority: true,

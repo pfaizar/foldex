@@ -218,7 +218,10 @@ fn snapshot(root: &Path) -> io::Result<Vec<(PathBuf, Stamp)>> {
 fn opaque_link(stamp: &Stamp) -> bool {
     // IO_REPARSE_TAG_NAME_SURROGATE: junction/symlink name redirection. Cloud
     // directories remain traversable trees even when they have a reparse tag.
-    stamp.reparse.is_some_and(|(tag, _)| tag & 0x2000_0000 != 0)
+    stamp.reparse.is_some_and(|(tag, _)| {
+        foldex_fs::capabilities::Capabilities::new(foldex_fs::capabilities::REPARSE, Some(tag))
+            .redirects()
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -448,6 +451,9 @@ impl Journal {
         let mut retry = Vec::new();
         while let Some(step) = remaining.next() {
             let result = replay(step);
+            if result.inverse.is_some() {
+                crate::platform::operations::changed();
+            }
             if let Some(step) = result.inverse {
                 inverse.push(step);
             }
@@ -549,12 +555,24 @@ impl HistoryHandle {
         operation: impl FnOnce() -> Mutation,
     ) -> io::Result<String> {
         let mut transaction = self.begin();
+        if crate::platform::operations::cancelled() {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Cancelled before starting",
+            ));
+        }
         let mut mutation = operation();
         transaction.record(label, &mut mutation);
         mutation.result
     }
     pub(crate) fn replay(&self, direction: Direction) -> io::Result<String> {
         let mut transaction = self.begin();
+        if crate::platform::operations::cancelled() {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "Cancelled before starting",
+            ));
+        }
         let owner = self.0.owner.load(Ordering::Acquire);
         transaction
             .journal
@@ -567,6 +585,9 @@ pub(crate) struct Transaction<'a> {
 }
 impl Transaction<'_> {
     pub fn record(&mut self, label: &'static str, mutation: &mut Mutation) {
+        if mutation.changed {
+            crate::platform::operations::changed();
+        }
         self.journal.record(label, mutation);
     }
 }

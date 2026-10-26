@@ -16,6 +16,7 @@ static NEXT_SNAPSHOT: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Entry {
+    pub availability: foldex_fs::capabilities::Availability,
     /// Display-only Unicode text. Use `raw_name` or `path` for filesystem actions.
     pub name: String,
     pub raw_name: OsString,
@@ -55,6 +56,7 @@ impl Entry {
             (lower != name).then(|| lower.into_boxed_str())
         };
         Self {
+            availability: Default::default(),
             hidden: name.starts_with('.'),
             name,
             raw_name,
@@ -165,7 +167,9 @@ impl Index<usize> for EntryStore {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum SortColumn {
     #[default]
     Name,
@@ -176,7 +180,9 @@ pub enum SortColumn {
     Kind,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub enum KindFilter {
     #[default]
     All,
@@ -196,7 +202,7 @@ impl KindFilter {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct TypeFilter {
     pub include_folders: bool,
     /// Exclusion mode preserves types that have not appeared in the bounded menu yet.
@@ -217,8 +223,10 @@ impl TypeFilter {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct Query {
+    pub conditions: foldex_query::Conditions,
     pub text: String,
     pub match_mode: foldex_match::MatchMode,
     pub sort: SortColumn,
@@ -420,6 +428,7 @@ pub(crate) fn filter_cancelled(
     if query.text.is_empty()
         && query.kind == KindFilter::All
         && query.type_filter.is_none()
+        && query.conditions.is_empty()
         && query.sort == SortColumn::Name
         && !query.descending
     {
@@ -442,6 +451,7 @@ pub(crate) fn filter_cancelled(
     if (query.show_hidden || snapshot.default_visible_order.len() == snapshot.entries.len())
         && query.kind == KindFilter::All
         && query.type_filter.is_none()
+        && query.conditions.is_empty()
         && query.text.is_empty()
     {
         return Some(View {
@@ -470,6 +480,16 @@ pub(crate) fn filter_cancelled(
             .type_filter
             .as_ref()
             .is_some_and(|filter| !filter.includes(entry))
+        {
+            continue;
+        }
+        let relative = entry
+            .relative_path
+            .as_deref()
+            .unwrap_or_else(|| Path::new(&entry.raw_name));
+        if !query
+            .conditions
+            .matches(relative, entry.is_dir, entry.size, entry.modified_secs)
         {
             continue;
         }

@@ -210,7 +210,6 @@ impl Foldex {
                 400.0 * self.theme.metrics().scale,
                 &mut open,
                 |ui| {
-                    ui.label("Remember these tabs, panels, view sizes and sidebar.");
                     let (field, _) = ui.allocate_exact_size(
                         vec2(ui.available_width(), self.theme.metrics().control),
                         Sense::hover(),
@@ -265,10 +264,9 @@ impl Foldex {
                 .map(|n| n.trim().to_owned())
                 .filter(|n| !n.is_empty())
             {
-                let item = NamedWorkspace {
-                    name,
-                    state: self.workspace_state(),
-                };
+                let mut state = self.workspace_state();
+                state.clear_navigation_history();
+                let item = NamedWorkspace { name, state };
                 if let Some(old) = self.saved_layouts.iter_mut().find(|s| s.name == item.name) {
                     *old = item;
                 } else {
@@ -299,7 +297,7 @@ impl Foldex {
                 &mut open,
                 |ui| {
                     if self.saved_layouts.is_empty() {
-                        ui.label("Save a layout from the command menu to find it here.");
+                        ui.label("No saved layouts");
                     }
                     for (i, layout) in self.saved_layouts.iter().enumerate() {
                         ui.horizontal(|ui| {

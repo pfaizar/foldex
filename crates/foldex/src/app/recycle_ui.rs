@@ -58,6 +58,8 @@ pub(super) fn action_allowed(action: &Action) -> bool {
             | Action::Address
             | Action::EditPath(_)
             | Action::Navigate(_)
+            | Action::Search(_)
+            | Action::RemoveSearch(_)
             | Action::GoPath(_)
             | Action::NewTab(_)
             | Action::NewWindow(_)
@@ -335,14 +337,6 @@ impl Foldex {
                         " to their original locations?"
                     }
                 ));
-                ui.label(
-                    egui::RichText::new(if empty {
-                        "The Recycle Bin will be emptied. This cannot be undone."
-                    } else {
-                        "Windows will ask how to handle any conflicts at the original locations."
-                    })
-                    .color(self.theme.dim()),
-                );
                 ui.add_space(8.0 * self.theme.metrics().scale);
                 ui.horizontal_wrapped(|ui| {
                     if confirm_button(ui, &self.theme, cancel, "Cancel").clicked() {

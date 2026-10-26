@@ -282,7 +282,7 @@ impl Pane {
             self.breadcrumb_context_ui(ui, t, breadcrumb.context, breadcrumb.active_rect, actions);
         }
         let items = pane_menu_items(
-            self.recursive,
+            self.expanded_search(),
             self.split_orientation,
             self.query.show_hidden,
             self.path.parent().is_some(),

@@ -312,7 +312,11 @@ impl BatchRename {
                         .changed();
                     });
                 });
-                ui.label(RichText::new("Tokens: {stem}, {name}, {ext}, {id}, {date}, {created}, {modified}. Dates use UTC. Find/replace is literal and case sensitive.").small().color(theme.dim()));
+                ui.label(
+                    RichText::new("{stem} {name} {ext} {id} {date} {created} {modified}")
+                        .small()
+                        .color(theme.dim()),
+                );
                 ui.separator();
                 let warning = popup.error.clone().or_else(|| {
                     popup

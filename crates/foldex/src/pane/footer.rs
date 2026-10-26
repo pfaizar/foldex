@@ -144,6 +144,7 @@ pub(super) struct FooterLayout {
     pub search: Rect,
     pub filter: Rect,
     pub expand: Rect,
+    pub conditions: Rect,
     pub clear: Rect,
     pub status: Rect,
     pub folders: Rect,
@@ -158,6 +159,7 @@ impl Default for FooterLayout {
             search: Rect::ZERO,
             filter: Rect::ZERO,
             expand: Rect::ZERO,
+            conditions: Rect::ZERO,
             clear: Rect::ZERO,
             status: Rect::ZERO,
             folders: Rect::ZERO,
@@ -227,17 +229,21 @@ impl FooterLayout {
         let folders =
             Rect::from_min_max(pos2(count_left, inner.top()), pos2(split, inner.bottom()));
         let files = Rect::from_min_max(pos2(split, inner.top()), pos2(count_right, inner.bottom()));
-        let expand_width = if expand_control {
-            (24.0 * scale).min(search_width * 0.28)
+        let tool_width = if expand_control {
+            (24.0 * scale).min(search_width * 0.2)
         } else {
             0.0
         };
-        let expand = Rect::from_min_max(
+        let conditions = Rect::from_min_max(
             pos2(
-                base_search.right() - expand_width - 2.0 * scale,
+                base_search.right() - tool_width - 2.0 * scale,
                 search.top() + 2.0 * scale,
             ),
             base_search.max - vec2(2.0, 2.0) * scale,
+        );
+        let expand = Rect::from_min_max(
+            pos2(conditions.left() - tool_width, conditions.top()),
+            pos2(conditions.left(), conditions.bottom()),
         );
         let clear = Rect::from_min_size(
             pos2(base_search.right() - 2.0 * scale, expand.top()),
@@ -254,6 +260,7 @@ impl FooterLayout {
             search,
             filter,
             expand,
+            conditions,
             clear,
             status,
             folders,
@@ -380,7 +387,8 @@ impl Pane {
         self.kind_counts.or_else(|| {
             (!self.recursive
                 && self.rendered_query.text.is_empty()
-                && self.rendered_query.type_filter.is_none())
+                && self.rendered_query.type_filter.is_none()
+                && self.rendered_query.conditions.is_empty())
             .then(|| {
                 self.snapshot
                     .as_ref()
@@ -439,8 +447,15 @@ impl Pane {
         if self.recursive
             && let Some(status) = &self.search_status
         {
+            if self.selection_boundary.is_some() && !self.selected.is_empty() {
+                return format!(
+                    "{} selected / {} matches · clear selection to update",
+                    self.selected.len(),
+                    self.view_len()
+                );
+            }
             if status.from_cache {
-                return format!("{} matches · checking saved results…", self.view_len());
+                return format!("{} matches · updating results…", self.view_len());
             }
             if self.scanning {
                 return format!(
@@ -551,15 +566,43 @@ impl Pane {
                 .rect_stroke(rect, radius, Stroke::new(1.0, t.line()), StrokeKind::Inside);
         }
         if !home && !self.is_recycle_bin() {
+            let tools = layout.conditions;
+            if tools.width() > 1.0 {
+                let response = icon_button_at(
+                    ui,
+                    tools,
+                    Id::new((self.id, "search-conditions")),
+                    t,
+                    Icon::Filter,
+                    !self.query.conditions.is_empty(),
+                )
+                .on_hover_text("Search conditions");
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::Button,
+                        ui.is_enabled(),
+                        "Search conditions",
+                    )
+                });
+                crate::keyboard::register(
+                    ui,
+                    crate::keyboard::Region::Footer(self.id),
+                    response.id,
+                    tools,
+                );
+                if response.clicked() {
+                    self.deferred_action = Some(Action::SearchBuilder);
+                }
+            }
             let expand = icon_button_at(
                 ui,
                 layout.expand,
                 Id::new((self.id, "expand-filter")),
                 t,
                 Icon::Recursive,
-                self.recursive,
+                self.expanded_search(),
             )
-            .on_hover_text(if self.recursive {
+            .on_hover_text(if self.expanded_search() {
                 "Return to folder filter · Ctrl+E"
             } else {
                 "Search this folder and subfolders · Ctrl+E"
@@ -574,7 +617,7 @@ impl Pane {
                 egui::WidgetInfo::selected(
                     egui::WidgetType::Checkbox,
                     ui.is_enabled(),
-                    self.recursive,
+                    self.expanded_search(),
                     "Search this folder and subfolders",
                 )
             });
@@ -797,7 +840,7 @@ impl Pane {
             "Filter recent…"
         } else if self.is_recycle_bin() {
             "Filter Recycle Bin…"
-        } else if self.recursive {
+        } else if self.expanded_search() {
             "Search this folder and subfolders…"
         } else {
             "Filter files…"
@@ -821,6 +864,14 @@ impl Pane {
             filter_id,
             layout.filter,
         );
+        if !home && !self.is_recycle_bin() {
+            response.context_menu(|ui| {
+                if ui.button("Search conditions…").clicked() {
+                    self.deferred_action = Some(Action::SearchBuilder);
+                    ui.close();
+                }
+            });
+        }
         if response.has_focus() {
             ui.memory_mut(|memory| {
                 memory.set_focus_lock_filter(
@@ -1872,6 +1923,7 @@ mod tests {
         crate::keyboard::request_id(&ctx, crate::keyboard::listing_id(pane.id));
         draw(&mut pane, 1, vec![]);
         let expected = [
+            Id::new((pane.id, "search-conditions")),
             Id::new((pane.id, "expand-filter")),
             Id::new((pane.id, "kind-count", true)),
             Id::new((pane.id, "kind-count", false)),

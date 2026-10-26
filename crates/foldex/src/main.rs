@@ -149,14 +149,29 @@ fn main() -> eframe::Result {
                 .and_then(|s| foldex_ui::Theme::read(&s).ok())
         })
         .unwrap_or_default();
-    let session_path = state_dir.join("foldex-session.json");
+    let auxiliary = args.iter().any(|arg| arg == "--new-window");
+    let shared_state_dir = installation::state_directory(&exe_dir)
+        .map_err(|error| eframe::Error::AppCreation(Box::new(error)))?;
+    let preferences_path = shared_state_dir.join("foldex-preferences.json");
+    let primary_session = state_dir.join("foldex-session.json");
+    let session_path = persistence::window_path(&state_dir, auxiliary);
     let session: app::Session = startup_transfer
         .as_mut()
         .map(|startup| std::mem::take(&mut startup.session))
         .or_else(|| {
-            read_small(&session_path, 4 * 1024 * 1024).and_then(|s| serde_json::from_slice(&s).ok())
+            read_small(&primary_session, persistence::MAX_SESSION_BYTES)
+                .and_then(|s| serde_json::from_slice(&s).ok())
         })
         .unwrap_or_default();
+    let mut session_value = serde_json::to_value(&session)
+        .map_err(|error| eframe::Error::AppCreation(Box::new(error)))?;
+    persistence::shared::load(&preferences_path, &mut session_value)
+        .map_err(|error| {
+            installation::show_error(&format!("Shared preferences could not be read: {error}\n\nThe original file was preserved at {}. A previous valid version, when available, is stored beside it as foldex-preferences.previous.json.",preferences_path.display()));
+            eframe::Error::AppCreation(Box::new(error))
+        })?;
+    let session: app::Session = serde_json::from_value(session_value)
+        .map_err(|error| eframe::Error::AppCreation(Box::new(error)))?;
     let font = read_small(Path::new("C:/Windows/Fonts/segoeui.ttf"), 4 * 1024 * 1024);
     let secondary = if args.iter().any(|arg| arg == "--secondary-monitor") {
         match performance::monitor::secondary() {
@@ -172,7 +187,6 @@ fn main() -> eframe::Result {
     if let Some(run) = &mut ui_benchmark {
         run.monitor = secondary;
     }
-    let auxiliary = args.iter().any(|arg| arg == "--new-window");
     let isolate_launcher = ui_benchmark.is_some() || auxiliary;
     let open_settings = args.iter().any(|arg| arg == "--launcher-settings");
     let open_launcher = open_settings || args.iter().any(|arg| arg == "--launcher");
@@ -396,6 +410,7 @@ fn main() -> eframe::Result {
                 initial,
                 theme_path,
                 session_path,
+                preferences_path,
                 session,
                 launched,
                 ui_benchmark,

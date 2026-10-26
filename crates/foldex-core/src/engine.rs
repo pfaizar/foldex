@@ -1890,8 +1890,8 @@ mod tests {
         let first = Fixture::new();
         let second = Fixture::new();
         for i in 0..ENTRIES {
-            first.file(&format!("first{i}"));
-            second.file(&format!("second{i}"));
+            first.file(&format!("alpha{i}"));
+            second.file(&format!("omega{i}"));
         }
         // Preserve the original fixture's headroom while charging the two new
         // optional timestamps for every entry and the reserved pending chunk.
@@ -1977,7 +1977,12 @@ mod tests {
         drop(second_snapshot);
         browser.cancel_navigation();
         let deadline = Instant::now() + Duration::from_secs(10);
-        while engine.managed_bytes() != 0 {
+        // A zero-entry pressure result can carry no model charge. Wait for
+        // cancellation to retire its descriptor as well as its reservations.
+        while engine.managed_bytes() != 0
+            || first_weak.upgrade().is_some()
+            || second_weak.upgrade().is_some()
+        {
             assert!(
                 Instant::now() < deadline,
                 "unpinned reservations were retained"

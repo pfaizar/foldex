@@ -12,6 +12,7 @@ use worker::{ColumnService, Submission, ViewInput, ViewOutput};
 /// invalidate the very folder values being presented. Explicit refresh renews it.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(super) struct EntryRevision {
+    availability: foldex_fs::capabilities::Availability,
     is_dir: bool,
     symlink: bool,
     hidden: bool,
@@ -23,6 +24,7 @@ pub(super) struct EntryRevision {
 impl EntryRevision {
     pub(super) fn of(entry: &Entry) -> Self {
         Self {
+            availability: entry.availability,
             is_dir: entry.is_dir,
             symlink: entry.symlink,
             hidden: entry.hidden,
@@ -607,10 +609,6 @@ impl ColumnState {
             };
             query.descending = descending && query.sort == SortColumn::Size;
         }
-        if matches!(query.sort, SortColumn::Created | SortColumn::Accessed) {
-            query.sort = SortColumn::Name;
-            query.descending = false;
-        }
     }
     pub(super) fn has_popup(&self) -> bool {
         self.menu.active() || self.types.active()
@@ -865,9 +863,7 @@ impl Pane {
                 self.set_column_visible(column, false);
             }
             if response.clicked() {
-                if self.recursive && matches!(column, Column::Created | Column::Accessed)
-                    || self.recursive && column.numeric() && column != Column::Size
-                {
+                if self.recursive && column.numeric() && column != Column::Size {
                     response.on_hover_text(
                         "This calculated column can be sorted in an ordinary folder view",
                     );
@@ -1483,7 +1479,7 @@ impl Pane {
                 Submission::Busy => ctx.request_repaint_after(Duration::from_millis(16)),
                 Submission::AtCapacity => {
                     let output = Arc::make_mut(&mut self.columns.output);
-                    output.error = Some("Recursive values are paused by the two-pane calculation limit. Activate this pane to calculate its values.".into());
+                    output.error = Some("The 32-view statistics subscription limit has been reached. Close an unused panel to calculate more values.".into());
                     output.busy = false;
                 }
             }

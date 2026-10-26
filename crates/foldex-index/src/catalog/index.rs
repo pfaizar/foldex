@@ -1,6 +1,7 @@
 use super::{Catalog, CatalogQuery, Hit, manifest::Manifest};
 use crate::{model::*, query::fingerprint};
 use std::{
+    collections::VecDeque,
     fs,
     path::Path,
     time::{Duration, Instant},
@@ -8,6 +9,7 @@ use std::{
 
 const HEAD_ROWS: usize = 1025;
 const HEAD_BYTES: usize = 2 * 1024 * 1024;
+const ARCHIVED_HEAD_BYTES: usize = 2 * 1024 * 1024;
 
 #[derive(Clone, Copy, Default, Debug)]
 pub struct NativeQueryTiming {
@@ -17,12 +19,28 @@ pub struct NativeQueryTiming {
     pub cache_hits: usize,
     pub cache_misses: usize,
     pub chunks: usize,
+    pub head_reused: bool,
 }
 
+struct Tail {
+    offset: u64,
+    keys: Vec<Hit>,
+}
+impl Tail {
+    fn bytes(&self) -> usize {
+        self.keys.capacity() * std::mem::size_of::<Hit>()
+            + self
+                .keys
+                .iter()
+                .map(|key| key.bytes() - std::mem::size_of::<Hit>())
+                .sum::<usize>()
+    }
+}
 struct Head {
     hash: u64,
     prefix: u64,
     keys: Vec<Hit>,
+    tail: Option<Tail>,
     folders: u64,
     files: u64,
 }
@@ -34,6 +52,7 @@ impl Head {
                 .iter()
                 .map(|key| key.bytes() - std::mem::size_of::<Hit>())
                 .sum::<usize>()
+            + self.tail.as_ref().map_or(0, Tail::bytes)
     }
     fn complete(&self) -> bool {
         self.folders + self.files == self.keys.len() as u64
@@ -44,6 +63,7 @@ pub struct NativeIndex {
     // Manifest drops last: its SQLite handle protects the generation while data is in use.
     pub(super) data: Catalog,
     head: Option<Head>,
+    archived_heads: VecDeque<Head>,
     spool: Option<super::spool::Spool>,
     rows: super::rows::Rows,
     timing: NativeQueryTiming,
@@ -56,6 +76,7 @@ impl NativeIndex {
             manifest,
             data,
             head: None,
+            archived_heads: VecDeque::new(),
             spool: None,
             rows: super::rows::Rows::default(),
             timing: NativeQueryTiming::default(),
@@ -148,8 +169,29 @@ impl NativeIndex {
         )
     }
 
-    fn refresh_head(&mut self, spec: &QuerySpec, prefix: u64, cancel: &Cancellation) -> Result<()> {
+    fn refresh_head(
+        &mut self,
+        spec: &QuerySpec,
+        prefix: u64,
+        cancel: &Cancellation,
+    ) -> Result<bool> {
         let hash = fingerprint(spec, None);
+        if self.head.as_ref().is_none_or(|head| head.hash != hash) {
+            let saved = self
+                .archived_heads
+                .iter()
+                .position(|head| head.hash == hash)
+                .and_then(|index| self.archived_heads.remove(index));
+            if let Some(old) = self.head.take() {
+                self.archived_heads.push_front(old);
+            }
+            self.head = saved;
+            while self.archived_heads.len() > 4
+                || self.archived_heads.iter().map(Head::bytes).sum::<usize>() > ARCHIVED_HEAD_BYTES
+            {
+                self.archived_heads.pop_back();
+            }
+        }
         if self
             .spool
             .as_ref()
@@ -162,7 +204,7 @@ impl NativeIndex {
             .as_ref()
             .is_some_and(|head| head.hash == hash && head.prefix == prefix)
         {
-            return Ok(());
+            return Ok(true);
         }
         let old = self
             .head
@@ -201,6 +243,7 @@ impl NativeIndex {
             hash,
             prefix,
             keys,
+            tail: None,
             folders,
             files,
         };
@@ -209,7 +252,7 @@ impl NativeIndex {
         }
         head.keys.shrink_to_fit();
         self.head = Some(head);
-        Ok(())
+        Ok(false)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -230,7 +273,9 @@ impl NativeIndex {
             ));
         }
         let source = boundary.unwrap_or(self.status()).clone();
-        if source.generation != self.status().generation
+        if source.excluded_subtrees != self.status().excluded_subtrees
+            || source.directory_only != self.status().directory_only
+            || source.generation != self.status().generation
             || source.scope != self.status().scope
             || source.entries > self.status().entries
             || source.revision > self.status().revision
@@ -247,10 +292,11 @@ impl NativeIndex {
         }
         self.rows.timing = super::rows::Timing::default();
         let head_started = Instant::now();
-        self.refresh_head(spec, source.entries, cancel)?;
+        let head_reused = self.refresh_head(spec, source.entries, cancel)?;
         let head_elapsed = head_started.elapsed();
         let head = self.head.as_ref().unwrap();
         let total = head.files + head.folders;
+        let kind_counts = (head.folders, head.files);
         let limit = size.min(MAX_PAGE_ROWS);
         let mut rows = Vec::new();
         if limit > 0 && offset < total {
@@ -262,9 +308,21 @@ impl NativeIndex {
             } else {
                 usize::try_from(offset).ok()
             };
-            if let Some(start) = cached_start.filter(|start| {
-                *start < head.keys.len() && (head.complete() || head.keys.len() - *start >= limit)
-            }) {
+            let tail_start = head.tail.as_ref().and_then(|tail| {
+                offset
+                    .checked_sub(tail.offset)
+                    .and_then(|start| usize::try_from(start).ok())
+                    .filter(|start| *start < tail.keys.len())
+            });
+            if let Some(start) = tail_start {
+                let tail = head.tail.as_ref().unwrap();
+                rows = self.rows.page(
+                    &self.data,
+                    &tail.keys[start..tail.keys.len().min(start + limit)],
+                    &source.scope,
+                    cancel,
+                )?;
+            } else if let Some(start) = cached_start.filter(|start| *start < head.keys.len()) {
                 rows = self.rows.page(
                     &self.data,
                     &head.keys[start..head.keys.len().min(start + limit)],
@@ -338,18 +396,39 @@ impl NativeIndex {
                         spec: spec.clone(),
                         upper_id: Some(source.entries),
                         after,
-                        limit,
+                        limit: HEAD_ROWS,
                         workers: if source.entries < 50_000 { 1 } else { 8 },
                         ..CatalogQuery::default()
                     },
                     cancel,
                 )?;
-                rows = self
-                    .rows
-                    .page(&self.data, &next.hits, &source.scope, cancel)?;
+                rows = self.rows.page(
+                    &self.data,
+                    &next.hits[..next.hits.len().min(limit)],
+                    &source.scope,
+                    cancel,
+                )?;
+                let budget = HEAD_BYTES.saturating_sub(
+                    head.bytes()
+                        .saturating_sub(head.tail.as_ref().map_or(0, Tail::bytes)),
+                );
+                let mut tail = Tail {
+                    offset,
+                    keys: next.hits,
+                };
+                while tail.bytes() > budget && !tail.keys.is_empty() {
+                    tail.keys.pop();
+                }
+                tail.keys.shrink_to_fit();
+                self.head.as_mut().unwrap().tail = (!tail.keys.is_empty()).then_some(tail);
             }
         }
         let next_offset = offset.saturating_add(rows.len() as u64);
+        if limit > 0 && offset < total && rows.is_empty() {
+            return Err(Error::InvalidIndex(
+                "ordered results ended before the reported total".into(),
+            ));
+        }
         let has_more = next_offset < total;
         let next = if has_more {
             rows.last().cloned().map(|last| PageCursor {
@@ -370,11 +449,12 @@ impl NativeIndex {
             cache_hits: self.rows.timing.hits,
             cache_misses: self.rows.timing.misses,
             chunks: self.data.shards.len(),
+            head_reused,
         };
         Ok(QueryPage {
             rows,
             total: spec.include_total.then_some(total),
-            kind_counts: spec.include_total.then_some((head.folders, head.files)),
+            kind_counts: spec.include_total.then_some(kind_counts),
             offset,
             next_offset,
             has_more,
@@ -428,8 +508,10 @@ impl NativeIndex {
                     .spool
                     .as_ref()
                     .map_or(Ok(0), |spool| spool.cache_used())?,
-            rank_cache_budget: HEAD_BYTES + super::rows::BUDGET,
-            rank_cache_used: self.head.as_ref().map_or(0, Head::bytes) + self.rows.bytes(),
+            rank_cache_budget: HEAD_BYTES + ARCHIVED_HEAD_BYTES + super::rows::BUDGET,
+            rank_cache_used: self.head.as_ref().map_or(0, Head::bytes)
+                + self.archived_heads.iter().map(Head::bytes).sum::<usize>()
+                + self.rows.bytes(),
             sqlite_global_memory: sqlite_memory,
             database_bytes: self.data.bytes()
                 + fs::metadata(&self.status().database_path)?.len()
@@ -437,5 +519,36 @@ impl NativeIndex {
             sqlite_version: rusqlite::version().into(),
             fts5: false,
         })
+    }
+
+    /// Query-key/decoded-row allocations, including a conservative spool-cache
+    /// allowance. Immutable descriptors and ingestion have separate bounds.
+    pub fn retained_query_bytes(&self) -> usize {
+        self.head.as_ref().map_or(0, Head::bytes)
+            + self.archived_heads.iter().map(Head::bytes).sum::<usize>()
+            + self.rows.bytes()
+            + self.spool.as_ref().map_or(0, |_| super::spool::CACHE_BYTES)
+    }
+    pub fn cached_window(&self, spec: &QuerySpec, prefix: u64, offset: usize, size: usize) -> bool {
+        let hash = fingerprint(spec, None);
+        self.head.iter().chain(&self.archived_heads).any(|head| {
+            head.hash == hash
+                && head.prefix == prefix
+                && (head.complete()
+                    || offset.saturating_add(size) <= head.keys.len()
+                    || head.tail.as_ref().is_some_and(|tail| {
+                        (offset as u64 >= tail.offset || tail.offset == head.keys.len() as u64)
+                            && (offset.saturating_add(size) as u64)
+                                <= tail.offset.saturating_add(tail.keys.len() as u64)
+                    }))
+        })
+    }
+    pub fn release_query_cache(&mut self) {
+        let baseline = self.rows.ordered_baseline;
+        self.head = None;
+        self.archived_heads.clear();
+        self.spool = None;
+        self.rows = super::rows::Rows::default();
+        self.rows.ordered_baseline = baseline;
     }
 }

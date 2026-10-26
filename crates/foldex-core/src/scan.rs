@@ -1,10 +1,10 @@
 use crate::model::{CHUNK_LEN, Entry, EntryStore, LimitReason, Snapshot};
 use std::{
-    fs, io,
+    io,
     mem::size_of,
     path::{Path, PathBuf},
     sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 pub(crate) const DEFAULT_DIRECTORY_BYTES: usize = 64 * 1024 * 1024;
@@ -150,7 +150,7 @@ impl Builder {
 
 struct Frame {
     relative: PathBuf,
-    entries: fs::ReadDir,
+    entries: foldex_fs::ReadDir,
     workspace_bytes: usize,
 }
 
@@ -161,7 +161,11 @@ fn frame_workspace(root: &Path, relative: &Path) -> usize {
         .len()
         .saturating_add(relative.as_os_str().len())
         .saturating_mul(8)
-        .saturating_add(4096)
+        .saturating_add(if cfg!(windows) {
+            foldex_fs::BUFFER_BYTES
+        } else {
+            4096
+        })
 }
 
 pub(crate) fn collect(
@@ -175,7 +179,7 @@ pub(crate) fn collect(
         return Ok(None);
     }
     let start = Instant::now();
-    let first = fs::read_dir(&path)?;
+    let first = foldex_fs::ReadDir::open(&path)?;
     let root_workspace = frame_workspace(&path, Path::new(""));
     let mut stack = vec![Frame {
         relative: PathBuf::new(),
@@ -220,35 +224,27 @@ pub(crate) fn collect(
             }
         };
         visits += 1;
-        let raw_name = item.file_name();
-        let metadata = item.metadata();
-        let file_type = item.file_type().ok();
-        let mut entry =
-            Entry::from_name(raw_name, file_type.is_some_and(|kind| kind.is_dir()), 0, 0);
-        entry.symlink = file_type.is_some_and(|kind| kind.is_symlink());
-        if let Ok(metadata) = metadata {
-            if file_type.is_none() {
-                entry.is_dir = metadata.is_dir();
-                entry.symlink = metadata.file_type().is_symlink();
-            }
-            entry.size = if entry.is_dir { 0 } else { metadata.len() };
-            entry.modified_secs = metadata.modified().map(system_time_secs).unwrap_or(0);
-            entry.created_secs = metadata.created().ok().map(system_time_secs);
-            entry.accessed_secs = metadata.accessed().ok().map(system_time_secs);
-            #[cfg(windows)]
-            {
-                use std::os::windows::fs::MetadataExt;
-                let attributes = metadata.file_attributes();
-                entry.hidden = attributes & 0x2 != 0;
-                entry.is_dir = attributes & 0x10 != 0;
-                // Directory reparse points include junctions as well as symbolic links.
-                entry.symlink |= attributes & 0x400 != 0;
-            }
-            if entry.is_dir {
-                entry.size = 0;
-            }
-        } else {
-            entry.metadata_known = false;
+        let caps = item.capabilities();
+        let can_descend = caps.can_enumerate();
+        let mut entry = Entry::from_name(
+            item.name,
+            item.attributes & 0x10 != 0,
+            item.size,
+            item.modified_secs,
+        );
+        entry.symlink = caps.redirects() || caps.unknown_reparse();
+        entry.hidden = item.attributes & 0x2 != 0;
+        entry.availability = caps.availability();
+        entry.created_secs = item.created_secs;
+        entry.accessed_secs = item.accessed_secs;
+        entry.metadata_known = item.metadata_known;
+        if !entry.metadata_known {
+            skipped += 1;
+        }
+        if entry.is_dir {
+            entry.size = 0;
+        }
+        if options.recursive && entry.is_dir && !can_descend && !entry.symlink {
             skipped += 1;
         }
         if options.recursive {
@@ -259,7 +255,7 @@ pub(crate) fn collect(
         let descend = entry
             .relative_path
             .as_ref()
-            .filter(|_| entry.is_dir && !entry.symlink)
+            .filter(|_| can_descend)
             .cloned();
         if options.recursive && entry.symlink {
             excluded_links += 1;
@@ -312,7 +308,7 @@ pub(crate) fn collect(
                 limit = Some(LimitReason::MemoryBudget);
                 break;
             }
-            match fs::read_dir(path.join(&relative)) {
+            match foldex_fs::ReadDir::open_no_follow(&path.join(&relative)) {
                 Ok(entries) => {
                     workspace_bytes = workspace_bytes.saturating_add(child_workspace);
                     stack.push(Frame {
@@ -355,23 +351,14 @@ pub(crate) fn collect(
     }))
 }
 
-fn system_time_secs(time: SystemTime) -> i64 {
-    match time.duration_since(UNIX_EPOCH) {
-        Ok(value) => value.as_secs().min(i64::MAX as u64) as i64,
-        Err(error) => {
-            -(error
-                .duration()
-                .as_secs()
-                .saturating_add(u64::from(error.duration().subsec_nanos() != 0))
-                .min(i64::MAX as u64) as i64)
-        }
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
 
     pub(crate) struct Fixture {

@@ -191,6 +191,7 @@ struct Reply {
 
 #[derive(Clone, Debug)]
 struct FileInfo {
+    availability: foldex_fs::capabilities::Availability,
     bytes: u64,
     directory: bool,
     link: bool,
@@ -200,18 +201,12 @@ struct FileInfo {
     accessed: Option<String>,
 }
 impl FileInfo {
-    fn new(metadata: &Metadata) -> Self {
-        #[cfg(windows)]
-        let reparse = {
-            use std::os::windows::fs::MetadataExt;
-            metadata.file_attributes() & 0x400 != 0
-        };
-        #[cfg(not(windows))]
-        let reparse = metadata.file_type().is_symlink();
+    fn new(metadata: &Metadata, caps: foldex_fs::capabilities::Capabilities) -> Self {
         Self {
             bytes: metadata.len(),
             directory: metadata.is_dir(),
-            link: reparse || metadata.file_type().is_symlink(),
+            availability: caps.availability(),
+            link: caps.redirects() || caps.unknown_reparse(),
             read_only: metadata.permissions().readonly(),
             modified: metadata.modified().ok().map(format_time),
             created: metadata.created().ok().map(format_time),
@@ -2114,7 +2109,20 @@ fn worker_loop(shared: Arc<Shared>) {
 
 fn read_source(path: &Path, canceled: &dyn Fn() -> bool) -> io::Result<Source> {
     let metadata = fs::symlink_metadata(path)?;
-    let info = Arc::new(FileInfo::new(&metadata));
+    let caps = foldex_fs::capabilities::probe(path)?;
+    let info = Arc::new(FileInfo::new(&metadata, caps));
+    if let Err(error) = foldex_fs::capabilities::background_path(path) {
+        return Ok(Source::Info {
+            info: Some(info),
+            message: error.to_string(),
+        });
+    }
+    if (!caps.is_dir() && !caps.can_read_content()) || (caps.is_dir() && !caps.can_enumerate()) {
+        return Ok(Source::Info {
+            info: Some(info),
+            message: "Online-only item. Open it explicitly to download or view it.".into(),
+        });
+    }
     if info.link || (!metadata.is_file() && !metadata.is_dir()) {
         return Ok(Source::Info {
             info: Some(info),
@@ -2126,7 +2134,7 @@ fn read_source(path: &Path, canceled: &dyn Fn() -> bool) -> io::Result<Source> {
         let mut name_bytes = 0usize;
         let mut limited = false;
         let mut skipped = 0;
-        for item in fs::read_dir(path)? {
+        for item in foldex_fs::ReadDir::open_no_follow(path)? {
             if canceled() {
                 return Err(canceled_error());
             }
@@ -2137,26 +2145,20 @@ fn read_source(path: &Path, canceled: &dyn Fn() -> bool) -> io::Result<Source> {
                     continue;
                 }
             };
-            let raw_name = item.file_name();
+            let item_caps = item.capabilities();
+            let raw_name = item.name;
             let weight = raw_name.len().saturating_mul(4);
             if items.len() == FOLDER_ITEMS || name_bytes.saturating_add(weight) > FOLDER_NAME_BYTES
             {
                 limited = true;
                 break;
             }
-            let file_type = match item.file_type() {
-                Ok(kind) => kind,
-                Err(_) => {
-                    skipped += 1;
-                    continue;
-                }
-            };
             name_bytes += weight;
             items.push(FolderItem {
                 name: raw_name.to_string_lossy().into_owned(),
                 raw_name,
-                directory: file_type.is_dir(),
-                link: file_type.is_symlink(),
+                directory: item_caps.is_dir(),
+                link: item_caps.redirects() || item_caps.unknown_reparse(),
             });
         }
         return Ok(Source::Folder {
@@ -2166,7 +2168,7 @@ fn read_source(path: &Path, canceled: &dyn Fn() -> bool) -> io::Result<Source> {
             skipped,
         });
     }
-    let mut file = File::open(path)?;
+    let mut file = foldex_fs::capabilities::open_background_content(path)?;
     let mut bytes = Vec::with_capacity((metadata.len() as usize).min(TEXT_BYTES + 4));
     Read::by_ref(&mut file)
         .take((TEXT_BYTES + 4) as u64)
@@ -2652,6 +2654,7 @@ fn metadata_ui(ui: &mut Ui, info: &FileInfo, theme: &Theme) {
     let m = theme.metrics();
     let font = egui::FontId::proportional((theme.font_size - 1.0).max(10.0));
     let keys = [
+        ("Availability", Some(info.availability.label())),
         ("Modified", info.modified.as_deref()),
         ("Created", info.created.as_deref()),
         ("Accessed", info.accessed.as_deref()),
@@ -2869,6 +2872,7 @@ mod tests {
 
     fn info() -> Arc<FileInfo> {
         Arc::new(FileInfo {
+            availability: Default::default(),
             bytes: 4,
             directory: false,
             link: false,
@@ -3317,5 +3321,39 @@ mod tests {
             format_time(UNIX_EPOCH - Duration::from_millis(1)),
             "1969-12-31 23:59 UTC"
         );
+    }
+}
+
+#[cfg(all(test, windows))]
+mod cloud_policy_tests {
+    use super::*;
+    #[test]
+    fn offline_selection_exposes_metadata_without_reading_a_preview() {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::*;
+        let path =
+            std::env::temp_dir().join(format!("foldex-offline-preview-{}.txt", std::process::id()));
+        fs::write(&path, b"must require explicit open").unwrap();
+        let wide = path
+            .as_os_str()
+            .encode_wide()
+            .chain([0])
+            .collect::<Vec<_>>();
+        let before = unsafe { GetFileAttributesW(wide.as_ptr()) };
+        assert_ne!(
+            unsafe { SetFileAttributesW(wide.as_ptr(), before | FILE_ATTRIBUTE_OFFLINE) },
+            0
+        );
+        let result = read_source(&path, &|| false).unwrap();
+        let preview = crate::platform::read_preview(&path).unwrap();
+        assert_ne!(unsafe { SetFileAttributesW(wide.as_ptr(), before) }, 0);
+        fs::remove_file(&path).unwrap();
+        assert!(
+            matches!(result, Source::Info { info: Some(ref info), .. } if info.availability == foldex_fs::capabilities::Availability::OnlineOnly)
+        );
+        assert!(matches!(
+            preview,
+            crate::platform::PreviewContent::Info { .. }
+        ));
     }
 }

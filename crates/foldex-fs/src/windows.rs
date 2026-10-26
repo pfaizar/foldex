@@ -160,9 +160,19 @@ impl FindReader {
             return Ok(Some(Entry {
                 name: OsString::from_wide(name),
                 attributes: data.dwFileAttributes,
+                reparse_tag: (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+                    .then_some(data.dwReserved0),
                 size: (u64::from(data.nFileSizeHigh) << 32) | u64::from(data.nFileSizeLow),
                 modified_secs: ((i128::from(modified) - 116_444_736_000_000_000i128)
                     .div_euclid(10_000_000)) as i64,
+                created_secs: Some(filetime_secs(
+                    (u64::from(data.ftCreationTime.dwHighDateTime) << 32)
+                        | u64::from(data.ftCreationTime.dwLowDateTime),
+                )),
+                accessed_secs: Some(filetime_secs(
+                    (u64::from(data.ftLastAccessTime.dwHighDateTime) << 32)
+                        | u64::from(data.ftLastAccessTime.dwLowDateTime),
+                )),
                 metadata_known: true,
             }));
         }
@@ -197,7 +207,7 @@ impl Reader {
         let raw = unsafe {
             CreateFileW(
                 wide.as_ptr(),
-                FILE_LIST_DIRECTORY,
+                FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES,
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                 ptr::null(),
                 OPEN_EXISTING,
@@ -215,6 +225,12 @@ impl Reader {
         }
         // SAFETY: CreateFileW returned a new valid owned synchronous handle.
         let guard = unsafe { OwnedHandle::from_raw_handle(raw.cast()) };
+        if no_follow && !probe_handle(raw)?.can_enumerate() {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Opaque or recall-on-open directory excluded",
+            ));
+        }
         let buffer = BUFFERS
             .with(|buffers| buffers.borrow_mut().pop())
             .unwrap_or_else(|| Box::new([0; BUFFER_BYTES / 8]));
@@ -225,27 +241,14 @@ impl Reader {
             first: true,
             ended: false,
         };
-        if let Err(error) = reader.refill() {
-            if no_follow && matches!(error.raw_os_error(), Some(1 | 50 | 87 | 124)) {
-                let mut info = BY_HANDLE_FILE_INFORMATION::default();
-                if unsafe { GetFileInformationByHandle(raw, &mut info) } != 0
-                    && info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
-                {
-                    return Err(io::Error::new(
-                        io::ErrorKind::Unsupported,
-                        "Reparse directory excluded",
-                    ));
-                }
-            }
-            return Err(error);
-        }
+        reader.refill()?;
         Ok(reader)
     }
     fn refill(&mut self) -> io::Result<()> {
         let class = if self.first {
-            FileFullDirectoryRestartInfo
+            FileIdExtdDirectoryRestartInfo
         } else {
-            FileFullDirectoryInfo
+            FileIdExtdDirectoryInfo
         };
         self.first = false;
         // The API writes a chain of initialized records ending with offset zero.
@@ -281,9 +284,10 @@ impl Reader {
                 }
             }
             let offset = self.offset.unwrap();
-            let header = std::mem::offset_of!(FILE_FULL_DIR_INFO, FileName);
+            let header = std::mem::offset_of!(FILE_ID_EXTD_DIR_INFO, FileName);
             if offset % 8 != 0
-                || offset.saturating_add(std::mem::size_of::<FILE_FULL_DIR_INFO>()) > BUFFER_BYTES
+                || offset.saturating_add(std::mem::size_of::<FILE_ID_EXTD_DIR_INFO>())
+                    > BUFFER_BYTES
             {
                 return self.invalid("Invalid directory record offset");
             }
@@ -296,7 +300,7 @@ impl Reader {
                     .as_ptr()
                     .cast::<u8>()
                     .add(offset)
-                    .cast::<FILE_FULL_DIR_INFO>()
+                    .cast::<FILE_ID_EXTD_DIR_INFO>()
             };
             let record = unsafe { ptr::read(pointer) };
             let length = record.FileNameLength as usize;
@@ -330,9 +334,13 @@ impl Reader {
             return Ok(Some(Entry {
                 name: OsString::from_wide(name),
                 attributes: record.FileAttributes,
+                reparse_tag: (record.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+                    .then_some(record.ReparsePointTag),
                 size: record.EndOfFile as u64,
                 modified_secs: ((record.LastWriteTime as u64 as i128 - 116_444_736_000_000_000i128)
                     .div_euclid(10_000_000)) as i64,
+                created_secs: Some(filetime_secs(record.CreationTime as u64)),
+                accessed_secs: Some(filetime_secs(record.LastAccessTime as u64)),
                 metadata_known: true,
             }));
         }
@@ -340,5 +348,227 @@ impl Reader {
     fn invalid(&mut self, message: &str) -> io::Result<Option<Entry>> {
         self.ended = true;
         Err(io::Error::new(io::ErrorKind::InvalidData, message))
+    }
+}
+
+fn filetime_secs(value: u64) -> i64 {
+    ((i128::from(value) - 116_444_736_000_000_000i128).div_euclid(10_000_000)) as i64
+}
+
+/// Find metadata for exactly one name, retaining its actual directory spelling.
+pub(super) fn stat(path: &Path) -> io::Result<Entry> {
+    let name = path
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "Expected a filename"))?;
+    if name.encode_wide().any(|unit| matches!(unit, 42 | 63)) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Wildcard metadata paths are not supported",
+        ));
+    }
+    let path = wide_path(path)?;
+    let mut data = WIN32_FIND_DATAW::default();
+    // The exact, NUL-terminated path and output record outlive this call. No
+    // content handle is opened and symbolic-link metadata is not followed.
+    let raw = unsafe {
+        FindFirstFileExW(
+            path.as_ptr(),
+            FindExInfoBasic,
+            (&mut data as *mut WIN32_FIND_DATAW).cast(),
+            FindExSearchNameMatch,
+            ptr::null(),
+            0,
+        )
+    };
+    if raw == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+    let _guard = FindHandle(raw);
+    let length = data
+        .cFileName
+        .iter()
+        .position(|unit| *unit == 0)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Unterminated filename"))?;
+    let ticks = |time: windows_sys::Win32::Foundation::FILETIME| {
+        (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime)
+    };
+    Ok(Entry {
+        name: OsString::from_wide(&data.cFileName[..length]),
+        attributes: data.dwFileAttributes,
+        reparse_tag: (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0)
+            .then_some(data.dwReserved0),
+        size: (u64::from(data.nFileSizeHigh) << 32) | u64::from(data.nFileSizeLow),
+        modified_secs: filetime_secs(ticks(data.ftLastWriteTime)),
+        created_secs: Some(filetime_secs(ticks(data.ftCreationTime))),
+        accessed_secs: Some(filetime_secs(ticks(data.ftLastAccessTime))),
+        metadata_known: true,
+    })
+}
+
+fn probe_handle(
+    raw: windows_sys::Win32::Foundation::HANDLE,
+) -> io::Result<capabilities::Capabilities> {
+    let mut info = FILE_ATTRIBUTE_TAG_INFO::default();
+    if unsafe {
+        GetFileInformationByHandleEx(
+            raw,
+            FileAttributeTagInfo,
+            (&mut info as *mut FILE_ATTRIBUTE_TAG_INFO).cast(),
+            std::mem::size_of_val(&info) as u32,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(capabilities::Capabilities::new(
+        info.FileAttributes,
+        (info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0).then_some(info.ReparseTag),
+    ))
+}
+pub(super) fn probe(path: &Path) -> io::Result<capabilities::Capabilities> {
+    let path = wide_path(path)?;
+    let attributes = unsafe { GetFileAttributesW(path.as_ptr()) };
+    if attributes == INVALID_FILE_ATTRIBUTES {
+        return Err(io::Error::last_os_error());
+    }
+    if attributes & FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+        return Ok(capabilities::Capabilities::new(attributes, None));
+    }
+    let raw = unsafe {
+        CreateFileW(
+            path.as_ptr(),
+            FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
+            ptr::null_mut(),
+        )
+    };
+    if raw == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+    let _guard = unsafe { OwnedHandle::from_raw_handle(raw.cast()) };
+    probe_handle(raw)
+}
+pub(super) fn location(path: &Path) -> capabilities::Location {
+    use capabilities::Location;
+    let Some(component) = path.components().next() else {
+        return Location::Other;
+    };
+    let std::path::Component::Prefix(prefix) = component else {
+        return Location::Other;
+    };
+    let root = match prefix.kind() {
+        std::path::Prefix::Disk(disk) | std::path::Prefix::VerbatimDisk(disk) => {
+            vec![disk as u16, 58, 92, 0]
+        }
+        std::path::Prefix::UNC(_, _) | std::path::Prefix::VerbatimUNC(_, _) => {
+            return Location::Network;
+        }
+        _ => return Location::Other,
+    };
+    match unsafe { GetDriveTypeW(root.as_ptr()) } {
+        3 | 6 => Location::Fixed,
+        2 | 5 => Location::Removable,
+        4 => Location::Network,
+        _ => Location::Other,
+    }
+}
+
+pub(super) fn directory_identity(path: &Path) -> io::Result<capabilities::DirectoryId> {
+    let path = wide_path(path)?;
+    let raw = unsafe {
+        CreateFileW(
+            path.as_ptr(),
+            FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            ptr::null(),
+            OPEN_EXISTING,
+            FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS,
+            ptr::null_mut(),
+        )
+    };
+    if raw == INVALID_HANDLE_VALUE {
+        return Err(io::Error::last_os_error());
+    }
+    let _guard = unsafe { OwnedHandle::from_raw_handle(raw.cast()) };
+    if !probe_handle(raw)?.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Expected a directory",
+        ));
+    }
+    let mut info = FILE_ID_INFO::default();
+    if unsafe {
+        GetFileInformationByHandleEx(
+            raw,
+            FileIdInfo,
+            (&mut info as *mut FILE_ID_INFO).cast(),
+            std::mem::size_of_val(&info) as u32,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok((info.VolumeSerialNumber, info.FileId.Identifier))
+}
+
+pub(super) fn same_directory(left: &Path, right: &Path) -> io::Result<bool> {
+    Ok(directory_identity(left)? == directory_identity(right)?)
+}
+
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+    #[test]
+    fn native_batch_retains_cloud_tags_and_never_confuses_them_with_links() {
+        let root = std::env::temp_dir();
+        let mut reader = Reader::open(&root, false).unwrap();
+        reader.buffer.as_mut().unwrap().fill(0);
+        let data = reader
+            .buffer
+            .as_mut()
+            .unwrap()
+            .as_mut_ptr()
+            .cast::<FILE_ID_EXTD_DIR_INFO>();
+        let name = "online.txt".encode_utf16().collect::<Vec<_>>();
+        unsafe {
+            (*data).FileNameLength = (name.len() * 2) as u32;
+            (*data).FileAttributes = FILE_ATTRIBUTE_REPARSE_POINT
+                | FILE_ATTRIBUTE_OFFLINE
+                | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS;
+            (*data).ReparsePointTag = 0x9000_001a;
+            (*data).EndOfFile = 1234;
+            ptr::copy_nonoverlapping(
+                name.as_ptr(),
+                ptr::addr_of_mut!((*data).FileName).cast(),
+                name.len(),
+            );
+        }
+        reader.offset = Some(0);
+        reader.ended = false;
+        let entry = reader.next_entry().unwrap().unwrap();
+        assert_eq!(entry.name, "online.txt");
+        assert_eq!(entry.size, 1234);
+        assert_eq!(
+            entry.capabilities().availability(),
+            capabilities::Availability::OnlineOnly
+        );
+        assert!(!entry.is_opaque());
+        assert!(!entry.capabilities().can_read_content());
+    }
+    #[test]
+    fn aliases_are_compared_by_native_file_identity() {
+        let root = std::env::temp_dir().join(format!("foldex-case-policy-{}", std::process::id()));
+        fs::create_dir_all(root.join("scope")).unwrap();
+        fs::create_dir_all(root.join("other")).unwrap();
+        assert!(same_directory(&root.join("scope"), &root.join("scope")).unwrap());
+        assert!(!same_directory(&root.join("scope"), &root.join("other")).unwrap());
+        let upper = root.join("SCOPE");
+        if upper.exists() {
+            assert!(same_directory(&root.join("scope"), &upper).unwrap());
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 }
