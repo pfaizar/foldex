@@ -1,4 +1,5 @@
 ---
+import Folder from './ui/Folder.astro';
 import { navigation, site } from '../config/site';
 
 const project = [
@@ -12,74 +13,78 @@ const project = [
 ].filter((link) => !!link);
 ---
 
-<footer class="site-footer" data-tone="night">
-  <div class="dither-edge" style="--from: var(--paper)"></div>
+<footer class="site-footer">
   <div class="wrap top">
-    <img
-      class="art"
-      src="/dither/folder-160.png"
-      alt=""
-      width="160"
-      height="160"
-      loading="lazy"
-    />
+    <div class="brand">
+      <a href="#top">
+        <Folder size={22} />
+        <span>Foldex</span>
+      </a>
+      <p>Files, without the friction.</p>
+    </div>
     <nav class="links" aria-label="Footer">
-      <ul>
-        {navigation.map(({ label, href }) => (
-          <li>
-            <a href={href}>{label}</a>
-          </li>
-        ))}
-      </ul>
-      <ul>
-        {project.map(({ label, href }) => (
-          <li>
-            <a href={href}>{label}</a>
-          </li>
-        ))}
-      </ul>
+      <div>
+        <p class="head">Product</p>
+        <ul>
+          {navigation.map(({ label, href }) => (
+            <li>
+              <a href={href}>{label}</a>
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div>
+        <p class="head">Project</p>
+        <ul>
+          {project.map(({ label, href }) => (
+            <li>
+              <a href={href}>{label}</a>
+            </li>
+          ))}
+        </ul>
+      </div>
     </nav>
   </div>
-  <p class="wordmark pixel" aria-hidden="true">
-    {[...'Foldex'].map((char) => (
-      <span>{char}</span>
-    ))}
-  </p>
-  <div class="status mono">
-    <div class="wrap row">
-      <span>Foldex {site.version}</span>
-      <span>Made with Rust</span>
-      <span class="legal">
-        Not affiliated with Microsoft. Windows is a trademark of Microsoft.
-      </span>
-    </div>
+  <div class="wrap bottom">
+    <span>Foldex {site.version}. Made with Rust.</span>
+    <span>
+      Not affiliated with Microsoft. Windows is a trademark of Microsoft.
+    </span>
   </div>
 </footer>
 
 <style>
   .site-footer {
-    position: relative;
-    overflow: hidden;
-    background: var(--night);
-    color: var(--night-text);
+    border-top: 1px solid var(--line);
+    font-size: 14px;
   }
   .top {
     display: flex;
     flex-wrap: wrap;
-    align-items: flex-end;
     justify-content: space-between;
-    gap: 40px;
-    padding-top: clamp(32px, 5vw, 64px);
+    gap: 48px;
+    padding: clamp(48px, 6vw, 80px) 0;
   }
-  .art {
-    width: clamp(96px, 10vw, 160px);
-    height: auto;
-    image-rendering: pixelated;
+  .brand a {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 18px;
+    font-weight: 560;
+    letter-spacing: -0.03em;
+  }
+  .brand p {
+    margin-top: 12px;
+    color: var(--muted);
   }
   .links {
     display: flex;
-    gap: clamp(40px, 6vw, 96px);
-    font-size: 14px;
+    gap: clamp(48px, 8vw, 120px);
+  }
+  .head {
+    margin-bottom: 14px;
+    color: var(--faint);
+    font-size: 13px;
   }
   ul {
     display: grid;
@@ -89,57 +94,20 @@ const project = [
     list-style: none;
   }
   .links a {
-    color: #8b969b;
+    color: var(--ink-2);
     transition: color 150ms var(--ease-out);
   }
   .links a:hover {
-    color: #fff;
+    color: var(--ink);
   }
-  /* The name, set large in the pixel face's grid shape. Each letter fills in
-     as the pointer passes over it. */
-  .wordmark {
+  .bottom {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
-    width: min(var(--page), 100% - var(--gutter) * 2);
-    margin: clamp(32px, 5vw, 64px) auto -0.16em;
-    color: #1f262a;
-    font-size: clamp(96px, 22vw, 330px);
-    font-variation-settings: 'ELSH' 40;
-    line-height: 0.8;
-    user-select: none;
-  }
-  .wordmark span {
-    transition:
-      font-variation-settings 500ms var(--ease-out),
-      color 500ms var(--ease-out);
-  }
-  .wordmark span:hover {
-    color: var(--yellow);
-    font-variation-settings: 'ELSH' 0;
-    transition-duration: 60ms;
-  }
-  .status {
-    position: relative;
-    border-top: 1px solid var(--night-line);
-    background: var(--night-2);
-    color: #6f7b80;
-    font-size: 11px;
-  }
-  .row {
-    display: flex;
-    gap: 24px;
-    padding: 10px 0;
-  }
-  .legal {
-    margin-left: auto;
-  }
-  @media (max-width: 700px) {
-    .row {
-      flex-wrap: wrap;
-      gap: 6px 16px;
-    }
-    .legal {
-      margin-left: 0;
-    }
+    gap: 8px 24px;
+    padding: 20px 0 32px;
+    border-top: 1px solid var(--line);
+    color: var(--faint);
+    font-size: 12px;
   }
 </style>

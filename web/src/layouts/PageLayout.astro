@@ -2,9 +2,7 @@
 import { getImage } from 'astro:assets';
 import '@fontsource-variable/geist/wght.css';
 import '@fontsource-variable/geist-mono/wght.css';
-import '@fontsource-variable/geist-pixel/elsh.css';
 import geistFont from '@fontsource-variable/geist/files/geist-latin-wght-normal.woff2?url';
-import pixelFont from '@fontsource-variable/geist-pixel/files/geist-pixel-latin-elsh-normal.woff2?url';
 import socialCard from '../assets/social-card.svg';
 import { site } from '../config/site';
 import { canIndex } from '../config/seo';
@@ -60,7 +58,10 @@ const structuredData = {
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#0b0e10" />
+    <script is:inline>
+      document.documentElement.classList.add('js');
+    </script>
+    <meta name="theme-color" content="#f8f8f6" />
     <title>{title}</title>
     <meta name="description" content={description} />
     <meta
@@ -69,15 +70,13 @@ const structuredData = {
     />
     {canonical && <link rel="canonical" href={canonical} />}
     <link rel="icon" href="/favicon.ico" sizes="any" />
-    {[pixelFont, geistFont].map((href) => (
-      <link
-        rel="preload"
-        href={href}
-        as="font"
-        type="font/woff2"
-        crossorigin="anonymous"
-      />
-    ))}
+    <link
+      rel="preload"
+      href={geistFont}
+      as="font"
+      type="font/woff2"
+      crossorigin="anonymous"
+    />
     {preloadImage && (
       <link rel="preload" href={preloadImage} as="image" fetchpriority="high" />
     )}
@@ -110,5 +109,21 @@ const structuredData = {
       Skip to content
     </a>
     <slot />
+    <script>
+      // Reveal marked content once, as it first scrolls into view.
+      const reveal = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            entry.target.classList.add('is-in');
+            reveal.unobserve(entry.target);
+          }
+        },
+        { rootMargin: '0px 0px -10% 0px' },
+      );
+      document
+        .querySelectorAll('[data-reveal]')
+        .forEach((el) => reveal.observe(el));
+    </script>
   </body>
 </html>

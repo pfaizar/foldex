@@ -1,28 +1,30 @@
 :root {
   color-scheme: light;
-  /* Neutrals are tinted toward the app's Graphite blue-grey. */
-  --paper: #eceeed;
-  --paper-2: #e2e5e4;
-  --ink: #101315;
-  --ink-2: #3d4549;
-  --muted: #646d71;
-  --line: #cfd5d5;
-  --night: #0b0e10;
-  --night-2: #15191c;
-  --night-line: #262d31;
-  --night-text: #c9d1d4;
+  /* Quiet, slightly warm neutrals; colour comes from the app and the auras. */
+  --bg: #f8f8f6;
+  --surface: #ffffff;
+  --surface-2: #f2f2ef;
+  --ink: #0e1012;
+  --ink-2: #3b4044;
+  --muted: #6b7176;
+  --faint: #a1a6a9;
+  --line: #e6e6e2;
+  --line-2: #d7d8d4;
   /* The app's Graphite accent and folder colours. */
   --teal: #17a1cc;
   --teal-ink: #0a6e8e;
   --yellow: #ffcd4f;
   --folder-back: color-mix(in srgb, var(--yellow) 72%, #7a4300);
   --radius: 10px;
-  --gutter: clamp(16px, 4vw, 56px);
-  --page: 1280px;
-  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --gutter: clamp(20px, 4vw, 48px);
+  --page: 1200px;
+  --nav: 64px;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --shadow-window:
+    0 0 0 1px #0e10120f, 0 2px 4px #0e10120a, 0 16px 40px -16px #0e101233,
+    0 48px 96px -48px #0e101240;
   --font-sans: 'Geist Variable', 'Segoe UI', system-ui, sans-serif;
   --font-mono: 'Geist Mono Variable', 'Cascadia Mono', Consolas, monospace;
-  --font-pixel: 'Geist Pixel Variable', 'Geist Mono Variable', monospace;
   font-family: var(--font-sans);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
@@ -33,14 +35,14 @@
 }
 html {
   scroll-behavior: smooth;
-  scroll-padding-top: 72px;
+  scroll-padding-top: calc(var(--nav) + 16px);
 }
 body {
   margin: 0;
-  background: var(--paper);
+  background: var(--bg);
   color: var(--ink);
   font-size: 16px;
-  line-height: 1.5;
+  line-height: 1.55;
 }
 a {
   color: inherit;
@@ -66,8 +68,7 @@ video {
   height: auto;
 }
 ::selection {
-  background: var(--yellow);
-  color: var(--ink);
+  background: color-mix(in srgb, var(--teal) 28%, transparent);
 }
 [hidden] {
   display: none !important;
@@ -81,6 +82,7 @@ h2,
 h3 {
   margin: 0;
   font-weight: 400;
+  letter-spacing: -0.03em;
   text-wrap: balance;
 }
 p {
@@ -90,11 +92,6 @@ p {
 .wrap {
   width: min(var(--page), 100% - var(--gutter) * 2);
   margin-inline: auto;
-}
-.pixel {
-  font-family: var(--font-pixel);
-  font-weight: 400;
-  letter-spacing: 0;
 }
 .mono {
   font-family: var(--font-mono);
@@ -117,8 +114,9 @@ p {
   top: 10px;
   left: 16px;
   padding: 10px 16px;
-  background: var(--yellow);
-  color: var(--ink);
+  border-radius: 999px;
+  background: var(--ink);
+  color: #fff;
   transform: translateY(-200%);
   font-size: 14px;
 }
@@ -126,7 +124,51 @@ p {
   transform: none;
 }
 
-/* Keycaps: the app's kbd chips, slightly raised. */
+/* Section headings share one scale; the muted second clause is optional. */
+.title {
+  font-size: clamp(30px, 3.4vw, 44px);
+  line-height: 1.08;
+}
+.title .soft {
+  color: var(--faint);
+}
+
+/* Pill buttons. */
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 150ms var(--ease-out),
+    transform 150ms var(--ease-out);
+}
+.button:hover {
+  background: #2a2e32;
+}
+.button:active {
+  transform: scale(0.98);
+}
+.button--quiet {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+.button--quiet:hover {
+  background: var(--surface-2);
+}
+
+/* Keycaps: light caps with a soft lip, pressed while the key is held. */
 .key {
   display: inline-flex;
   align-items: center;
@@ -134,30 +176,42 @@ p {
   min-width: 1.9em;
   height: 1.9em;
   padding-inline: 0.5em;
-  border: 1px solid currentColor;
-  border-bottom-width: 3px;
-  border-radius: 4px;
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink-2);
+  box-shadow:
+    inset 0 0 0 1px var(--line-2),
+    inset 0 -2px 0 var(--line);
   font-family: var(--font-mono);
   font-size: 0.8em;
   line-height: 1;
   white-space: nowrap;
   transition:
     transform 80ms var(--ease-out),
-    border-bottom-width 80ms var(--ease-out),
-    background-color 80ms var(--ease-out);
+    background-color 80ms var(--ease-out),
+    color 80ms var(--ease-out);
 }
 .key.is-down {
-  transform: translateY(2px);
-  border-bottom-width: 1px;
-  background: color-mix(in srgb, var(--teal) 30%, transparent);
+  transform: translateY(1px);
+  background: var(--ink);
+  color: #fff;
+  box-shadow: none;
 }
 
-/* A dithered edge between two section colours. Set --from to the colour above. */
-.dither-edge {
-  height: 64px;
-  background: var(--from);
-  -webkit-mask: url('/dither/fade.png') 0 0 / 32px 64px repeat-x;
-  mask: url('/dither/fade.png') 0 0 / 32px 64px repeat-x;
+/* Content rises in as it scrolls into view; see PageLayout. */
+@media (prefers-reduced-motion: no-preference) {
+  .js [data-reveal] {
+    opacity: 0;
+    transform: translateY(12px);
+    transition:
+      opacity 700ms var(--ease-out),
+      transform 700ms var(--ease-out);
+    transition-delay: calc(var(--d, 0) * 80ms);
+  }
+  .js [data-reveal].is-in {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

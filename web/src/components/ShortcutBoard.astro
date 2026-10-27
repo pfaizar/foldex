@@ -40,7 +40,7 @@ const table = shortcuts.map(({ name, keys }) => ({
 
 <figure {...rest} class:list={['board', className]} data-board>
   <div class="readout" aria-hidden="true">
-    <p class="name pixel" data-name>
+    <p class="name" data-name>
       Hold Ctrl
     </p>
     <p class="combo mono" data-combo></p>
@@ -217,11 +217,14 @@ const table = shortcuts.map(({ name, keys }) => ({
     align-items: baseline;
     justify-content: space-between;
     gap: 16px;
-    min-height: 64px;
+    min-height: 56px;
     margin-bottom: 16px;
+    padding-inline: 4px;
   }
   .name {
-    font-size: clamp(28px, 3.4vw, 48px);
+    font-size: clamp(26px, 3vw, 40px);
+    font-weight: 460;
+    letter-spacing: -0.035em;
     line-height: 1;
     white-space: nowrap;
   }
@@ -230,22 +233,26 @@ const table = shortcuts.map(({ name, keys }) => ({
   }
   @keyframes settle {
     from {
-      font-variation-settings: 'ELSH' 40;
+      opacity: 0.2;
+      filter: blur(6px);
     }
   }
   .combo {
-    color: var(--muted);
+    color: var(--faint);
     font-size: 12px;
     white-space: nowrap;
   }
   .keyboard {
-    --gap: clamp(2px, 0.4vw, 5px);
+    --gap: clamp(3px, 0.45vw, 6px);
     display: grid;
     gap: var(--gap);
-    padding: clamp(6px, 1vw, 12px);
-    border-radius: 10px;
-    background: var(--paper-2);
-    box-shadow: inset 0 0 0 1px var(--line);
+    padding: clamp(8px, 1.2vw, 14px);
+    border-radius: 18px;
+    background: linear-gradient(#efefec, #e7e7e3);
+    box-shadow:
+      inset 0 0 0 1px #0e10120d,
+      inset 0 1px 0 #fff,
+      0 24px 48px -32px #0e101240;
     user-select: none;
   }
   .row {
@@ -255,39 +262,43 @@ const table = shortcuts.map(({ name, keys }) => ({
   .cap {
     flex: var(--u) 1 0;
     min-width: 0;
-    height: clamp(22px, 3.2vw, 44px);
-    padding: 0 0 0 clamp(2px, 0.4vw, 6px);
-    border: 1px solid var(--line);
-    border-bottom-width: 3px;
-    border-radius: 4px;
-    background: var(--paper);
-    color: var(--muted);
+    height: clamp(24px, 3.2vw, 44px);
+    padding: 0 0 0 clamp(3px, 0.5vw, 7px);
+    border: 0;
+    border-radius: clamp(4px, 0.5vw, 7px);
+    background: var(--surface);
+    color: var(--faint);
+    box-shadow:
+      0 0 0 1px #0e10120f,
+      0 1px 0 1px #0e10120a,
+      inset 0 -2px 0 #0e101208;
     font-family: var(--font-mono);
     font-size: clamp(7px, 0.85vw, 11px);
     text-align: left;
     cursor: pointer;
     transition:
       transform 80ms var(--ease-out),
-      background-color 120ms var(--ease-out),
-      color 120ms var(--ease-out);
+      background-color 150ms var(--ease-out),
+      color 150ms var(--ease-out),
+      box-shadow 150ms var(--ease-out);
   }
   .cap.used {
-    color: var(--ink);
-    border-color: #b5bfbf;
+    color: var(--ink-2);
   }
   .is-holding .cap:not(.is-down, .is-next) {
-    color: #9aa3a6;
+    color: #c3c6c8;
   }
   .cap.is-next {
-    border-color: var(--teal);
-    background: color-mix(in srgb, var(--teal) 14%, var(--paper));
+    background: color-mix(in srgb, var(--teal) 12%, #fff);
     color: var(--teal-ink);
+    box-shadow:
+      0 0 0 1px color-mix(in srgb, var(--teal) 45%, transparent),
+      0 0 12px -2px color-mix(in srgb, var(--teal) 45%, transparent);
   }
   .cap.is-down {
-    transform: translateY(2px);
-    border-bottom-width: 1px;
-    border-color: var(--teal-ink);
-    background: var(--teal);
+    transform: translateY(1px);
+    background: var(--ink);
     color: #fff;
+    box-shadow: 0 0 0 1px var(--ink);
   }
 </style>

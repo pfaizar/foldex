@@ -16,24 +16,20 @@ const rows = benchmarks.map((benchmark) => {
 const first = rows[0]!;
 ---
 
-<section
-  class="benchmarks"
-  id="benchmarks"
-  data-tone="paper"
-  aria-labelledby="benchmarks-title"
->
-  <div class="dither-edge" style="--from: var(--night)"></div>
+<section class="benchmarks" id="benchmarks" aria-labelledby="benchmarks-title">
   <div class="wrap layout">
-    <div class="head">
-      <h2 id="benchmarks-title" class="pixel">
-        Keeps up with you.
+    <div class="head" data-reveal>
+      <h2 id="benchmarks-title" class="title">
+        Keeps up with you. <span class="soft">Not the other way round.</span>
       </h2>
       {benchmarkInfo.placeholder && (
-        <p class="sample mono">Sample data. Measured results coming soon.</p>
+        <p class="sample">
+          <i></i>Sample data, measured results coming soon
+        </p>
       )}
     </div>
 
-    <div class="listing">
+    <div class="listing" data-reveal>
       <table data-bench-table>
         <caption class="sr-only">
           Foldex compared with File Explorer. Lower is better.
@@ -75,8 +71,14 @@ const first = rows[0]!;
       <p class="method mono">{benchmarkInfo.method}</p>
     </div>
 
-    <div class="readout" data-readout aria-live="polite">
-      <p class="figure pixel">
+    <div
+      class="readout"
+      data-readout
+      aria-live="polite"
+      data-reveal
+      style="--d: 1"
+    >
+      <p class="figure">
         <span data-times>{first.times}</span>
         <span class="x">×</span>
       </p>
@@ -161,32 +163,41 @@ const first = rows[0]!;
 
 <style>
   .benchmarks {
-    position: relative;
-    padding-bottom: clamp(96px, 12vw, 160px);
+    padding: clamp(96px, 12vw, 160px) 0;
   }
   .layout {
     display: grid;
     grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
-    gap: 40px clamp(40px, 6vw, 96px);
-    margin-top: clamp(32px, 4vw, 56px);
+    gap: 56px clamp(40px, 6vw, 96px);
   }
   .head {
     grid-column: 1 / -1;
-    max-width: 44%;
-    min-height: clamp(120px, 14vw, 180px);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    justify-content: space-between;
+    gap: 16px 40px;
   }
   h2 {
-    font-size: clamp(40px, 4.6vw, 68px);
-    line-height: 0.95;
+    max-width: 15em;
   }
   .sample {
-    display: inline-block;
-    margin-top: 20px;
-    padding: 4px 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--surface);
+    box-shadow: inset 0 0 0 1px var(--line);
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .sample i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
     background: var(--yellow);
-    color: var(--ink);
-    font-size: 12px;
-    rotate: -1.5deg;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--yellow) 30%, transparent);
   }
 
   /* The table is drawn as a Foldex details view. */
@@ -196,37 +207,43 @@ const first = rows[0]!;
   table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 14px;
+    font-size: 15px;
   }
   thead th {
-    height: 34px;
-    padding: 0 12px;
+    height: 36px;
+    padding: 0 14px;
     border-bottom: 1px solid var(--line);
-    color: var(--muted);
-    font-size: 12px;
+    color: var(--faint);
+    font-size: 13px;
     font-weight: 400;
     text-align: right;
   }
   thead th:first-child {
     text-align: left;
   }
-  thead th + th {
-    box-shadow: inset 1px 0 var(--line);
-  }
   tbody tr {
     position: relative;
-    transition: background-color 120ms var(--ease-out);
+    transition: background-color 150ms var(--ease-out);
+  }
+  tbody tr + tr {
+    box-shadow: inset 0 1px var(--line);
   }
   tbody tr:hover {
-    background: #17a1cc12;
+    background: #0e101205;
   }
   tbody tr[data-selected] {
-    background: #17a1cc2b;
+    background: var(--surface);
+    box-shadow:
+      inset 0 0 0 1px var(--line),
+      0 8px 24px -16px #0e101240;
+  }
+  tbody tr[data-selected] + tr {
+    box-shadow: none;
   }
   tbody th,
   td {
-    height: 48px;
-    padding: 0 12px;
+    height: 56px;
+    padding: 0 14px;
     font-weight: 400;
     text-align: right;
     white-space: nowrap;
@@ -234,17 +251,23 @@ const first = rows[0]!;
   tbody th {
     text-align: left;
   }
+  tbody th:first-child {
+    border-radius: 12px 0 0 12px;
+  }
+  td:last-child {
+    border-radius: 0 12px 12px 0;
+  }
   td {
-    color: var(--ink-2);
+    color: var(--muted);
     font-size: 13px;
   }
   td.times {
-    color: var(--teal-ink);
+    color: var(--ink);
   }
   tbody button {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 12px;
     padding: 0;
     border: 0;
     background: none;
@@ -263,27 +286,32 @@ const first = rows[0]!;
   tbody tr:has(button:focus-visible) {
     outline: 2px solid var(--teal);
     outline-offset: -2px;
+    border-radius: 12px;
   }
   .method {
-    margin-top: 16px;
-    padding-left: 12px;
-    color: var(--muted);
+    margin-top: 20px;
+    padding-left: 14px;
+    color: var(--faint);
     font-size: 12px;
   }
 
   .readout {
     align-self: start;
-    padding-top: 4px;
   }
   .figure {
     display: flex;
     align-items: baseline;
-    font-size: clamp(96px, 13vw, 200px);
-    line-height: 0.8;
+    font-size: clamp(96px, 12vw, 176px);
+    font-weight: 380;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.06em;
+    line-height: 0.85;
   }
   .x {
-    color: var(--teal);
-    font-size: 0.5em;
+    margin-left: 0.04em;
+    color: var(--faint);
+    font-size: 0.45em;
+    font-weight: 300;
   }
   .is-new .figure,
   .is-new .claim {
@@ -291,43 +319,45 @@ const first = rows[0]!;
   }
   @keyframes settle {
     from {
-      font-variation-settings: 'ELSH' 40;
-      opacity: 0.4;
+      opacity: 0;
+      filter: blur(6px);
     }
   }
   .claim {
-    margin-top: 12px;
+    margin-top: 16px;
+    color: var(--ink-2);
     font-size: 20px;
+    letter-spacing: -0.01em;
   }
   .race {
     display: grid;
-    gap: 14px;
-    margin-top: 36px;
+    gap: 18px;
+    margin-top: 40px;
   }
   .lane {
     display: grid;
     grid-template-columns: 1fr auto;
-    gap: 6px 12px;
-    font-size: 13px;
+    gap: 8px 12px;
+    font-size: 14px;
   }
   .lane .mono {
-    color: var(--ink-2);
+    color: var(--muted);
+    font-size: 13px;
   }
   .bar {
     grid-column: 1 / -1;
-    height: 20px;
+    height: 8px;
+    border-radius: 999px;
     transform-origin: left;
   }
   .lane--foldex .bar {
     width: calc(var(--share) * 100%);
-    min-width: 4px;
-    background: var(--teal);
+    min-width: 8px;
+    background: linear-gradient(90deg, var(--teal), #55c3ec);
   }
-  /* The slower bar is dithered: a 2px checkerboard of ink. */
   .lane--explorer .bar {
     width: 100%;
-    background: repeating-conic-gradient(var(--ink-2) 0 25%, transparent 0 50%)
-      0 0 / 4px 4px;
+    background: var(--line-2);
   }
   @media (prefers-reduced-motion: no-preference) {
     /* Bars start empty only once the script is there to fill them. */
@@ -350,8 +380,8 @@ const first = rows[0]!;
     }
   }
   .detail {
-    margin-top: 20px;
-    color: var(--muted);
+    margin-top: 24px;
+    color: var(--faint);
     font-size: 12px;
   }
 
@@ -359,17 +389,13 @@ const first = rows[0]!;
     .layout {
       grid-template-columns: minmax(0, 1fr);
     }
-    .head {
-      max-width: none;
-      min-height: 0;
-    }
     .listing {
       order: 1;
     }
     tbody th,
     td,
     thead th {
-      padding: 0 8px;
+      padding: 0 10px;
     }
     tbody button :global(.folder) {
       display: none;

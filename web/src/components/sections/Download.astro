@@ -2,6 +2,7 @@
 // The release as it would look opened in Foldex: an address bar and two files.
 import Icon from '../ui/Icon.astro';
 import Keys from '../ui/Keys.astro';
+import Plate from '../Plate.astro';
 import { site } from '../../config/site';
 
 const files = [
@@ -9,76 +10,66 @@ const files = [
     name: `Foldex-${site.version}-windows-x64-setup.exe`,
     kind: 'Installer',
     note: 'Updates itself, no admin rights',
-    icon: '/dither/folder-64.png',
+    icon: 'windows' as const,
     ...site.installer,
   },
   site.portable && {
     name: `Foldex-${site.version}-windows-x64-portable.zip`,
     kind: 'Portable',
     note: 'Runs from any folder or USB drive',
-    icon: undefined,
+    icon: 'package' as const,
     ...site.portable,
   },
 ].filter((file) => !!file);
 const build = 'cargo build --locked --release';
 ---
 
-<section
-  class="download"
-  id="download"
-  data-tone="paper"
-  aria-labelledby="download-title"
->
-  <div class="dither-edge" style="--from: var(--yellow)"></div>
+<section class="download" id="download" aria-labelledby="download-title">
   <div class="wrap layout">
-    <h2 id="download-title" class="pixel">
-      Get Foldex.
+    <h2 id="download-title" class="title" data-reveal>
+      Get Foldex. <span class="soft">Free, open source, and small.</span>
     </h2>
 
-    <div class="window">
-      <p class="address mono" aria-hidden="true">
-        <span>C:</span>
-        <Icon name="chevron-right" size={12} />
-        <span>Releases</span>
-        <Icon name="chevron-right" size={12} />
-        <span>v{site.version}</span>
-      </p>
-      <ul class="files" aria-label={`Foldex ${site.version} downloads`}>
-        {files.map((file) => (
-          <li>
-            <a class="file" href={file.href}>
-              {file.icon ? (
-                <img
-                  src={file.icon}
-                  alt=""
-                  width="20"
-                  height="20"
-                  class="pix"
-                />
-              ) : (
-                <Icon name="package" size={20} />
-              )}
-              <span class="name">
-                <span class="mono">{file.name}</span>
-                <span class="note">{file.note}</span>
-              </span>
-              <span class="kind">{file.kind}</span>
-              <span class="size mono">{file.size}</span>
-              <span class="get">
-                <Icon name="download" size={16} />
-                <span class="sr-only">Download {file.kind.toLowerCase()}</span>
-              </span>
-            </a>
-          </li>
-        ))}
-      </ul>
-      <p class="status mono" aria-hidden="true">
-        {files.length} items
-        <span>Windows 10 (1809+) and 11, x64</span>
-      </p>
-    </div>
+    <Plate class="stage" palette="moss" seed={13} data-reveal>
+      <div class="window">
+        <p class="address mono" aria-hidden="true">
+          <span>C:</span>
+          <Icon name="chevron-right" size={12} />
+          <span>Releases</span>
+          <Icon name="chevron-right" size={12} />
+          <span>v{site.version}</span>
+        </p>
+        <ul class="files" aria-label={`Foldex ${site.version} downloads`}>
+          {files.map((file) => (
+            <li>
+              <a class="file" href={file.href}>
+                <span class="icon">
+                  <Icon name={file.icon} size={18} />
+                </span>
+                <span class="name">
+                  <span class="mono">{file.name}</span>
+                  <span class="note">{file.note}</span>
+                </span>
+                <span class="kind">{file.kind}</span>
+                <span class="size mono">{file.size}</span>
+                <span class="get">
+                  <Icon name="download" size={16} />
+                  <span class="sr-only">
+                    Download {file.kind.toLowerCase()}
+                  </span>
+                </span>
+              </a>
+            </li>
+          ))}
+        </ul>
+        <p class="status mono" aria-hidden="true">
+          {files.length} items
+          <span>Windows 10 (1809+) and 11, x64</span>
+        </p>
+      </div>
+    </Plate>
 
-    <div class="aside">
+    <div class="aside" data-reveal style="--d: 1">
       <div class="build">
         <code class="mono">{build}</code>
         <button
@@ -133,40 +124,38 @@ const build = 'cargo build --locked --release';
 
 <style>
   .download {
-    padding-bottom: clamp(80px, 9vw, 128px);
+    padding-bottom: clamp(96px, 12vw, 160px);
   }
   .layout {
     display: grid;
     grid-template-columns: minmax(0, 7fr) minmax(0, 4fr);
-    gap: 40px clamp(32px, 5vw, 80px);
-    align-items: start;
-    padding-top: clamp(32px, 5vw, 72px);
+    gap: 48px clamp(32px, 5vw, 80px);
+    align-items: center;
   }
   h2 {
     grid-column: 1 / -1;
-    font-size: clamp(56px, 8vw, 128px);
-    line-height: 0.9;
+    max-width: 14em;
   }
 
   .window {
     overflow: hidden;
-    border: 1px solid var(--line);
-    border-radius: var(--radius);
-    background: #f7f8f8;
-    box-shadow: 0 24px 48px -32px #10131540;
+    border-radius: 14px;
+    background: #ffffffeb;
+    box-shadow: var(--shadow-window);
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
   }
   .address {
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 10px 16px;
+    padding: 12px 18px;
     border-bottom: 1px solid var(--line);
-    background: var(--paper-2);
     color: var(--ink-2);
     font-size: 12px;
   }
   .address :global(svg) {
-    color: var(--muted);
+    color: var(--faint);
   }
   .files {
     margin: 0;
@@ -175,23 +164,23 @@ const build = 'cargo build --locked --release';
   }
   .file {
     display: grid;
-    grid-template-columns: 20px minmax(0, 1fr) auto auto 36px;
+    grid-template-columns: 36px minmax(0, 1fr) auto auto auto;
     align-items: center;
     gap: 16px;
-    padding: 12px 10px;
-    border-radius: 6px;
-    transition: background-color 120ms var(--ease-out);
+    padding: 12px;
+    border-radius: 10px;
+    transition: background-color 150ms var(--ease-out);
   }
   .file:hover {
-    background: color-mix(in srgb, var(--teal) 12%, transparent);
+    background: var(--surface-2);
   }
-  .file:active {
-    background: color-mix(in srgb, var(--teal) 22%, transparent);
-  }
-  .pix {
-    image-rendering: pixelated;
-  }
-  .file > :global(svg) {
+  .icon {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: var(--surface-2);
     color: var(--ink-2);
   }
   .name {
@@ -202,7 +191,7 @@ const build = 'cargo build --locked --release';
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 14px;
+    font-size: 13px;
   }
   .note {
     color: var(--muted);
@@ -210,7 +199,7 @@ const build = 'cargo build --locked --release';
   }
   .kind,
   .size {
-    color: var(--muted);
+    color: var(--faint);
     font-size: 13px;
   }
   .get {
@@ -218,18 +207,21 @@ const build = 'cargo build --locked --release';
     place-items: center;
     width: 36px;
     height: 36px;
-    border-radius: 6px;
-    background: var(--yellow);
-    color: var(--ink);
-    box-shadow: inset 0 -2px var(--folder-back);
+    border-radius: 999px;
+    background: var(--ink);
+    color: #fff;
+    transition: transform 150ms var(--ease-out);
+  }
+  .file:hover .get {
+    transform: translateY(1px);
   }
   .status {
     display: flex;
     justify-content: space-between;
     gap: 16px;
-    padding: 8px 16px;
+    padding: 10px 18px;
     border-top: 1px solid var(--line);
-    color: var(--muted);
+    color: var(--faint);
     font-size: 11px;
   }
 
@@ -242,10 +234,10 @@ const build = 'cargo build --locked --release';
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 6px 6px 14px;
-    border-radius: var(--radius);
-    background: var(--night);
-    color: var(--night-text);
+    padding: 6px 6px 6px 16px;
+    border-radius: 12px;
+    background: var(--ink);
+    color: #d6dadc;
   }
   .build code {
     flex: 1;
@@ -254,8 +246,8 @@ const build = 'cargo build --locked --release';
     white-space: nowrap;
   }
   .build code::before {
-    content: '> ';
-    color: var(--teal);
+    content: '$ ';
+    color: #6b7176;
   }
   .copy {
     display: grid;
@@ -263,9 +255,13 @@ const build = 'cargo build --locked --release';
     width: 32px;
     height: 32px;
     border: 0;
-    border-radius: 6px;
-    background: #ffffff12;
+    border-radius: 8px;
+    background: #ffffff14;
     cursor: pointer;
+    transition: background-color 150ms var(--ease-out);
+  }
+  .copy:hover {
+    background: #ffffff24;
   }
   .copy.is-done {
     background: var(--teal);
@@ -278,7 +274,7 @@ const build = 'cargo build --locked --release';
   }
   .links a {
     text-decoration: underline;
-    text-decoration-color: var(--line);
+    text-decoration-color: var(--line-2);
     text-underline-offset: 4px;
     transition: text-decoration-color 150ms var(--ease-out);
   }
@@ -290,9 +286,6 @@ const build = 'cargo build --locked --release';
     color: var(--muted);
     font-size: 13px;
   }
-  .press :global(.key) {
-    color: var(--ink-2);
-  }
 
   @media (max-width: 900px) {
     .layout {
@@ -301,7 +294,7 @@ const build = 'cargo build --locked --release';
   }
   @media (max-width: 560px) {
     .file {
-      grid-template-columns: 20px minmax(0, 1fr) 36px;
+      grid-template-columns: 36px minmax(0, 1fr) 36px;
     }
     .kind,
     .size {

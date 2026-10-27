@@ -1,0 +1,41 @@
+---
+// A rounded panel of drifting colour that a product shot sits on.
+import type { HTMLAttributes } from 'astro/types';
+import Aura from './Aura.astro';
+import type { AuraName } from '../data/auras';
+
+interface Props extends HTMLAttributes<'div'> {
+  palette?: AuraName;
+  seed?: number;
+}
+const { palette, seed, class: className, ...rest } = Astro.props;
+---
+
+<div {...rest} class:list={['plate', className]}>
+  <Aura palette={palette} seed={seed} />
+  <div class="content">
+    <slot />
+  </div>
+</div>
+
+<style>
+  .plate {
+    position: relative;
+    overflow: hidden;
+    padding: var(--plate-pad, clamp(20px, 4vw, 48px));
+    border-radius: 20px;
+    isolation: isolate;
+  }
+  /* A hairline over the colour, so the edge holds on the light page. */
+  .plate::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: inset 0 0 0 1px #0e10120f;
+    pointer-events: none;
+  }
+  .content {
+    position: relative;
+  }
+</style>
