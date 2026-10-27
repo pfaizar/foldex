@@ -1,19 +1,23 @@
 // Benchmark figures shown on the landing page.
-// While `placeholder` is true the section is labelled as sample data.
-// Replace the values with measured results, then set `placeholder` to false.
 
 export interface Benchmark {
   title: string;
   detail: string;
-  unit: string;
+  unit: 'ms' | 's' | 'MB';
   /** Completes "N× …" in the headline figure. */
   claim: string;
   /** Foldex first; every other entry is compared against it. */
   results: { app: string; value: number }[];
+  /**
+   * What the race chart draws: `progress` is how much of the task each app has
+   * done over time; `level` is a reading over a session (`span` minutes).
+   */
+  curve:
+    | { kind: 'progress'; label: string }
+    | { kind: 'level'; label: string; span: number };
 }
 
 export const benchmarkInfo = {
-  placeholder: true,
   machine: 'Test machine to be announced',
   method:
     'Median of 10 runs on Windows 11, warm disk cache unless noted. Lower is better.',
@@ -29,6 +33,7 @@ export const benchmarks: Benchmark[] = [
       { app: 'Foldex', value: 210 },
       { app: 'File Explorer', value: 740 },
     ],
+    curve: { kind: 'progress', label: 'Window ready' },
   },
   {
     title: 'Open a large folder',
@@ -39,6 +44,7 @@ export const benchmarks: Benchmark[] = [
       { app: 'Foldex', value: 380 },
       { app: 'File Explorer', value: 4200 },
     ],
+    curve: { kind: 'progress', label: 'Items listed' },
   },
   {
     title: 'Search subfolders',
@@ -49,6 +55,7 @@ export const benchmarks: Benchmark[] = [
       { app: 'Foldex', value: 0.6 },
       { app: 'File Explorer', value: 18.5 },
     ],
+    curve: { kind: 'progress', label: 'Items searched' },
   },
   {
     title: 'Memory at idle',
@@ -59,5 +66,6 @@ export const benchmarks: Benchmark[] = [
       { app: 'Foldex', value: 46 },
       { app: 'File Explorer', value: 118 },
     ],
+    curve: { kind: 'level', label: 'Memory over a session', span: 10 },
   },
 ];

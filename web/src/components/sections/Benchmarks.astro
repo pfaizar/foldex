@@ -1,404 +1,347 @@
 ---
-import Folder from '../ui/Folder.astro';
+import BenchmarkRace from '../BenchmarkRace';
+import Plate from '../Plate.astro';
 import { benchmarkInfo, benchmarks } from '../../data/benchmarks';
 
-const rows = benchmarks.map((benchmark) => {
-  const [foldex, explorer] = benchmark.results;
-  const ratio = explorer!.value / foldex!.value;
-  return {
-    ...benchmark,
-    foldex: `${foldex!.value} ${benchmark.unit}`,
-    explorer: `${explorer!.value} ${benchmark.unit}`,
-    share: foldex!.value / explorer!.value,
-    times: ratio < 10 ? ratio.toFixed(1) : Math.round(ratio).toString(),
-  };
-});
-const first = rows[0]!;
+const value = (n: number, unit: string) =>
+  `${n.toLocaleString('en-US')} ${unit}`;
 ---
 
 <section class="benchmarks" id="benchmarks" aria-labelledby="benchmarks-title">
-  <div class="wrap layout">
+  <div class="wrap">
     <div class="head" data-reveal>
       <h2 id="benchmarks-title" class="title">
         Keeps up with you. <span class="soft">Not the other way round.</span>
       </h2>
-      {benchmarkInfo.placeholder && (
-        <p class="sample">
-          <i></i>Sample data, measured results coming soon
-        </p>
-      )}
     </div>
 
-    <div class="listing" data-reveal>
-      <table data-bench-table>
-        <caption class="sr-only">
-          Foldex compared with File Explorer. Lower is better.
-        </caption>
+    <Plate class="stage" palette="sand" seed={7} data-reveal style="--d: 1">
+      <BenchmarkRace client:visible benchmarks={benchmarks} />
+    </Plate>
+
+    <div class="sr-only">
+      <table>
+        <caption>Foldex compared with File Explorer. Lower is better.</caption>
         <thead>
           <tr>
-            <th scope="col">Name</th>
+            <th scope="col">Test</th>
             <th scope="col">Foldex</th>
             <th scope="col">File Explorer</th>
-            <th scope="col">
-              <span class="sr-only">Difference</span>
-            </th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((row, i) => (
-            <tr
-              data-selected={i === 0 ? '' : undefined}
-              data-times={row.times}
-              data-claim={row.claim}
-              data-share={row.share}
-              data-foldex={row.foldex}
-              data-explorer={row.explorer}
-              data-detail={row.detail}
-            >
-              <th scope="row">
-                <button type="button" aria-pressed={i === 0}>
-                  <Folder />
-                  {row.title}
-                </button>
-              </th>
-              <td class="mono">{row.foldex}</td>
-              <td class="mono">{row.explorer}</td>
-              <td class="mono times">{row.times}×</td>
+          {benchmarks.map((b) => (
+            <tr>
+              <th scope="row">{b.title}</th>
+              <td>{value(b.results[0]!.value, b.unit)}</td>
+              <td>{value(b.results[1]!.value, b.unit)}</td>
             </tr>
           ))}
         </tbody>
       </table>
-      <p class="method mono">{benchmarkInfo.method}</p>
     </div>
-
-    <div
-      class="readout"
-      data-readout
-      aria-live="polite"
-      data-reveal
-      style="--d: 1"
-    >
-      <p class="figure">
-        <span data-times>{first.times}</span>
-        <span class="x">×</span>
-      </p>
-      <p class="claim" data-claim>
-        {first.claim}
-      </p>
-      <div class="race" style={`--share:${first.share}`}>
-        <div class="lane lane--foldex">
-          <span>Foldex</span>
-          <span class="mono" data-foldex>
-            {first.foldex}
-          </span>
-          <i class="bar"></i>
-        </div>
-        <div class="lane lane--explorer">
-          <span>File Explorer</span>
-          <span class="mono" data-explorer>
-            {first.explorer}
-          </span>
-          <i class="bar"></i>
-        </div>
-      </div>
-      <p class="detail mono" data-detail>
-        {first.detail}
-      </p>
-    </div>
+    <p class="method mono">{benchmarkInfo.method}</p>
   </div>
 </section>
 
-<script>
-  const section = document.querySelector<HTMLElement>('.benchmarks')!;
-  const rows = [...section.querySelectorAll<HTMLTableRowElement>('tbody tr')];
-  const readout = section.querySelector<HTMLElement>('[data-readout]')!;
-  const race = readout.querySelector<HTMLElement>('.race')!;
-  race.classList.add('is-armed');
-  const field = (name: string) =>
-    readout.querySelector<HTMLElement>(`[data-${name}]`)!;
-
-  // Both bars start together; each finishes in time proportional to its value.
-  const run = () => {
-    race.classList.remove('is-running');
-    void race.offsetWidth;
-    race.classList.add('is-running');
-  };
-
-  const choose = (row: HTMLTableRowElement, focus = false) => {
-    rows.forEach((other) => {
-      const on = other === row;
-      other.toggleAttribute('data-selected', on);
-      other.querySelector('button')!.setAttribute('aria-pressed', String(on));
-    });
-    for (const name of ['times', 'claim', 'foldex', 'explorer', 'detail'])
-      field(name).textContent = row.dataset[name]!;
-    race.style.setProperty('--share', row.dataset.share!);
-    readout.classList.remove('is-new');
-    void readout.offsetWidth;
-    readout.classList.add('is-new');
-    run();
-    if (focus) row.querySelector('button')!.focus();
-  };
-
-  rows.forEach((row, i) => {
-    const button = row.querySelector('button')!;
-    button.addEventListener('click', () => choose(row));
-    button.addEventListener('keydown', (event) => {
-      const step = { ArrowDown: 1, ArrowUp: -1 }[event.key];
-      if (!step) return;
-      event.preventDefault();
-      choose(rows[(i + step + rows.length) % rows.length]!, true);
-    });
-  });
-
-  new IntersectionObserver(
-    (entries, observer) => {
-      if (!entries.some((entry) => entry.isIntersecting)) return;
-      run();
-      observer.disconnect();
-    },
-    { threshold: 0.4 },
-  ).observe(race);
-</script>
-
 <style>
   .benchmarks {
-    padding: clamp(96px, 12vw, 160px) 0;
-  }
-  .layout {
-    display: grid;
-    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
-    gap: 56px clamp(40px, 6vw, 96px);
+    padding-block: clamp(96px, 12vw, 160px) clamp(56px, 7vw, 96px);
   }
   .head {
-    grid-column: 1 / -1;
     display: flex;
     flex-wrap: wrap;
     align-items: end;
     justify-content: space-between;
-    gap: 16px 40px;
+    gap: 16px 32px;
+    margin-bottom: clamp(28px, 4vw, 44px);
   }
-  h2 {
+  .head h2 {
     max-width: 15em;
   }
-  .sample {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 12px;
-    border-radius: 999px;
-    background: var(--surface);
-    box-shadow: inset 0 0 0 1px var(--line);
-    color: var(--muted);
-    font-size: 13px;
-  }
-  .sample i {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--yellow);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--yellow) 30%, transparent);
-  }
-
-  /* The table is drawn as a Foldex details view. */
-  .listing {
-    align-self: start;
-  }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 15px;
-  }
-  thead th {
-    height: 36px;
-    padding: 0 14px;
-    border-bottom: 1px solid var(--line);
-    color: var(--faint);
-    font-size: 13px;
-    font-weight: 400;
-    text-align: right;
-  }
-  thead th:first-child {
-    text-align: left;
-  }
-  tbody tr {
-    position: relative;
-    transition: background-color 150ms var(--ease-out);
-  }
-  tbody tr + tr {
-    box-shadow: inset 0 1px var(--line);
-  }
-  tbody tr:hover {
-    background: #0e101205;
-  }
-  tbody tr[data-selected] {
-    background: var(--surface);
-    box-shadow:
-      inset 0 0 0 1px var(--line),
-      0 8px 24px -16px #0e101240;
-  }
-  tbody tr[data-selected] + tr {
-    box-shadow: none;
-  }
-  tbody th,
-  td {
-    height: 56px;
-    padding: 0 14px;
-    font-weight: 400;
-    text-align: right;
-    white-space: nowrap;
-  }
-  tbody th {
-    text-align: left;
-  }
-  tbody th:first-child {
-    border-radius: 12px 0 0 12px;
-  }
-  td:last-child {
-    border-radius: 0 12px 12px 0;
-  }
-  td {
-    color: var(--muted);
-    font-size: 13px;
-  }
-  td.times {
-    color: var(--ink);
-  }
-  tbody button {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    padding: 0;
-    border: 0;
-    background: none;
-    cursor: pointer;
-    text-align: left;
-  }
-  /* The whole row is the button's hit area. */
-  tbody button::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-  }
-  tbody button:focus-visible {
-    outline: none;
-  }
-  tbody tr:has(button:focus-visible) {
-    outline: 2px solid var(--teal);
-    outline-offset: -2px;
-    border-radius: 12px;
+  .stage {
+    --plate-pad: clamp(12px, 3vw, 36px);
   }
   .method {
-    margin-top: 20px;
-    padding-left: 14px;
+    margin-top: 16px;
     color: var(--faint);
     font-size: 12px;
   }
 
-  .readout {
-    align-self: start;
-  }
-  .figure {
-    display: flex;
-    align-items: baseline;
-    font-size: clamp(96px, 12vw, 176px);
-    font-weight: 380;
-    font-variant-numeric: tabular-nums;
-    letter-spacing: -0.06em;
-    line-height: 0.85;
-  }
-  .x {
-    margin-left: 0.04em;
-    color: var(--faint);
-    font-size: 0.45em;
-    font-weight: 300;
-  }
-  .is-new .figure,
-  .is-new .claim {
-    animation: settle 600ms var(--ease-out);
-  }
-  @keyframes settle {
-    from {
-      opacity: 0;
-      filter: blur(6px);
-    }
-  }
-  .claim {
-    margin-top: 16px;
-    color: var(--ink-2);
-    font-size: 20px;
-    letter-spacing: -0.01em;
-  }
-  .race {
+  /* The race island. */
+  .stage :global(.race) {
     display: grid;
-    gap: 18px;
-    margin-top: 40px;
+    gap: 12px;
   }
-  .lane {
+  .stage :global(.tests) {
     display: grid;
-    grid-template-columns: 1fr auto;
-    gap: 8px 12px;
-    font-size: 14px;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
   }
-  .lane .mono {
+  .stage :global(.test) {
+    position: relative;
+    display: grid;
+    gap: 6px;
+    padding: 14px 16px 16px;
+    overflow: hidden;
+    border: 0;
+    border-radius: 14px;
+    background: #ffffff8c;
+    color: var(--ink);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    box-shadow: inset 0 0 0 1px #0e10120f;
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+    transition:
+      background-color 300ms var(--ease-out),
+      box-shadow 300ms var(--ease-out);
+  }
+  .stage :global(.test:hover) {
+    background: #ffffffc4;
+  }
+  .stage :global(.test[aria-pressed='true']) {
+    background: var(--surface);
+    box-shadow:
+      inset 0 0 0 1px #0e101214,
+      0 10px 30px -18px #0e101266;
+  }
+  .stage :global(.test-title) {
     color: var(--muted);
     font-size: 13px;
   }
-  .bar {
-    grid-column: 1 / -1;
-    height: 8px;
-    border-radius: 999px;
+  .stage :global(.test-times) {
+    display: flex;
+    align-items: baseline;
+    font-size: clamp(24px, 2.6vw, 32px);
+    font-weight: 380;
+    letter-spacing: -0.03em;
+    line-height: 1;
+  }
+  .stage :global(.x) {
+    color: var(--faint);
+    font-weight: 300;
+  }
+  /* Time left on the current test, before the race moves on. */
+  .stage :global(.test-timer) {
+    position: absolute;
+    inset: auto 0 0;
+    height: 2px;
+    background: var(--teal);
     transform-origin: left;
+    animation: bench-timer linear both;
   }
-  .lane--foldex .bar {
-    width: calc(var(--share) * 100%);
-    min-width: 8px;
-    background: linear-gradient(90deg, var(--teal), #55c3ec);
-  }
-  .lane--explorer .bar {
-    width: 100%;
-    background: var(--line-2);
-  }
-  @media (prefers-reduced-motion: no-preference) {
-    /* Bars start empty only once the script is there to fill them. */
-    .race.is-armed .bar {
+  @keyframes bench-timer {
+    from {
       transform: scaleX(0);
     }
-    .race.is-running .bar {
-      animation: fill linear forwards;
-    }
-    .race.is-running .lane--explorer .bar {
-      animation-duration: 1.6s;
-    }
-    .race.is-running .lane--foldex .bar {
-      animation-duration: max(0.12s, calc(var(--share) * 1.6s));
-    }
-    @keyframes fill {
-      to {
-        transform: none;
-      }
-    }
   }
-  .detail {
-    margin-top: 24px;
+
+  .stage :global(.board) {
+    display: grid;
+    grid-template-columns: minmax(260px, 340px) 1fr;
+    gap: clamp(20px, 3vw, 40px);
+    padding: clamp(20px, 3vw, 36px);
+    border-radius: 16px;
+    background: var(--surface);
+    box-shadow:
+      inset 0 0 0 1px #0e101214,
+      0 24px 60px -36px #0e101273;
+  }
+  .stage :global(.summary) {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .stage :global(.figure) {
+    display: flex;
+    align-items: baseline;
+    font-size: clamp(64px, 8vw, 112px);
+    font-weight: 360;
+    letter-spacing: -0.055em;
+    line-height: 0.9;
+  }
+  .stage :global(.claim) {
+    margin-top: 12px;
+    color: var(--ink-2);
+    font-size: 19px;
+  }
+  .stage :global(.detail) {
+    margin-top: 4px;
+    color: var(--faint);
+    font: 12px/1.5 var(--font-mono);
+  }
+  .stage :global(.lanes) {
+    display: grid;
+    gap: 18px;
+    width: 100%;
+    margin-top: auto;
+    padding-top: 32px;
+  }
+  .stage :global(.lane) {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: baseline;
+    gap: 2px 12px;
+  }
+  .stage :global(.lane-name) {
+    font-size: 15px;
+  }
+  .stage :global(.lane-status) {
+    grid-row: 2;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .stage :global(.lane-value) {
+    grid-row: span 2;
+    font: 500 20px/1 var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+  .stage :global(.unit) {
+    margin-left: 4px;
     color: var(--faint);
     font-size: 12px;
   }
+  .stage :global(.lane-track) {
+    display: block;
+    grid-column: 1 / -1;
+    height: 6px;
+    margin-top: 8px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: var(--surface-2);
+  }
+  .stage :global(.lane-track i) {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    transform-origin: left;
+  }
+  .stage :global(.lane--foldex .lane-track i) {
+    background: linear-gradient(90deg, #0a6e8e, var(--teal));
+  }
+  .stage :global(.lane--explorer .lane-track i) {
+    background: repeating-linear-gradient(
+      -45deg,
+      #a1a6a9 0 3px,
+      #c9cccd 3px 6px
+    );
+  }
+  .stage :global(.replay) {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 24px;
+    padding: 6px 12px 6px 10px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--ink-2);
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .stage :global(.replay:hover) {
+    background: var(--line);
+  }
+  .stage :global(.replay svg) {
+    width: 14px;
+    height: 14px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
 
-  @media (max-width: 900px) {
-    .layout {
-      grid-template-columns: minmax(0, 1fr);
+  .stage :global(.chart) {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    margin: 0;
+  }
+  .stage :global(.chart figcaption) {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .stage :global(.chart figcaption span) {
+    padding: 1px 6px;
+    border-radius: 6px;
+    background: var(--surface-2);
+    color: var(--faint);
+    font: 11px/1.5 var(--font-mono);
+  }
+  .stage :global(.chart-plot) {
+    flex: none;
+    height: clamp(240px, 26vw, 340px);
+    aspect-ratio: auto;
+    font-family: var(--font-mono);
+  }
+  .stage :global(.plot) {
+    position: relative;
+  }
+  .stage :global(.recharts-tooltip-wrapper) {
+    z-index: 2;
+  }
+  /* A curtain over the plot area (inside the axes) that slides off with the
+     race, drawing the curves without redrawing the chart. */
+  .stage :global(.scan) {
+    position: absolute;
+    inset: 8px 36px 30px 34px;
+    z-index: 1;
+    overflow: hidden;
+    pointer-events: none;
+    visibility: hidden;
+  }
+  .stage :global(.scan.is-racing) {
+    visibility: visible;
+    animation: bench-scan-out 300ms var(--ease-out) var(--race) forwards;
+  }
+  .stage :global(.scan i) {
+    position: absolute;
+    inset: 0;
+    background: var(--surface);
+    transform: translateX(calc(var(--to) * 100%));
+  }
+  .stage :global(.scan.is-racing i) {
+    animation: bench-scan var(--race) linear both;
+  }
+  /* The leading edge. */
+  .stage :global(.scan i::before) {
+    content: '';
+    position: absolute;
+    inset: 0 auto 0 -1px;
+    width: 2px;
+    background: linear-gradient(transparent, var(--teal) 30%, var(--teal));
+    box-shadow: 0 0 12px var(--teal);
+  }
+  @keyframes bench-scan {
+    from {
+      transform: translateX(0);
     }
-    .listing {
-      order: 1;
+  }
+  @keyframes bench-scan-out {
+    to {
+      opacity: 0;
+      visibility: hidden;
     }
-    tbody th,
-    td,
-    thead th {
-      padding: 0 10px;
+  }
+
+  @media (max-width: 860px) {
+    .stage :global(.tests) {
+      grid-template-columns: repeat(2, 1fr);
     }
-    tbody button :global(.folder) {
-      display: none;
+    .stage :global(.board) {
+      grid-template-columns: 1fr;
+    }
+    .stage :global(.lanes) {
+      padding-top: 24px;
     }
   }
 </style>

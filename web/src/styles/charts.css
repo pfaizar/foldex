@@ -1,0 +1,16 @@
+/* Tailwind for the EvilCharts components only. It scans just their folder,
+   leaves out Preflight, and sits in layers, so the page's own (unlayered)
+   styles always win. Their shadcn colour names map onto the page's tokens. */
+@layer theme, base, components, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities) source(none);
+@source '../components/evilcharts';
+
+@theme inline {
+  --color-background: var(--surface);
+  --color-foreground: var(--ink);
+  --color-muted: var(--surface-2);
+  --color-muted-foreground: var(--muted);
+  --color-border: var(--line);
+  --color-primary: var(--ink);
+}

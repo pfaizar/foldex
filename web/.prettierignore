@@ -3,3 +3,4 @@ dist/
 .astro/
 artifacts/
 pnpm-lock.yaml
+src/components/evilcharts/

@@ -1,5 +1,7 @@
 import { defineConfig } from 'astro/config';
+import react from '@astrojs/react';
 import sitemap from '@astrojs/sitemap';
+import tailwindcss from '@tailwindcss/vite';
 
 // Supply the real production origin in Cloudflare Pages' build environment.
 // A local build never invents a public domain or publishes localhost canonicals.
@@ -19,8 +21,11 @@ export default defineConfig({
   // Rasterize the checked-in social-card SVG for Open Graph image support.
   image: { dangerouslyProcessSVG: true },
   trailingSlash: 'always',
-  integrations: site
-    ? [sitemap({ filter: (page) => !page.endsWith('/404/') })]
-    : [],
+  // React only renders the benchmark chart, as an island.
+  integrations: [
+    react(),
+    ...(site ? [sitemap({ filter: (page) => !page.endsWith('/404/') })] : []),
+  ],
+  vite: { plugins: [tailwindcss()] },
   devToolbar: { enabled: false },
 });
