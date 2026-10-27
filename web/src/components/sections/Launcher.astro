@@ -1,87 +1,1186 @@
 ---
-import LoopVideo from '../LoopVideo.astro';
+// A desktop with work in progress, and the Foldex launcher over it. Visitors
+// can summon it with the real shortcut (or a click), search it, do sums and
+// conversions, and switch between the windows behind it. While nobody is
+// using it, it runs through a few errands on its own.
+import Aura from '../Aura.astro';
 import Keys from '../ui/Keys.astro';
+import { favorites, recents, tries } from '../../data/launcher';
+
+const contexts = [
+  { name: 'Code', title: 'main.rs — Code', tone: 'dark' },
+  { name: 'Slides', title: 'Q3 review — Slides', tone: 'light' },
+  { name: 'Sheets', title: 'budget-2026.xlsx — Sheets', tone: 'light' },
+  { name: 'Call', title: 'Weekly sync — Call', tone: 'dark' },
+];
+// Each line of the editor as [syntax class, text] pairs.
+const code: [string, string][][] = [
+  [
+    ['k', 'fn '],
+    ['f', 'main'],
+    ['p', '() {'],
+  ],
+  [
+    ['p', '    '],
+    ['k', 'let mut '],
+    ['v', 'app'],
+    ['p', ' = Foldex::'],
+    ['f', 'new'],
+    ['p', '();'],
+  ],
+  [
+    ['p', '    app.'],
+    ['f', 'open_tab'],
+    ['p', '('],
+    ['s', '"C:/Users/you/Studio"'],
+    ['p', ');'],
+  ],
+  [
+    ['p', '    app.'],
+    ['f', 'split'],
+    ['p', '(Direction::Right);'],
+  ],
+  [['c', '    // Ctrl+Alt+Space from anywhere']],
+  [
+    ['p', '    app.'],
+    ['f', 'launcher'],
+    ['p', '().'],
+    ['f', 'register'],
+    ['p', '();'],
+  ],
+  [
+    ['p', '    app.'],
+    ['f', 'run'],
+    ['p', '()'],
+  ],
+  [['p', '}']],
+];
+const sheet = [
+  ['', 'Q1', 'Q2', 'Q3', 'Q4'],
+  ['Design', '12,400', '13,100', '14,900', '15,200'],
+  ['Hosting', '3,210', '3,480', '3,620', '3,900'],
+  ['Hardware', '8,000', '—', '2,400', '—'],
+  ['Travel', '1,150', '2,300', '980', '1,700'],
+  ['Software', '4,600', '4,600', '4,750', '4,750'],
+  ['Total', '29,360', '23,480', '26,650', '25,550'],
+];
+const people = [
+  ['AK', 'Aiko'],
+  ['MR', 'Mateo'],
+  ['SN', 'Sana'],
+  ['JB', 'Jonas'],
+];
 ---
 
-<section class="launcher" data-tone="yellow" aria-labelledby="launcher-title">
-  <div class="dither-edge" style="--from: var(--night)"></div>
-  <div class="wrap layout">
-    <div class="copy">
+<section class="launcher" id="launcher" aria-labelledby="launcher-title">
+  <div class="wrap head" data-reveal>
+    <button
+      type="button"
+      class="summon"
+      data-summon
+      aria-label="Open the launcher (Ctrl+Alt+Space)"
+    >
       <Keys keys={['Ctrl', 'Alt', 'Space']} class="giant" />
-      <h2 id="launcher-title" class="pixel">
-        Open anything, from anywhere.
-      </h2>
-      <p>
-        Apps, files, favorites, and a calculator, over whatever you’re doing.
-      </p>
+    </button>
+    <h2 id="launcher-title" class="title">
+      Open anything, <span class="soft">from anywhere.</span>
+    </h2>
+    <p>
+      Apps, files, favorites, open windows, and a calculator, over whatever
+      you’re doing. Press it now.
+    </p>
+  </div>
+
+  <div class="wrap">
+    <div class="desk" data-desk data-reveal>
+      <Aura palette="dusk" seed={9} />
+
+      <div class="contexts" aria-hidden="true">
+        {contexts.map((ctx, i) => (
+          <div
+            class:list={['win', `win--${ctx.name.toLowerCase()}`, ctx.tone]}
+            data-context={i}
+            data-current={i === 0 ? '' : undefined}
+          >
+            <p class="bar">
+              <span>{ctx.title}</span>
+              <svg
+                viewBox="0 0 66 10"
+                width="66"
+                height="10"
+                aria-hidden="true"
+              >
+                <path d="M0 5.5h10M28 1h9v9h-9zM57 1l8 8M65 1l-8 8"></path>
+              </svg>
+            </p>
+            {ctx.name === 'Code' && (
+              <div class="code mono">
+                {code.map((line, n) => (
+                  <p>
+                    <span class="ln">{n + 1}</span>
+                    {line.map(([kind, text]) => (
+                      <span class={kind}>{text}</span>
+                    ))}
+                  </p>
+                ))}
+              </div>
+            )}
+            {ctx.name === 'Slides' && (
+              <div class="slides">
+                <div class="thumbs">
+                  <i></i>
+                  <i class="on"></i>
+                  <i></i>
+                </div>
+                <div class="slide">
+                  <p class="kicker">Q3 review</p>
+                  <p class="big">Shipping faster, together.</p>
+                </div>
+              </div>
+            )}
+            {ctx.name === 'Sheets' && (
+              <table class="sheet">
+                <tbody>
+                  {sheet.map((row, r) => (
+                    <tr>
+                      {row.map((cell, c) => (
+                        <td
+                          class:list={{
+                            label: r === 0 || c === 0,
+                            pick: r === 3 && c === 3,
+                          }}
+                        >
+                          {cell}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {ctx.name === 'Call' && (
+              <div class="call">
+                {people.map(([initials, name], n) => (
+                  <div class="person" style={`--n:${n}`}>
+                    <b>{initials}</b>
+                    <span>{name}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div class="taskbar" aria-hidden="true">
+        <div class="apps">
+          <i class="start"></i>
+          <i class="foldex"></i>
+          {contexts.map((ctx, i) => (
+            <i
+              class:list={['app', ctx.name.toLowerCase()]}
+              data-dock={i}
+              data-current={i === 0 ? '' : undefined}
+            ></i>
+          ))}
+        </div>
+        <p class="clock mono">10:24</p>
+      </div>
+
+      <div class="scrim" data-scrim></div>
+
+      <div
+        class="panel"
+        data-panel
+        data-open
+        role="dialog"
+        aria-label="Foldex launcher demo"
+      >
+        <label class="search">
+          <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+            <circle cx="7" cy="7" r="4.5"></circle>
+            <path d="m10.5 10.5 3.5 3.5"></path>
+          </svg>
+          <input
+            type="text"
+            placeholder="Search anything…"
+            aria-label="Search the launcher"
+            aria-controls="launcher-results"
+            autocomplete="off"
+            spellcheck="false"
+            data-input
+          />
+          <kbd class="esc mono">Esc</kbd>
+        </label>
+        <div
+          class="results"
+          id="launcher-results"
+          role="listbox"
+          aria-label="Results"
+          data-results
+        >
+          <p class="group">Favorites</p>
+          {favorites.map((entry, i) => (
+            <div
+              class="row"
+              role="option"
+              aria-selected={i === 0 ? 'true' : 'false'}
+            >
+              <i class="ic folder"></i>
+              <span class="name">{entry.title}</span>
+              <span class="detail">{entry.detail}</span>
+            </div>
+          ))}
+          <p class="group">Recents</p>
+          {recents.map((entry) => (
+            <div class="row" role="option" aria-selected="false">
+              <i class="ic file" data-mark={entry.mark}></i>
+              <span class="name">{entry.title}</span>
+              <span class="detail">{entry.detail}</span>
+            </div>
+          ))}
+          <p class="group">
+            Applications <span>Type to find more</span>
+          </p>
+        </div>
+        <p class="hints mono" aria-hidden="true">
+          <span>
+            <kbd>↑</kbd>
+            <kbd>↓</kbd> select
+          </span>
+          <span>
+            <kbd>Enter</kbd> open
+          </span>
+          <span>
+            <kbd>Esc</kbd> close
+          </span>
+        </p>
+      </div>
+
+      <p class="toast" data-toast role="status" aria-live="polite"></p>
     </div>
-    <LoopVideo
-      name="launcher"
-      class="shot"
-      keycast={false}
-      label="The Foldex launcher working out 1920*1080/1024 as it is typed."
-    />
+
+    <p class="tries" data-reveal>
+      <span>Try</span>
+      {tries.map((query) => (
+        <button type="button" class="try mono" data-try={query}>
+          {query}
+        </button>
+      ))}
+    </p>
   </div>
 </section>
 
+<script>
+  import { automatic } from '../../data/calculator';
+  import { entries, type Entry, type Group } from '../../data/launcher';
+
+  const desk = document.querySelector<HTMLElement>('[data-desk]')!;
+  const panel = desk.querySelector<HTMLElement>('[data-panel]')!;
+  const input = desk.querySelector<HTMLInputElement>('[data-input]')!;
+  const list = desk.querySelector<HTMLElement>('[data-results]')!;
+  const toast = desk.querySelector<HTMLElement>('[data-toast]')!;
+  const scrim = desk.querySelector<HTMLElement>('[data-scrim]')!;
+  const contexts = [...desk.querySelectorAll<HTMLElement>('[data-context]')];
+  const docks = [...desk.querySelectorAll<HTMLElement>('[data-dock]')];
+  const summon = document.querySelector<HTMLButtonElement>('[data-summon]')!;
+  const caps = [...summon.querySelectorAll<HTMLElement>('.key')];
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+
+  type Row =
+    | Entry
+    | { kind: 'calc'; title: string; detail: string; group: 'Calculator' };
+  let rows: Row[] = [];
+  let selected = 0;
+  let open = true;
+  let current = 0;
+
+  const escape = (text: string) =>
+    text.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+
+  const icon = (row: Row) => {
+    if (row.kind === 'calc') return '<i class="ic calc">=</i>';
+    if (row.kind === 'app')
+      return `<i class="ic app" style="--a:${row.tint![0]};--b:${row.tint![1]}">${escape(row.mark!)}</i>`;
+    if (row.kind === 'file')
+      return `<i class="ic file" data-mark="${escape(row.mark!)}"></i>`;
+    return `<i class="ic ${row.kind}"></i>`;
+  };
+
+  // Prefix beats word start beats substring beats letters in order.
+  const score = (title: string, query: string) => {
+    const t = title.toLowerCase();
+    if (t.startsWith(query)) return 4;
+    if (t.split(/[\s./_—-]+/).some((word) => word.startsWith(query))) return 3;
+    if (t.includes(query)) return 2;
+    let at = 0;
+    for (const c of t) if (c === query[at]) at++;
+    return at === query.length ? 1 : 0;
+  };
+
+  const order: (Group | 'Calculator')[] = [
+    'Calculator',
+    'Favorites',
+    'Apps',
+    'Recents',
+    'Files',
+    'Windows',
+    'Actions',
+  ];
+  const labels: Record<string, string> = { Apps: 'Applications' };
+
+  const search = (text: string): Row[] => {
+    const query = text.trim().toLowerCase();
+    if (!query)
+      return entries.filter(
+        (e) => e.group === 'Favorites' || e.group === 'Recents',
+      );
+    const found: Row[] = [];
+    const result = automatic(text);
+    if (result)
+      found.push({
+        kind: 'calc',
+        title: result,
+        detail: 'Enter to copy',
+        group: 'Calculator',
+      });
+    const matches = entries
+      .map((entry) => ({ entry, s: score(entry.title, query) }))
+      .filter(({ s }) => s > 0)
+      .sort((a, b) => b.s - a.s);
+    for (const group of order)
+      for (const { entry } of matches)
+        if (entry.group === group) found.push(entry);
+    // Keep the best few, still shown in group order.
+    const kept = new Set(
+      [...found].sort((a, b) => rank(b, query) - rank(a, query)).slice(0, 7),
+    );
+    return found.filter((row) => kept.has(row));
+  };
+  const rank = (row: Row, query: string) =>
+    row.kind === 'calc' ? 9 : score(row.title, query);
+
+  const render = () => {
+    rows = search(input.value);
+    selected = Math.min(selected, Math.max(0, rows.length - 1));
+    let html = '';
+    let last = '';
+    rows.forEach((row, i) => {
+      if (row.group !== last) {
+        last = row.group;
+        html += `<p class="group">${labels[row.group] ?? row.group}</p>`;
+      }
+      const calc = row.kind === 'calc' ? ' is-calc' : '';
+      html += `<div class="row${calc}" role="option" id="lr-${i}" aria-selected="${i === selected}" data-i="${i}">${icon(row)}<span class="name">${escape(row.title)}</span><span class="detail">${escape(row.detail)}</span></div>`;
+    });
+    if (!input.value.trim())
+      html +=
+        '<p class="group">Applications <span>Type to find more</span></p>';
+    if (!rows.length)
+      html += `<p class="empty">No results for “${escape(input.value)}”</p>`;
+    list.innerHTML = html;
+    input.setAttribute(
+      'aria-activedescendant',
+      rows.length ? `lr-${selected}` : '',
+    );
+  };
+
+  const choose = (i: number) => {
+    selected = Math.max(0, Math.min(rows.length - 1, i));
+    list
+      .querySelectorAll('.row')
+      .forEach((row, n) =>
+        row.setAttribute('aria-selected', String(n === selected)),
+      );
+    input.setAttribute('aria-activedescendant', `lr-${selected}`);
+  };
+
+  let toastTimer = 0;
+  const say = (text: string) => {
+    toast.textContent = text;
+    toast.classList.add('is-on');
+    clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(() => toast.classList.remove('is-on'), 1800);
+  };
+
+  const focusContext = (i: number) => {
+    current = i;
+    contexts.forEach((ctx, n) => ctx.toggleAttribute('data-current', n === i));
+    docks.forEach((dock, n) => dock.toggleAttribute('data-current', n === i));
+  };
+
+  const setOpen = (next: boolean, focus = false) => {
+    open = next;
+    panel.toggleAttribute('data-open', next);
+    scrim.classList.toggle('is-on', next);
+    if (next) {
+      input.value = '';
+      selected = 0;
+      render();
+      if (focus) input.focus({ preventScroll: true });
+    } else if (document.activeElement === input) {
+      summon.focus({ preventScroll: true });
+    }
+  };
+
+  // What Enter does: the same outcome the real launcher has, told in a toast.
+  const activate = (fromUser: boolean) => {
+    const row = rows[selected];
+    if (!row) return;
+    setOpen(false);
+    if (row.kind === 'calc') {
+      if (fromUser)
+        navigator.clipboard
+          ?.writeText(row.title.split(' ')[0]!)
+          .catch(() => {});
+      say(`Copied ${row.title}`);
+    } else if (row.kind === 'window') {
+      focusContext(row.context!);
+    } else if (row.kind === 'action') {
+      say(row.title);
+    } else if (row.kind === 'app') {
+      say(`Opening ${row.title}`);
+    } else {
+      say(`Opening ${row.title} in Foldex`);
+    }
+  };
+
+  const press = (down: boolean) =>
+    caps.forEach((cap) => cap.classList.toggle('is-down', down));
+
+  // Visitors take over from the demo the moment they do anything here.
+  let lastInput = 0;
+  let run = 0;
+  const takeOver = () => {
+    lastInput = Date.now();
+    run++;
+  };
+
+  input.addEventListener('input', () => {
+    takeOver();
+    selected = 0;
+    render();
+  });
+  input.addEventListener('keydown', (event) => {
+    takeOver();
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const step = event.key === 'ArrowDown' ? 1 : -1;
+      choose((selected + step + rows.length) % rows.length);
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      activate(true);
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      setOpen(false);
+    }
+  });
+  list.addEventListener('pointermove', (event) => {
+    const row = (event.target as Element).closest<HTMLElement>('.row');
+    if (row?.dataset.i) choose(Number(row.dataset.i));
+  });
+  list.addEventListener('click', (event) => {
+    const row = (event.target as Element).closest<HTMLElement>('.row');
+    if (!row?.dataset.i) return;
+    takeOver();
+    choose(Number(row.dataset.i));
+    activate(true);
+  });
+  scrim.addEventListener('click', () => {
+    takeOver();
+    setOpen(false);
+  });
+  desk.addEventListener('pointerdown', takeOver);
+  summon.addEventListener('click', () => {
+    takeOver();
+    setOpen(!open, true);
+  });
+  document.querySelectorAll<HTMLButtonElement>('[data-try]').forEach((button) =>
+    button.addEventListener('click', () => {
+      takeOver();
+      if (!open) setOpen(true);
+      input.value = button.dataset.try!;
+      selected = 0;
+      render();
+      input.focus({ preventScroll: true });
+    }),
+  );
+
+  let visible = false;
+  new IntersectionObserver(
+    (records) => {
+      visible = records.some((record) => record.isIntersecting);
+      if (!visible) run++;
+    },
+    { threshold: 0.35 },
+  ).observe(desk);
+
+  // The real shortcut works while the desk is on screen.
+  addEventListener('keydown', (event) => {
+    if (!visible || !event.ctrlKey || !event.altKey || event.code !== 'Space')
+      return;
+    event.preventDefault();
+    takeOver();
+    setOpen(!open, true);
+  });
+
+  // The demo: errands over each window in turn.
+  const errands: [context: number, query: string, pick: number][] = [
+    [0, 'term', 0],
+    [2, '1920*1080/1024', 0],
+    [3, 'desi', 0],
+    [1, '12 km to mi', 0],
+    [0, 'launch', 0],
+  ];
+  const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
+  let playing = false;
+  let errand = 0;
+  const demo = async (id: number) => {
+    const alive = () => id === run;
+    playing = true;
+    for (; alive(); errand++) {
+      const [context, query, pick] = errands[errand % errands.length]!;
+      if (context !== current) {
+        focusContext(context);
+        await sleep(1400);
+        if (!alive()) return;
+      }
+      press(true);
+      await sleep(260);
+      press(false);
+      if (!alive()) return;
+      setOpen(true);
+      await sleep(700);
+      for (const char of query) {
+        if (!alive()) return;
+        input.value += char;
+        selected = 0;
+        render();
+        await sleep(70 + Math.random() * 70);
+      }
+      await sleep(500);
+      if (!alive()) return;
+      choose(pick);
+      await sleep(900);
+      if (!alive()) return;
+      activate(false);
+      await sleep(2600);
+    }
+  };
+  const play = async () => {
+    try {
+      await demo(++run);
+    } finally {
+      playing = false;
+    }
+  };
+  window.setInterval(() => {
+    if (playing || reduced.matches || !visible || document.hidden || open)
+      return;
+    if (Date.now() - lastInput < 9000) return;
+    play();
+  }, 1000);
+
+  // Start closed when the demo can play; otherwise the open state stays.
+  if (!reduced.matches) setOpen(false);
+  else render();
+</script>
+
 <style>
   .launcher {
-    position: relative;
-    overflow: hidden;
-    padding-bottom: clamp(96px, 11vw, 160px);
-    background: var(--yellow);
-    color: var(--ink);
+    padding-bottom: clamp(96px, 12vw, 160px);
   }
-  .layout {
-    position: relative;
+  .head {
     display: grid;
-    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-    gap: 48px clamp(32px, 5vw, 80px);
-    align-items: center;
-    padding-top: clamp(32px, 5vw, 72px);
+    justify-items: center;
+    text-align: center;
   }
-  .copy :global(.giant) {
-    gap: 8px;
-    font-size: clamp(20px, 2.4vw, 32px);
+  .summon {
+    padding: 8px;
+    border: 0;
+    border-radius: 20px;
+    background: none;
+    cursor: pointer;
   }
-  .copy :global(.giant .key) {
-    height: 2.4em;
-    padding-inline: 0.7em;
-    border-color: var(--ink);
-    border-bottom-width: 5px;
-    border-radius: 8px;
-    background: #fff3;
+  .summon :global(.giant) {
+    gap: 10px;
+    font-size: clamp(18px, 2vw, 26px);
   }
-  .copy :global(.giant .key[data-key=' ']) {
+  .summon :global(.giant .key) {
+    height: 2.6em;
+    padding-inline: 0.8em;
+    border-radius: 12px;
+    box-shadow:
+      0 0 0 1px #0e10120f,
+      0 1px 0 1px #0e10120a,
+      0 12px 24px -12px #0e101240,
+      inset 0 -3px 0 #0e10120a;
+  }
+  .summon:hover :global(.key) {
+    transform: translateY(-1px);
+  }
+  .summon :global(.giant .key[data-key=' ']) {
     min-width: 6em;
   }
-  .copy :global(.giant .key.is-down) {
-    border-bottom-width: 2px;
-    transform: translateY(3px);
-    background: var(--ink);
+  .summon :global(.giant .key.is-down) {
+    transform: translateY(2px);
+    box-shadow: 0 0 0 1px var(--ink);
+  }
+  .head h2 {
+    margin-top: 32px;
+  }
+  .head p {
+    max-width: 40ch;
+    margin-top: 14px;
+    color: var(--muted);
+  }
+
+  /* The desk: a wallpaper, windows, a taskbar, and the launcher on top. */
+  .desk {
+    position: relative;
+    overflow: hidden;
+    height: clamp(460px, 52vw, 640px);
+    margin-top: clamp(40px, 5vw, 64px);
+    border-radius: 24px;
+    isolation: isolate;
+    box-shadow: inset 0 0 0 1px #0e10121a;
+  }
+  .contexts {
+    position: absolute;
+    inset: 0 0 52px;
+  }
+  .win {
+    position: absolute;
+    top: 9%;
+    left: 50%;
+    width: min(760px, 78%);
+    height: 74%;
+    overflow: hidden;
+    border-radius: 12px;
+    box-shadow:
+      0 0 0 1px #ffffff1a,
+      0 30px 60px -20px #000a;
+    opacity: 0;
+    transform: translate(-50%, 16px) scale(0.97);
+    transition:
+      opacity 500ms var(--ease-out),
+      transform 600ms var(--ease-out);
+  }
+  .win[data-current] {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+  .win.dark {
+    background: #1b1d1f;
+    color: #c8ccce;
+  }
+  .win.light {
+    background: #f7f7f5;
+    color: var(--ink-2);
+  }
+  .bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 34px;
+    padding: 0 14px;
+    font-size: 12px;
+    opacity: 0.7;
+  }
+  .dark .bar {
+    border-bottom: 1px solid #ffffff12;
+  }
+  .light .bar {
+    border-bottom: 1px solid var(--line);
+  }
+  /* Windows caption buttons: minimise, maximise, close. */
+  .bar svg {
+    fill: none;
+    stroke: currentColor;
+  }
+
+  .code {
+    padding: 18px 0;
+    font-size: clamp(11px, 1.15vw, 14px);
+    line-height: 1.9;
+    white-space: pre;
+  }
+  .code .ln {
+    display: inline-block;
+    width: 3.5em;
+    padding-right: 1.4em;
+    color: #5b6266;
+    text-align: right;
+  }
+  .code .k {
+    color: #c49a6c;
+  }
+  .code .f {
+    color: #8fb3c9;
+  }
+  .code .s {
+    color: #a7bd9a;
+  }
+  .code .v {
+    color: #d8c7a5;
+  }
+  .code .c {
+    color: #6c7478;
+  }
+
+  .slides {
+    display: grid;
+    grid-template-columns: 18% 1fr;
+    gap: 16px;
+    height: calc(100% - 34px);
+    padding: 16px;
+  }
+  .thumbs {
+    display: grid;
+    align-content: start;
+    gap: 10px;
+  }
+  .thumbs i,
+  .slide {
+    border-radius: 6px;
+    background:
+      url('/grain.png') 0 0 / 120px,
+      radial-gradient(80% 90% at 75% 20%, #dcb894, transparent 70%),
+      linear-gradient(150deg, #5d7183, #1c2024);
+    background-blend-mode: overlay, normal, normal;
+  }
+  .thumbs i {
+    aspect-ratio: 16 / 10;
+    opacity: 0.6;
+  }
+  .thumbs i.on {
+    opacity: 1;
+    box-shadow: 0 0 0 2px var(--teal);
+  }
+  .slide {
+    display: grid;
+    align-content: end;
+    padding: 6%;
+    color: #fff;
+  }
+  .kicker {
+    font-size: 12px;
+    opacity: 0.7;
+  }
+  .big {
+    max-width: 12em;
+    margin-top: 6px;
+    font-size: clamp(20px, 3vw, 40px);
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+  }
+
+  .sheet {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: clamp(10px, 1.1vw, 13px);
+  }
+  .sheet td {
+    height: 2.6em;
+    padding: 0 12px;
+    border: 1px solid var(--line);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  .sheet td.label {
+    background: var(--surface-2);
+    color: var(--muted);
+    text-align: left;
+  }
+  .sheet td.pick {
+    box-shadow: inset 0 0 0 2px var(--teal);
+  }
+
+  .call {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    height: calc(100% - 34px);
+    padding: 8px;
+  }
+  .person {
+    position: relative;
+    display: grid;
+    place-items: center;
+    border-radius: 8px;
+    background:
+      url('/grain.png') 0 0 / 120px,
+      radial-gradient(
+        90% 80% at calc(30% + var(--n) * 15%) 30%,
+        #6f8f84,
+        transparent 70%
+      ),
+      linear-gradient(160deg, #2f3d39, #1b2321);
+    background-blend-mode: overlay, normal, normal;
+  }
+  .person:nth-child(even) {
+    background:
+      url('/grain.png') 0 0 / 120px,
+      radial-gradient(90% 80% at 60% 30%, #9a6c55, transparent 70%),
+      linear-gradient(160deg, #4a403b, #28211e);
+    background-blend-mode: overlay, normal, normal;
+  }
+  .person b {
+    display: grid;
+    place-items: center;
+    width: clamp(40px, 6vw, 64px);
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background: #ffffff1f;
+    color: #fff;
+    font-size: clamp(13px, 1.4vw, 18px);
+    font-weight: 500;
+  }
+  .person span {
+    position: absolute;
+    left: 10px;
+    bottom: 8px;
+    font-size: 12px;
+  }
+
+  .taskbar {
+    position: absolute;
+    inset: auto 0 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 52px;
+    background: #0e10128c;
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
+    box-shadow: inset 0 1px #ffffff14;
+  }
+  .apps {
+    display: flex;
+    gap: 6px;
+  }
+  .apps i {
+    position: relative;
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+  }
+  .apps i::before {
+    content: '';
+    position: absolute;
+    inset: 7px;
+    border-radius: 4px;
+  }
+  .apps .start::before {
+    background:
+      linear-gradient(#a9c6d8, #a9c6d8) 0 0 / 9px 9px no-repeat,
+      linear-gradient(#a9c6d8, #a9c6d8) 100% 0 / 9px 9px no-repeat,
+      linear-gradient(#a9c6d8, #a9c6d8) 0 100% / 9px 9px no-repeat,
+      linear-gradient(#a9c6d8, #a9c6d8) 100% 100% / 9px 9px no-repeat;
+  }
+  .apps .foldex::before {
+    inset: 8px 6px;
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 13'%3E%3Cpath d='M0 2a1 1 0 0 1 1-1h4l1.5 1.5H15a1 1 0 0 1 1 1V5H0z' fill='%23d9a63c'/%3E%3Cpath d='M0 4h16v8a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1z' fill='%23f5c859'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+  }
+  .apps .code::before {
+    background: linear-gradient(135deg, #4a5258, #22272b);
+  }
+  .apps .slides::before {
+    background: linear-gradient(135deg, #dcb894, #9a6c55);
+  }
+  .apps .sheets::before {
+    background: linear-gradient(135deg, #8fb3a4, #2f3d39);
+  }
+  .apps .call::before {
+    background: linear-gradient(135deg, #8193a3, #3b444d);
+  }
+  .apps [data-current] {
+    background: #ffffff14;
+  }
+  .apps [data-current]::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    bottom: 1px;
+    width: 12px;
+    height: 3px;
+    border-radius: 2px;
+    background: #a9c6d8;
+    translate: -50% 0;
+  }
+  .clock {
+    position: absolute;
+    right: 18px;
+    color: #e3e6e5;
+    font-size: 12px;
+    opacity: 0.8;
+  }
+
+  .scrim {
+    position: absolute;
+    inset: 0;
+    background: #0e101259;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 200ms var(--ease-out);
+  }
+  .scrim.is-on {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* The launcher, drawn after the app's own. */
+  .panel {
+    position: absolute;
+    top: 12%;
+    left: 50%;
+    display: flex;
+    flex-direction: column;
+    width: min(600px, 90%);
+    max-height: 72%;
+    overflow: hidden;
+    border-radius: 12px;
+    background: #1d1f21f2;
+    color: #e8eaeb;
+    box-shadow:
+      0 0 0 1px #ffffff1f,
+      0 40px 80px -20px #000c;
+    -webkit-backdrop-filter: blur(24px);
+    backdrop-filter: blur(24px);
+    opacity: 0;
+    visibility: hidden;
+    transform: translate(-50%, 10px) scale(0.97);
+    transition:
+      opacity 160ms var(--ease-out),
+      transform 220ms var(--ease-out),
+      visibility 0s 220ms;
+  }
+  .panel[data-open] {
+    opacity: 1;
+    visibility: visible;
+    transform: translate(-50%, 0);
+    transition:
+      opacity 160ms var(--ease-out),
+      transform 220ms var(--ease-out);
+  }
+  .search {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 14px;
+    border-bottom: 1px solid #ffffff14;
+  }
+  .search svg {
+    flex: none;
+    fill: none;
+    stroke: #9aa1a6;
+    stroke-width: 1.5;
+  }
+  .search input {
+    flex: 1;
+    min-width: 0;
+    height: 48px;
+    padding: 0;
+    border: 0;
+    outline: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    font-size: 16px;
+    caret-color: var(--teal);
+  }
+  .search input::placeholder {
+    color: #8a9195;
+  }
+  .esc {
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: #ffffff12;
+    color: #9aa1a6;
+    font-size: 11px;
+  }
+  .results {
+    flex: 1;
+    overflow: hidden;
+    padding: 6px 8px 8px;
+  }
+  .results :global(.group) {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 10px 6px;
+    color: #8a9195;
+    font-size: 12px;
+  }
+  .results :global(.group span) {
+    color: #6c7478;
+  }
+  .results :global(.row) {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 12px;
+    height: 38px;
+    padding: 0 10px;
+    border-radius: 7px;
+    font-size: 14px;
+    cursor: default;
+  }
+  .results :global(.row[aria-selected='true']) {
+    background: #17394099;
+    box-shadow: inset 0 0 0 1px #17a1cc33;
+  }
+  .results :global(.name) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .results :global(.detail) {
+    color: #8a9195;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .results :global(.is-calc) {
+    height: 52px;
+  }
+  .results :global(.is-calc .name) {
+    font-size: 22px;
+    letter-spacing: -0.02em;
+  }
+  .results :global(.empty) {
+    padding: 20px 10px;
+    color: #8a9195;
+    font-size: 13px;
+  }
+  .results :global(.ic) {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 5px;
+    font-size: 10px;
+    font-style: normal;
+    font-weight: 600;
+  }
+  .results :global(.ic.folder) {
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 13'%3E%3Cpath d='M0 2a1 1 0 0 1 1-1h4l1.5 1.5H15a1 1 0 0 1 1 1V5H0z' fill='%23d9a63c'/%3E%3Cpath d='M0 4h16v8a1 1 0 0 1-1 1H1a1 1 0 0 1-1-1z' fill='%23f5c859'/%3E%3C/svg%3E")
+      center / 18px no-repeat;
+  }
+  .results :global(.ic.file) {
+    width: 15px;
+    margin-inline: 2.5px;
+    border-radius: 2px 5px 2px 2px;
+    background: #e8eaeb;
+  }
+  .results :global(.ic.file::after) {
+    content: attr(data-mark);
+    position: absolute;
+    left: -4px;
+    bottom: 2px;
+    padding: 0 2px;
+    border-radius: 2px;
+    background: #5d7183;
+    color: #fff;
+    font: 600 6px/1.4 var(--font-mono);
+  }
+  .results :global(.ic.app) {
+    background: linear-gradient(135deg, var(--b), var(--a));
+    color: #fff;
+    font-family: var(--font-mono);
+  }
+  .results :global(.ic.calc) {
+    background: #ffffff1a;
     color: var(--yellow);
+    font-size: 14px;
   }
-  h2 {
-    margin-top: 40px;
-    font-size: clamp(40px, 4.6vw, 68px);
-    line-height: 0.95;
+  .results :global(.ic.window) {
+    border: 1.5px solid #9aa1a6;
+    border-top-width: 4px;
+    border-radius: 3px;
   }
-  p {
-    max-width: 34ch;
+  .results :global(.ic.action) {
+    background:
+      radial-gradient(circle, #9aa1a6 0 3px, transparent 3.5px), #ffffff12;
+  }
+  .hints {
+    display: flex;
+    gap: 16px;
+    padding: 9px 16px;
+    border-top: 1px solid #ffffff12;
+    color: #6c7478;
+    font-size: 11px;
+  }
+  .hints kbd {
+    margin-right: 3px;
+    padding: 0 4px;
+    border-radius: 3px;
+    background: #ffffff12;
+    color: #9aa1a6;
+    font: inherit;
+  }
+
+  .toast {
+    position: absolute;
+    left: 50%;
+    bottom: 68px;
+    padding: 8px 16px;
+    border-radius: 999px;
+    background: #f7f7f5;
+    color: var(--ink);
+    font-size: 14px;
+    white-space: nowrap;
+    box-shadow: 0 12px 32px -8px #000a;
+    opacity: 0;
+    transform: translate(-50%, 8px);
+    transition:
+      opacity 200ms var(--ease-out),
+      transform 200ms var(--ease-out);
+    pointer-events: none;
+  }
+  .toast.is-on {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+
+  .tries {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
     margin-top: 20px;
-    color: #4a3b10;
-    font-size: 17px;
+    color: var(--faint);
+    font-size: 13px;
   }
-  .shot {
-    justify-self: end;
-    width: min(100%, 640px);
+  .try {
+    padding: 6px 12px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--ink-2);
+    box-shadow: inset 0 0 0 1px var(--line);
+    font-size: 12px;
+    cursor: pointer;
+    transition: box-shadow 150ms var(--ease-out);
   }
-  @media (max-width: 900px) {
-    .layout {
-      grid-template-columns: minmax(0, 1fr);
+  .try:hover {
+    box-shadow: inset 0 0 0 1px var(--line-2);
+  }
+
+  @media (max-width: 700px) {
+    .desk {
+      height: 560px;
     }
-    .shot {
-      justify-self: start;
+    .win {
+      width: 90%;
+      height: 60%;
+    }
+    .hints {
+      display: none;
+    }
+    .results :global(.detail) {
+      display: none;
     }
   }
 </style>
