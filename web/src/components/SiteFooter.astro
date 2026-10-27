@@ -1,5 +1,5 @@
 ---
-import Folder from './ui/Folder.astro';
+import Logo from './ui/Logo.astro';
 import { navigation, site } from '../config/site';
 
 const project = [
@@ -11,22 +11,61 @@ const project = [
   },
   { label: 'License', href: site.license },
 ].filter((link) => !!link);
+const pages = [...navigation, { label: 'Download', href: '/#download' }];
+
+// Files tucked behind the wordmark: x is a share of the width, y a nudge
+// up and r a tilt.
+const files = [
+  { kind: 'folder', name: 'Projects', x: 3, r: -8, y: 0 },
+  {
+    kind: 'doc',
+    name: 'notes.md',
+    ext: 'MD',
+    tint: '#6f9fd8',
+    x: 14,
+    r: 6,
+    y: 16,
+  },
+  { kind: 'image', name: 'beach.jpg', x: 27, r: -4, y: -10 },
+  { kind: 'folder', name: 'Recipes', x: 39, r: 9, y: 6 },
+  {
+    kind: 'doc',
+    name: 'budget.xlsx',
+    ext: 'XLS',
+    tint: '#2fb86a',
+    x: 51,
+    r: -7,
+    y: 20,
+  },
+  { kind: 'image', name: 'cat.png', x: 62, r: 5, y: -6 },
+  {
+    kind: 'doc',
+    name: 'resume.pdf',
+    ext: 'PDF',
+    tint: '#e5534b',
+    x: 74,
+    r: -5,
+    y: 12,
+  },
+  { kind: 'folder', name: 'Travel', x: 86, r: 7, y: -2 },
+] as const;
 ---
 
 <footer class="site-footer">
   <div class="wrap top">
     <div class="brand">
-      <a href="#top">
-        <Folder size={22} />
+      <a href="/">
+        <Logo size={26} />
         <span>Foldex</span>
       </a>
-      <p>Files, without the friction.</p>
+      <p>Foldex {site.version}. Made with Rust.</p>
+      <p>Not affiliated with Microsoft. Windows is a trademark of Microsoft.</p>
     </div>
     <nav class="links" aria-label="Footer">
       <div>
         <p class="head">Product</p>
         <ul>
-          {navigation.map(({ label, href }) => (
+          {pages.map(({ label, href }) => (
             <li>
               <a href={href}>{label}</a>
             </li>
@@ -45,18 +84,61 @@ const project = [
       </div>
     </nav>
   </div>
-  <div class="wrap bottom">
-    <span>Foldex {site.version}. Made with Rust.</span>
-    <span>
-      Not affiliated with Microsoft. Windows is a trademark of Microsoft.
-    </span>
+  <!-- The bottom of the folder: a giant wordmark with files tucked behind
+       it. They peek out when the footer comes into view and rise when
+       pointed at, and the letters lift like folder tabs. -->
+  <div class="drawer" aria-hidden="true" data-drawer>
+    <div class="desk">
+      <div class="files">
+        {files.map((file, i) => (
+          <div
+            class={`file is-${file.kind}`}
+            style={`--x:${file.x}%;--y:${file.y}px;--r:${file.r}deg;--i:${i}${'tint' in file ? `;--tint:${file.tint}` : ''}`}
+          >
+            {file.kind === 'folder' && <Logo size={88} class="icon" />}
+            {file.kind === 'doc' && (
+              <span class="icon page">
+                <span class="ext mono">{file.ext}</span>
+                <i></i>
+                <i></i>
+                <i></i>
+              </span>
+            )}
+            {file.kind === 'image' && <span class="icon photo"></span>}
+            <span class="name">{file.name}</span>
+          </div>
+        ))}
+      </div>
+      <p class="word">
+        {[...'Foldex'].map((letter, i) => (
+          <span style={`--i:${i}`}>{letter}</span>
+        ))}
+      </p>
+    </div>
   </div>
 </footer>
+
+<script>
+  // Files peek out once the bottom of the page is in view.
+  const drawer = document.querySelector<HTMLElement>('[data-drawer]');
+  if (drawer) {
+    const watch = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry?.isIntersecting) return;
+        drawer.classList.add('is-open');
+        watch.disconnect();
+      },
+      { threshold: 0.35 },
+    );
+    watch.observe(drawer);
+  }
+</script>
 
 <style>
   .site-footer {
     border-top: 1px solid var(--line);
     font-size: 14px;
+    overflow: hidden;
   }
   .top {
     display: flex;
@@ -73,9 +155,17 @@ const project = [
     font-weight: 560;
     letter-spacing: -0.03em;
   }
-  .brand p {
-    margin-top: 12px;
-    color: var(--muted);
+  .brand {
+    display: grid;
+    align-content: start;
+    gap: 4px;
+    max-width: 30ch;
+    color: var(--faint);
+    font-size: 13px;
+  }
+  .brand a {
+    margin-bottom: 12px;
+    color: var(--ink);
   }
   .links {
     display: flex;
@@ -100,14 +190,168 @@ const project = [
   .links a:hover {
     color: var(--ink);
   }
-  .bottom {
+  /* The drawer. */
+  .drawer {
+    position: relative;
+    user-select: none;
+  }
+  .desk {
+    --word: clamp(120px, 27vw, 400px);
+    position: relative;
+    height: calc(var(--word) * 0.98);
+    margin-top: clamp(44px, 4vw, 56px);
+  }
+  .word {
+    position: absolute;
+    z-index: 2;
+    inset: auto 0 0;
     display: flex;
-    flex-wrap: wrap;
-    justify-content: space-between;
-    gap: 8px 24px;
-    padding: 20px 0 32px;
-    border-top: 1px solid var(--line);
-    color: var(--faint);
+    justify-content: center;
+    margin: 0;
+    font-size: var(--word);
+    font-weight: 600;
+    letter-spacing: -0.075em;
+    line-height: 0.74;
+    translate: 0 6%;
+    pointer-events: none;
+    /* The letters sink into the bottom of the page. */
+    -webkit-mask-image: linear-gradient(#000 45%, transparent 96%);
+    mask-image: linear-gradient(#000 45%, transparent 96%);
+  }
+  .word span {
+    display: block;
+    padding-right: 0.075em;
+    background: linear-gradient(180deg, #d5d8db 0%, #b3b8bd 60%, #a2a8ad 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    pointer-events: auto;
+    transition: translate 500ms var(--ease-out);
+  }
+  /* The x keeps the blue of the folder's tab. */
+  .word span:last-child {
+    background: linear-gradient(180deg, #b4d0f2 0%, #7aa7dc 60%, #6491c8 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+  }
+
+  .files {
+    position: absolute;
+    z-index: 1;
+    inset: 0 4% 0;
+  }
+  .file {
+    --lift: 0px;
+    position: absolute;
+    left: var(--x);
+    bottom: calc(var(--word) * 0.5 + var(--y));
+    display: grid;
+    justify-items: center;
+    gap: 6px;
+    width: clamp(56px, 8vw, 96px);
+    rotate: var(--r);
+    translate: 0 calc(110% - var(--lift));
+    transition: translate 700ms cubic-bezier(0.34, 1.4, 0.64, 1);
+    transition-delay: calc(var(--i) * 60ms);
+    cursor: default;
+  }
+  .drawer.is-open .file {
+    translate: 0 calc(0px - var(--lift));
+  }
+  .drawer.is-open .file:hover {
+    --lift: 28%;
+    transition-delay: 0ms;
+  }
+  .icon {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1;
+    filter: drop-shadow(0 10px 14px #0e101226);
+  }
+  .page {
+    position: relative;
+    display: grid;
+    align-content: start;
+    gap: 9%;
+    width: 78%;
+    aspect-ratio: 0.78;
+    padding: 34% 14% 0;
+    border-radius: 8% / 6%;
+    background: var(--surface);
+    box-shadow: inset 0 0 0 1px var(--line-2);
+  }
+  .page i {
+    height: 5%;
+    border-radius: 9px;
+    background: var(--line);
+  }
+  .page i:nth-child(3) {
+    width: 70%;
+  }
+  .ext {
+    position: absolute;
+    top: 12%;
+    left: 14%;
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: var(--tint);
+    color: #fff;
+    font-size: clamp(8px, 0.9vw, 11px);
+    font-weight: 600;
+  }
+  .photo {
+    width: 86%;
+    aspect-ratio: 1.15;
+    border: clamp(3px, 0.4vw, 5px) solid #fff;
+    border-radius: 6px;
+    background:
+      radial-gradient(70% 60% at 70% 22%, #ffe9b8, transparent 70%),
+      linear-gradient(
+        180deg,
+        #8ec5f0 0%,
+        #b9dcf2 52%,
+        #e6cf9f 53%,
+        #d8b47a 100%
+      );
+    box-shadow: 0 0 0 1px #0e101214;
+  }
+  .file:nth-child(6) .photo {
+    background:
+      radial-gradient(40% 36% at 50% 56%, #3a3330, transparent 72%),
+      radial-gradient(60% 60% at 30% 20%, #f6efe3, transparent 70%),
+      linear-gradient(160deg, #cdbba4, #8c7a66);
+  }
+  .name {
+    padding: 2px 7px;
+    border-radius: 5px;
+    color: var(--muted);
     font-size: 12px;
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity 200ms var(--ease-out);
+  }
+  .file:hover .name {
+    background: var(--teal);
+    color: #fff;
+    opacity: 1;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .word span:hover {
+      translate: 0 -5%;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .file {
+      translate: 0 0;
+    }
+  }
+  @media (max-width: 560px) {
+    .desk {
+      margin-top: 80px;
+    }
+    .file:nth-child(even) {
+      display: none;
+    }
   }
 </style>
