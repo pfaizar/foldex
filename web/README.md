@@ -8,21 +8,21 @@ their own notices in `public/fonts/OFL.txt`.
 
 ## Develop
 
-Use Node.js 24 LTS (or a version satisfying `package.json`), then:
+Use Node.js 24 LTS (or a version satisfying `package.json`) and pnpm (`corepack enable` picks the pinned version), then:
 
 ```sh
 cd web
-npm ci
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 The local URL is printed by Astro. To check the production output:
 
 ```sh
-npm run check
-npm run format:check
-npm run build
-npm run preview
+pnpm check
+pnpm format:check
+pnpm build
+pnpm preview
 ```
 
 ## Edit the page
@@ -76,7 +76,7 @@ PowerShell example:
 
 ```powershell
 $env:SITE_URL = 'https://your-domain.example'
-npm run build
+pnpm build
 ```
 
 ## Cloudflare Pages
@@ -86,7 +86,7 @@ Connect the repository in Cloudflare Pages with:
 | Setting                    | Value                                           |
 | -------------------------- | ----------------------------------------------- |
 | Root directory             | `web`                                           |
-| Build command              | `npm run build`                                 |
+| Build command              | `pnpm build`                                    |
 | Output directory           | `dist`                                          |
 | Node version               | `24` (set `NODE_VERSION` if needed)             |
 | Build environment variable | `SITE_URL` = your final HTTPS production origin |
