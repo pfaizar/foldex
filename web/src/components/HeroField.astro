@@ -1,0 +1,367 @@
+---
+// The hero's backdrop: an endless Foldex large-icons view, laid back in
+// perspective and drifting over a soft, grainy glow. Every so often a ghost
+// rubber band selects a few items, the way a hand would. Tiles are built by
+// the script, so the page's HTML stays small and readers skip it.
+import Aura from './Aura.astro';
+---
+
+<div class="field" aria-hidden="true">
+  <div class="glow">
+    <Aura palette="fog" seed={2} />
+  </div>
+  <div class="scene">
+    <div class="plane">
+      <div class="track" data-track></div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const track = document.querySelector<HTMLElement>('[data-track]')!;
+  const field = track.closest<HTMLElement>('.field')!;
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+
+  const COLS = 14;
+  const ROWS = 12;
+  const CELL = 132;
+
+  const folders = [
+    'Brand',
+    'Design',
+    'Development',
+    'Meeting notes',
+    'References',
+    'Releases',
+    'Exports',
+    'Photos',
+    'Screenshots',
+    'Archive',
+    'Music',
+    'Invoices',
+  ];
+  const documents: [string, string][] = [
+    ['launch-plan.md', 'MD'],
+    ['README.md', 'MD'],
+    ['budget-2026.xlsx', 'XLSX'],
+    ['roadmap.xlsx', 'XLSX'],
+    ['quarterly-review.pptx', 'PPTX'],
+    ['notes.txt', 'TXT'],
+    ['main.rs', 'RS'],
+    ['Cargo.toml', 'TOML'],
+    ['theme.toml', 'TOML'],
+    ['specs.pdf', 'PDF'],
+    ['invoice-0412.pdf', 'PDF'],
+    ['backup.zip', 'ZIP'],
+  ];
+  const images = [
+    'team-photo.jpg',
+    'moodboard.jpg',
+    'cover.png',
+    'sketch-03.png',
+    'hero-shot.png',
+    'dunes.jpg',
+    'studio-01.jpg',
+    'texture.png',
+  ];
+  // Thumbnails: soft gradients in the page's neutral palettes.
+  const thumbs = [
+    ['#1c2024', '#5d7183', '#dcb894'],
+    ['#262c33', '#8193a3', '#e3e6e5'],
+    ['#1b2321', '#5c7a70', '#d5dccd'],
+    ['#28211e', '#9a6c55', '#ead9c6'],
+    ['#8c969c', '#cfd3d2', '#f6f2ea'],
+  ];
+
+  // A small seeded random, so the wall is the same on every visit.
+  let state = 7;
+  const random = () => {
+    state = (state * 16807) % 2147483647;
+    return state / 2147483647;
+  };
+  const pick = <T,>(list: readonly T[]) =>
+    list[Math.floor(random() * list.length)]!;
+
+  const tile = () => {
+    const el = document.createElement('div');
+    const roll = random();
+    let label: string;
+    let ext = '';
+    if (roll < 0.36) {
+      el.className = 'tile is-folder';
+      label = pick(folders);
+    } else if (roll < 0.72) {
+      const [name, type] = pick(documents);
+      el.className = 'tile is-doc';
+      ext = type;
+      label = name;
+    } else {
+      const [a, b, c] = pick(thumbs);
+      const x = Math.round(random() * 100);
+      el.className = 'tile is-image';
+      el.style.setProperty(
+        '--thumb',
+        `radial-gradient(90% 80% at ${x}% 20%, ${c}, transparent 70%), linear-gradient(${Math.round(random() * 360)}deg, ${a}, ${b})`,
+      );
+      label = pick(images);
+    }
+    el.innerHTML = `<i data-ext="${ext}"></i><span>${label}</span>`;
+    return el;
+  };
+
+  // One screen of tiles, then the same again below it, so the drift loops.
+  const cells: HTMLElement[] = [];
+  for (let i = 0; i < COLS * ROWS; i++) cells.push(tile());
+  const copies = cells.map((cell) => cell.cloneNode(true) as HTMLElement);
+  track.append(...cells, ...copies);
+  track.style.setProperty('--cols', String(COLS));
+  track.style.setProperty('--cell', `${CELL}px`);
+  track.style.setProperty('--loop', `${-ROWS * CELL}px`);
+  const tiles = [...cells, ...copies];
+  field.classList.add('is-ready');
+
+  // The ghost selection: a band drawn in the plane over a block of tiles.
+  const band = document.createElement('div');
+  band.className = 'band';
+  const chip = document.createElement('div');
+  chip.className = 'chip';
+  track.append(band, chip);
+
+  const visible = (el: HTMLElement) => {
+    const r = el.getBoundingClientRect();
+    const f = field.getBoundingClientRect();
+    const x = (r.left + r.right) / 2 - f.left;
+    const y = (r.top + r.bottom) / 2 - f.top;
+    return (
+      x > f.width * 0.62 && x < f.width * 0.95 && y > 90 && y < f.height * 0.62
+    );
+  };
+
+  let busy = false;
+  const ghost = () => {
+    if (busy || document.hidden || reduced.matches) return;
+    if (document.querySelector('.hero .is-selected')) return;
+    const starts = tiles
+      .map((el, i) => ({ el, i }))
+      .filter(({ el, i }) => i % COLS < COLS - 3 && visible(el));
+    if (!starts.length) return;
+    const { i } = pick(starts);
+    const w = 2 + Math.floor(random() * 2);
+    const h = 2;
+    const col = i % COLS;
+    const row = Math.floor(i / COLS);
+    const block: HTMLElement[] = [];
+    for (let dy = 0; dy < h; dy++)
+      for (let dx = 0; dx < w; dx++) {
+        const el = tiles[(row + dy) * COLS + col + dx];
+        if (el) block.push(el);
+      }
+    busy = true;
+    band.style.cssText = `left:${col * CELL + 10}px;top:${row * CELL + 6}px;--w:${w * CELL - 20}px;--h:${h * CELL - 12}px`;
+    chip.style.cssText = `left:${(col + w) * CELL - 10}px;top:${(row + h) * CELL - 2}px`;
+    chip.textContent = `${block.length} items selected`;
+    band.classList.add('is-on');
+    block.forEach((el, n) =>
+      window.setTimeout(() => el.classList.add('is-picked'), 220 + n * 90),
+    );
+    window.setTimeout(() => chip.classList.add('is-on'), 700);
+    window.setTimeout(() => band.classList.remove('is-on'), 1100);
+    window.setTimeout(() => {
+      chip.classList.remove('is-on');
+      block.forEach((el) => el.classList.remove('is-picked'));
+      busy = false;
+    }, 3600);
+  };
+  window.setInterval(ghost, 5200);
+  window.setTimeout(ghost, 1800);
+</script>
+
+<style>
+  .field {
+    position: absolute;
+    inset: 0 0 auto;
+    height: min(100%, 860px);
+    overflow: hidden;
+    pointer-events: none;
+    /* Clear behind the headline, fading into the page at every edge. */
+    -webkit-mask:
+      linear-gradient(90deg, transparent 30%, #000 66%),
+      linear-gradient(transparent 6%, #000 22%, #000 64%, transparent 88%);
+    -webkit-mask-composite: source-in;
+    mask:
+      linear-gradient(90deg, transparent 30%, #000 66%),
+      linear-gradient(transparent 6%, #000 22%, #000 64%, transparent 88%);
+    mask-composite: intersect;
+  }
+  .glow {
+    position: absolute;
+    top: -10%;
+    right: -12%;
+    width: 72%;
+    height: 90%;
+    opacity: 0.8;
+    --grain: 0.25;
+    -webkit-mask: radial-gradient(closest-side, #000 30%, transparent);
+    mask: radial-gradient(closest-side, #000 30%, transparent);
+  }
+  .scene {
+    position: absolute;
+    inset: 0;
+    perspective: 2400px;
+    perspective-origin: 75% 0%;
+  }
+  .plane {
+    position: absolute;
+    top: 2%;
+    left: 40%;
+    width: calc(var(--cell, 132px) * 14);
+    transform: rotateX(54deg) rotateZ(-34deg) scale(0.62);
+    transform-origin: 0 0;
+  }
+  .track {
+    display: grid;
+    grid-template-columns: repeat(var(--cols), var(--cell));
+    grid-auto-rows: var(--cell);
+    position: relative;
+    opacity: 0;
+    transition: opacity 1200ms var(--ease-out);
+  }
+  .is-ready .track {
+    opacity: 1;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .track {
+      animation: drift 90s linear infinite;
+    }
+    @keyframes drift {
+      to {
+        transform: translateY(var(--loop));
+      }
+    }
+  }
+
+  /* Tiles: the app's large-icons view. */
+  .track :global(.tile) {
+    display: grid;
+    justify-items: center;
+    align-content: start;
+    gap: 10px;
+    margin: 6px 10px;
+    padding: 12px 6px 8px;
+    border-radius: 10px;
+    transition: background-color 300ms var(--ease-out);
+  }
+  .track :global(.tile i) {
+    position: relative;
+    display: block;
+    width: 64px;
+    height: 52px;
+  }
+  .track :global(.tile span) {
+    max-width: 100%;
+    overflow: hidden;
+    color: var(--ink-2);
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .track :global(.is-folder i) {
+    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 52'%3E%3Cpath d='M2 6a4 4 0 0 1 4-4h17l6 6h29a4 4 0 0 1 4 4v6H2z' fill='%23d9a63c'/%3E%3Cpath d='M2 15h60v31a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4z' fill='%23f5c859'/%3E%3C/svg%3E")
+      center / contain no-repeat;
+  }
+  .track :global(.is-doc i) {
+    width: 44px;
+    border-radius: 4px 12px 4px 4px;
+    background: #fff;
+    box-shadow:
+      inset 0 0 0 1px #0e101221,
+      0 4px 10px -6px #0e101259;
+  }
+  .track :global(.is-doc i::after) {
+    content: attr(data-ext);
+    position: absolute;
+    left: -6px;
+    bottom: 8px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: var(--ink-2);
+    color: #fff;
+    font: 600 9px/1.3 var(--font-mono);
+  }
+  .track :global(.is-image i) {
+    width: 64px;
+    height: 48px;
+    border-radius: 5px;
+    background:
+      url('/grain.png') 0 0 / 80px,
+      var(--thumb);
+    background-blend-mode: overlay, normal;
+    box-shadow:
+      0 0 0 3px #fff,
+      0 0 0 4px #0e10121a,
+      0 6px 14px -8px #0e101266;
+  }
+  .track :global(.is-picked),
+  .track :global(.is-selected) {
+    background: color-mix(in srgb, var(--teal) 16%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--teal) 50%, transparent);
+  }
+
+  .track :global(.band) {
+    position: absolute;
+    width: 0;
+    height: 0;
+    border: 1px solid var(--teal);
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--teal) 14%, transparent);
+    opacity: 0;
+    transition:
+      width 900ms var(--ease-out),
+      height 900ms var(--ease-out),
+      opacity 400ms var(--ease-out);
+  }
+  .track :global(.band.is-on) {
+    width: var(--w);
+    height: var(--h);
+    opacity: 1;
+  }
+  .track :global(.chip) {
+    position: absolute;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background: var(--ink);
+    color: #fff;
+    font: 500 14px/1.2 var(--font-sans);
+    white-space: nowrap;
+    opacity: 0;
+    transform: translate(-100%, 8px);
+    transition:
+      opacity 400ms var(--ease-out),
+      transform 400ms var(--ease-out);
+  }
+  .track :global(.chip.is-on) {
+    opacity: 1;
+    transform: translate(-100%, 0);
+  }
+
+  @media (max-width: 900px) {
+    .field {
+      opacity: 0.5;
+      -webkit-mask: linear-gradient(
+        transparent 6%,
+        #000 16%,
+        #000 30%,
+        transparent 56%
+      );
+      mask: linear-gradient(
+        transparent 6%,
+        #000 16%,
+        #000 30%,
+        transparent 56%
+      );
+    }
+    .plane {
+      left: 10%;
+    }
+  }
+</style>

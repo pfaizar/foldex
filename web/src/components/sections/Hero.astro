@@ -1,88 +1,83 @@
 ---
-import DitherField from '../DitherField.astro';
+import HeroField from '../HeroField.astro';
 import LoopVideo from '../LoopVideo.astro';
+import Plate from '../Plate.astro';
 import Icon from '../ui/Icon.astro';
 import { site } from '../../config/site';
 
-const title = 'Files, without the friction.';
-// Letters are indexed across the whole title so the decode runs left to right.
-let index = 0;
-const words = title
-  .split(' ')
-  .map((word) => [...word].map((char) => ({ char, i: index++ })));
+const headline = 'Files, without the friction.';
+const words = headline.split(' ');
 const download = site.installer?.href ?? site.download;
-const fileName = site.installer?.href.split('/').pop();
 ---
 
-<section class="hero" id="top" data-tone="night" aria-labelledby="hero-title">
-  <DitherField />
-  <div class="hero-inner wrap">
-    <div class="copy">
-      <h1 id="hero-title" class="pixel">
-        <span class="sr-only">{title}</span>
-        <span class="title" aria-hidden="true">
-          {words.map((letters) => (
-            <span class="word">
-              {letters.map(({ char, i }) => (
-                <span class="ch" style={`--i:${i}`}>
-                  {char}
-                </span>
-              ))}
-            </span>
-          ))}
-        </span>
-      </h1>
-      <p class="lede">A native file explorer for Windows, built in Rust.</p>
-      <div class="actions">
-        {download && (
-          <a class="get" href={download}>
-            <Icon name="windows" size={16} />
-            Download for Windows
-          </a>
-        )}
-        {site.repository && (
-          <a class="more" href={site.repository}>
-            Read the source
-            <Icon name="arrow-up-right" size={14} />
-          </a>
-        )}
-      </div>
-      {fileName && (
-        <p class="file mono">
-          {fileName}
-          <span>{site.installer?.size}</span>
-        </p>
+<section class="hero" id="top" aria-labelledby="hero-title">
+  <HeroField />
+  <div class="wrap copy">
+    <h1 id="hero-title">
+      <span class="sr-only">{headline}</span>
+      <span class="words" aria-hidden="true">
+        {words.map((word, i) => (
+          <span class="word" style={`--i:${i}`}>
+            {word}
+          </span>
+        ))}
+      </span>
+    </h1>
+    <p class="lede">
+      A native file explorer for Windows, built in Rust. Tabs, split panes, and
+      search that keeps up with your keyboard.
+    </p>
+    <div class="actions">
+      {download && (
+        <a class="button" href={download}>
+          <Icon name="windows" size={15} />
+          Download for Windows
+        </a>
+      )}
+      {site.repository && (
+        <a class="button button--quiet" href={site.repository}>
+          View source
+        </a>
       )}
     </div>
-    <LoopVideo
-      name="palette"
-      priority
-      class="shot"
-      label="Foldex's command palette: typing “split” opens a second pane beside the first, then “close panel” closes it again."
-    />
+    <p class="meta mono">
+      v{site.version}
+      {site.installer && <span>{site.installer.size}</span>}
+      <span>Free and open source</span>
+    </p>
+  </div>
+
+  <div class="stage">
+    <Plate class="wrap panel" palette="dusk" seed={1}>
+      <LoopVideo
+        name="palette"
+        priority
+        class="shot"
+        label="Foldex's command palette: typing “split” opens a second pane beside the first, then “close panel” closes it again."
+      />
+    </Plate>
   </div>
   <div class="marquee" aria-hidden="true"></div>
-  <p class="status mono" aria-hidden="true">
-    <span data-status>4 items</span>
-    <span class="hint">Drag to select</span>
-  </p>
+  <p class="count" aria-hidden="true"></p>
 </section>
 
 <script>
-  // Rubber-band selection over the headline, as in a file list.
+  // Rubber-band selection over the headline and the icons behind it, as in a
+  // file list.
   const hero = document.querySelector<HTMLElement>('.hero')!;
   const marquee = hero.querySelector<HTMLElement>('.marquee')!;
-  const status = hero.querySelector<HTMLElement>('[data-status]')!;
+  const count = hero.querySelector<HTMLElement>('.count')!;
   const words = [...hero.querySelectorAll<HTMLElement>('.word')];
   let origin: { x: number; y: number } | null = null;
+  let items: HTMLElement[] = [];
 
-  const select = (picked: HTMLElement[]) => {
-    words.forEach((word) =>
-      word.classList.toggle('is-selected', picked.includes(word)),
-    );
-    status.textContent = picked.length
-      ? `${picked.length} of ${words.length} selected`
-      : `${words.length} items`;
+  const select = (picked: Set<HTMLElement>) => {
+    for (const item of items)
+      item.classList.toggle('is-selected', picked.has(item));
+    count.textContent = picked.size
+      ? `${picked.size} item${picked.size === 1 ? '' : 's'} selected`
+      : '';
+    count.classList.toggle('is-on', picked.size > 0);
   };
 
   hero.addEventListener('pointerdown', (event) => {
@@ -91,7 +86,8 @@ const fileName = site.installer?.href.split('/').pop();
     event.preventDefault();
     origin = { x: event.clientX, y: event.clientY };
     hero.setPointerCapture(event.pointerId);
-    select([]);
+    items = [...words, ...hero.querySelectorAll<HTMLElement>('.tile')];
+    select(new Set());
   });
   hero.addEventListener('pointermove', (event) => {
     if (!origin) return;
@@ -101,19 +97,30 @@ const fileName = site.installer?.href.split('/').pop();
     const bottom = Math.max(origin.y, event.clientY);
     const box = hero.getBoundingClientRect();
     marquee.style.cssText = `left:${left - box.left}px;top:${top - box.top}px;width:${right - left}px;height:${bottom - top}px`;
+    count.style.cssText = `left:${event.clientX - box.left + 14}px;top:${event.clientY - box.top + 18}px`;
     marquee.classList.add('is-on');
     select(
-      words.filter((word) => {
-        const r = word.getBoundingClientRect();
-        return (
-          r.left < right && r.right > left && r.top < bottom && r.bottom > top
-        );
-      }),
+      new Set(
+        items.filter((item) => {
+          const r = item.getBoundingClientRect();
+          if (!r.width) return false;
+          // Icons count by their centre, which is how they look selected.
+          const x = (r.left + r.right) / 2;
+          const y = (r.top + r.bottom) / 2;
+          return item.classList.contains('word')
+            ? r.left < right &&
+                r.right > left &&
+                r.top < bottom &&
+                r.bottom > top
+            : x > left && x < right && y > top && y < bottom;
+        }),
+      ),
     );
   });
   const end = () => {
     origin = null;
     marquee.classList.remove('is-on');
+    count.classList.remove('is-on');
   };
   hero.addEventListener('pointerup', end);
   hero.addEventListener('pointercancel', end);
@@ -122,192 +129,144 @@ const fileName = site.installer?.href.split('/').pop();
 <style>
   .hero {
     position: relative;
-    z-index: 1;
-    padding-top: clamp(96px, 14vh, 150px);
-    background: var(--night);
-    color: #f1f4f4;
+    padding-top: calc(var(--nav) + clamp(56px, 10vh, 112px));
     overflow-x: clip;
   }
-  .hero-inner {
-    position: relative;
-    display: grid;
-    grid-template-columns: minmax(0, 11fr) minmax(0, 13fr);
-    align-items: start;
-    gap: 40px;
-  }
   .copy {
-    padding-top: clamp(8px, 4vh, 48px);
+    position: relative;
+    z-index: 2;
   }
   h1 {
-    font-size: clamp(52px, 6.3vw, 100px);
-    line-height: 0.92;
+    max-width: 12em;
+    font-size: clamp(44px, 5.8vw, 76px);
+    font-weight: 400;
+    line-height: 1.02;
+    letter-spacing: -0.04em;
   }
-  .title {
+  .words {
     display: flex;
     flex-wrap: wrap;
-    column-gap: 0.32em;
+    column-gap: 0.24em;
   }
   .word {
-    display: inline-flex;
-    margin: -0.04em -0.08em;
-    padding: 0.04em 0.08em;
-    border-radius: 4px;
+    margin: -0.02em -0.06em;
+    padding: 0.02em 0.06em;
+    border-radius: 6px;
     transition: background-color 120ms var(--ease-out);
   }
   .word.is-selected {
-    background: #17a1cc4d;
-    box-shadow: inset 0 0 0 1px #17a1cc;
-  }
-  .ch {
-    transition: font-variation-settings 400ms var(--ease-out);
-  }
-  .ch:hover {
-    font-variation-settings: 'ELSH' 40;
-    transition-duration: 80ms;
-  }
-  @media (prefers-reduced-motion: no-preference) {
-    /* The headline resolves from the font's line shape to its square pixels. */
-    .ch {
-      animation: decode 1100ms var(--ease-out) backwards;
-      animation-delay: calc(120ms + var(--i) * 32ms);
-    }
-    @keyframes decode {
-      from {
-        font-variation-settings: 'ELSH' 80;
-        opacity: 0;
-      }
-      25% {
-        opacity: 1;
-      }
-    }
-    .lede,
-    .actions,
-    .file {
-      animation: rise 700ms var(--ease-out) backwards;
-      animation-delay: 700ms;
-    }
-    .actions {
-      animation-delay: 760ms;
-    }
-    .file {
-      animation-delay: 820ms;
-    }
-    .shot {
-      animation: rise 900ms var(--ease-out) 300ms backwards;
-    }
-    @keyframes rise {
-      from {
-        opacity: 0;
-        transform: translateY(16px);
-      }
-    }
+    background: color-mix(in srgb, var(--teal) 18%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--teal) 60%, transparent);
   }
   .lede {
-    max-width: 30ch;
-    margin-top: 28px;
-    color: var(--night-text);
-    font-size: clamp(17px, 1.5vw, 20px);
+    max-width: 36ch;
+    margin-top: 24px;
+    color: var(--muted);
+    font-size: clamp(17px, 1.4vw, 19px);
+    line-height: 1.5;
   }
   .actions {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
-    gap: 12px 24px;
+    gap: 10px;
     margin-top: 32px;
   }
-  .get {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    height: 48px;
-    padding: 0 20px;
-    border-radius: 6px;
-    background: var(--yellow);
-    color: var(--ink);
-    font-weight: 600;
-    box-shadow: inset 0 -3px var(--folder-back);
-    transition: transform 160ms var(--ease-out);
-  }
-  .get:hover {
-    transform: translateY(-1px);
-  }
-  .get:active {
-    transform: translateY(1px);
-    box-shadow: inset 0 -1px var(--folder-back);
-  }
-  .more {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--night-text);
-    font-size: 15px;
-    transition: color 150ms var(--ease-out);
-  }
-  .more:hover {
-    color: #fff;
-  }
-  .file {
+  .meta {
     display: flex;
-    gap: 12px;
-    margin-top: 16px;
-    color: #6f7b80;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    margin-top: 20px;
+    color: var(--faint);
     font-size: 12px;
   }
-  .file span {
-    color: #4d575b;
+
+  /* The window sits on a grainy panel, in front of the icon field. */
+  .stage {
+    position: relative;
+    z-index: 1;
+    margin-top: clamp(56px, 8vw, 88px);
   }
-  /* The window runs off the right edge and down into the next section. */
+  .panel {
+    --plate-pad: clamp(24px, 5vw, 64px) clamp(16px, 5vw, 64px) 0;
+  }
   .shot {
     position: relative;
-    z-index: 3;
-    width: calc(100% + 18vw);
-    margin-top: 56px;
-    translate: 0 clamp(120px, 18vh, 200px);
+    max-width: 1000px;
+    margin: 0 auto -1px;
+    translate: 0 1px;
   }
+  .shot :global(.loop-frame) {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+  .shot :global(video) {
+    margin-bottom: -12%;
+  }
+
   .marquee {
     position: absolute;
-    z-index: 2;
+    z-index: 3;
     border: 1px solid var(--teal);
-    background: #17a1cc26;
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--teal) 12%, transparent);
     opacity: 0;
     pointer-events: none;
   }
   .marquee.is-on {
     opacity: 1;
   }
-  .status {
-    position: relative;
-    display: flex;
-    gap: 16px;
-    width: min(var(--page), 100% - var(--gutter) * 2);
-    margin: 0 auto;
-    padding: 72px 0 18px;
-    color: #6f7b80;
-    font-size: 12px;
+  .count {
+    position: absolute;
+    z-index: 3;
+    padding: 5px 10px;
+    border-radius: 999px;
+    background: var(--ink);
+    color: #fff;
+    font-size: 13px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 150ms var(--ease-out);
   }
-  .hint {
-    color: #4d575b;
+  .count.is-on {
+    opacity: 1;
   }
-  @media (hover: none), (pointer: coarse) {
-    .hint {
-      display: none;
+
+  @media (prefers-reduced-motion: no-preference) {
+    /* Words settle out of a soft blur, then the rest follows. */
+    .word {
+      animation: focus 900ms var(--ease-out) backwards;
+      animation-delay: calc(80ms + var(--i) * 70ms);
     }
-  }
-  @media (max-width: 900px) {
-    .hero-inner {
-      grid-template-columns: minmax(0, 1fr);
-      gap: 48px;
+    .lede,
+    .actions,
+    .meta,
+    .shot {
+      animation: rise 900ms var(--ease-out) backwards;
+      animation-delay: 380ms;
+    }
+    .actions {
+      animation-delay: 440ms;
+    }
+    .meta {
+      animation-delay: 500ms;
     }
     .shot {
-      width: calc(100% + var(--gutter));
-      margin: 0 0 -80px;
-      translate: none;
+      animation-delay: 560ms;
+      animation-duration: 1200ms;
     }
-    .status {
-      display: none;
+    @keyframes focus {
+      from {
+        opacity: 0;
+        filter: blur(10px);
+        transform: translateY(12px);
+      }
     }
-    .hero {
-      padding-bottom: 8px;
+    @keyframes rise {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
     }
   }
 </style>
