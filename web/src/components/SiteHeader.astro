@@ -1,21 +1,27 @@
 ---
-import Folder from './ui/Folder.astro';
+import Logo from './ui/Logo.astro';
 import Icon from './ui/Icon.astro';
 import { navigation, site } from '../config/site';
 
 const download = site.installer?.href ?? site.download;
+const path = Astro.url.pathname;
+const current = (href: string) =>
+  href === '/' ? path === '/' : path.startsWith(href);
 ---
 
 <header class="site-header">
   <nav class="wrap bar" aria-label="Primary">
-    <a class="brand" href="#top" aria-label="Foldex, back to top">
-      <Folder size={22} />
+    <a class="brand" href="/" aria-label="Foldex home">
+      <Logo size={26} />
       <span>Foldex</span>
     </a>
-    <ul class="links">
+    <ul class="links" data-links>
+      <li class="pill" aria-hidden="true"></li>
       {navigation.map(({ label, href }) => (
         <li>
-          <a href={href}>{label}</a>
+          <a href={href} aria-current={current(href) ? 'page' : undefined}>
+            {label}
+          </a>
         </li>
       ))}
     </ul>
@@ -32,6 +38,13 @@ const download = site.installer?.href ?? site.download;
       )}
     </div>
   </nav>
+  <nav class="tabs" aria-label="Pages">
+    {navigation.map(({ label, href }) => (
+      <a href={href} aria-current={current(href) ? 'page' : undefined}>
+        {label}
+      </a>
+    ))}
+  </nav>
 </header>
 
 <script>
@@ -39,6 +52,28 @@ const download = site.installer?.href ?? site.download;
   const update = () => header.classList.toggle('is-scrolled', scrollY > 8);
   addEventListener('scroll', update, { passive: true });
   update();
+
+  // A pill rests under the current page and slides to whichever link the
+  // pointer or focus is on.
+  const list = header.querySelector<HTMLElement>('[data-links]')!;
+  const pill = list.querySelector<HTMLElement>('.pill')!;
+  const links = [...list.querySelectorAll<HTMLAnchorElement>('a')];
+  const home = links.find((link) => link.ariaCurrent === 'page');
+  const move = (link: HTMLElement | undefined) => {
+    if (!link) return pill.classList.remove('is-on');
+    pill.style.width = `${link.offsetWidth}px`;
+    pill.style.translate = `${link.offsetLeft}px 0`;
+    pill.classList.add('is-on');
+  };
+  move(home);
+  requestAnimationFrame(() => pill.classList.add('is-ready'));
+  for (const link of links) {
+    link.addEventListener('pointerenter', () => move(link));
+    link.addEventListener('focus', () => move(link));
+  }
+  list.addEventListener('pointerleave', () => move(home));
+  list.addEventListener('focusout', () => move(home));
+  document.fonts?.ready.then(() => move(home));
 </script>
 
 <style>
@@ -46,7 +81,6 @@ const download = site.installer?.href ?? site.download;
     position: fixed;
     z-index: 50;
     inset: 0 0 auto;
-    height: var(--nav);
     border-bottom: 1px solid transparent;
     transition:
       background-color 200ms var(--ease-out),
@@ -59,42 +93,66 @@ const download = site.installer?.href ?? site.download;
     backdrop-filter: saturate(1.6) blur(16px);
   }
   .bar {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
     gap: 32px;
-    height: 100%;
+    height: 64px;
   }
   .brand {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 9px;
+    width: fit-content;
     font-size: 18px;
     font-weight: 560;
     letter-spacing: -0.03em;
   }
   .links {
+    position: relative;
     display: flex;
-    gap: 4px;
-    margin: 0 auto;
+    gap: 2px;
+    margin: 0;
     padding: 0;
     list-style: none;
   }
+  .pill {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    border-radius: 999px;
+    background: #0e10120d;
+    opacity: 0;
+  }
+  .pill.is-on {
+    opacity: 1;
+  }
+  .pill.is-ready {
+    transition:
+      translate 320ms var(--ease-out),
+      width 320ms var(--ease-out),
+      opacity 200ms var(--ease-out);
+  }
   .links a {
+    position: relative;
     display: block;
-    padding: 6px 12px;
+    padding: 6px 14px;
     border-radius: 999px;
     color: var(--ink-2);
     font-size: 14px;
-    transition:
-      color 150ms var(--ease-out),
-      background-color 150ms var(--ease-out);
+    transition: color 150ms var(--ease-out);
   }
-  .links a:hover {
-    background: #0e10120a;
+  .links a:hover,
+  .links a[aria-current='page'] {
     color: var(--ink);
+  }
+  .links a[aria-current='page'] {
+    font-weight: 500;
   }
   .end {
     display: flex;
+    justify-content: flex-end;
     align-items: center;
     gap: 8px;
   }
@@ -116,12 +174,36 @@ const download = site.installer?.href ?? site.download;
     padding: 0 16px;
     font-size: 14px;
   }
+
+  /* On phones the pages sit in a second row of tabs. */
+  .tabs {
+    display: none;
+  }
   @media (max-width: 760px) {
+    .bar {
+      grid-template-columns: 1fr auto;
+    }
     .links {
       display: none;
     }
-    .end {
-      margin-left: auto;
+    .tabs {
+      display: flex;
+      gap: 4px;
+      padding: 0 var(--gutter) 10px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .tabs a {
+      padding: 5px 12px;
+      border-radius: 999px;
+      color: var(--ink-2);
+      font-size: 14px;
+      white-space: nowrap;
+    }
+    .tabs a[aria-current='page'] {
+      background: #0e10120d;
+      color: var(--ink);
+      font-weight: 500;
     }
   }
 </style>

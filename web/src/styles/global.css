@@ -14,7 +14,6 @@
   --teal: #17a1cc;
   --teal-ink: #0a6e8e;
   --yellow: #ffcd4f;
-  --folder-back: color-mix(in srgb, var(--yellow) 72%, #7a4300);
   --radius: 10px;
   --gutter: clamp(20px, 4vw, 48px);
   --page: 1200px;
@@ -29,6 +28,12 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+}
+/* Phones add a row of page tabs under the bar. */
+@media (max-width: 760px) {
+  :root {
+    --nav: 106px;
+  }
 }
 * {
   box-sizing: border-box;

@@ -1,0 +1,521 @@
+---
+import PageLayout from '../layouts/PageLayout.astro';
+import SiteHeader from '../components/SiteHeader.astro';
+import SiteFooter from '../components/SiteFooter.astro';
+import Icon from '../components/ui/Icon.astro';
+import Logo from '../components/ui/Logo.astro';
+import { releases, type ChangeKind } from '../data/changelog';
+import { site } from '../config/site';
+
+const repo = site.repository?.replace(/\/$/, '');
+const kinds: { id: ChangeKind; label: string }[] = [
+  { id: 'new', label: 'New' },
+  { id: 'improved', label: 'Improved' },
+  { id: 'fixed', label: 'Fixed' },
+];
+const count = (kind?: ChangeKind) =>
+  releases.flatMap((r) => r.changes).filter((c) => !kind || c.kind === kind)
+    .length;
+const day = (date: string) =>
+  new Date(`${date}T00:00:00Z`).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+// The installer arrived in 0.1.1; every release has a portable ZIP.
+const files = (version: string) => {
+  if (!repo) return [];
+  const base = `${repo}/releases/download/v${version}/Foldex-${version}-windows-x64`;
+  return [
+    version !== '0.1.0' && { label: 'Installer', href: `${base}-setup.exe` },
+    { label: 'Portable', href: `${base}-portable.zip` },
+  ].filter((file) => !!file);
+};
+---
+
+<PageLayout
+  title="Changelog — Foldex"
+  description="Every Foldex release, newest first: what’s new, what’s better and what’s fixed."
+>
+  <SiteHeader />
+  <main id="main" class="changelog" tabindex="-1">
+    <header class="wrap intro">
+      <h1>
+        What’s new in Foldex.{' '}
+        <span class="soft">Every release, newest first.</span>
+      </h1>
+    </header>
+
+    <div class="wrap layout">
+      <aside class="side">
+        <fieldset class="filter">
+          <legend class="sr-only">Show changes</legend>
+          <label>
+            <input type="radio" name="kind" value="all" checked />
+            <span>All</span>
+            <span class="n mono">{count()}</span>
+          </label>
+          {kinds.map((kind) => (
+            <label data-kind={kind.id}>
+              <input
+                type="radio"
+                name="kind"
+                value={kind.id}
+                id={`kind-${kind.id}`}
+              />
+              <span>{kind.label}</span>
+              <span class="n mono">{count(kind.id)}</span>
+            </label>
+          ))}
+        </fieldset>
+        <nav class="versions" aria-label="Releases">
+          {releases.map((release, i) => (
+            <a href={`#v${release.version}`}>
+              <span class="mono">v{release.version}</span>
+              {i === 0 && <span class="latest">Latest</span>}
+            </a>
+          ))}
+        </nav>
+      </aside>
+
+      <ol class="releases">
+        {releases.map((release, i) => (
+          <li
+            class:list={['release', { 'is-latest': i === 0 }]}
+            id={`v${release.version}`}
+          >
+            <div class="when">
+              <span class="node" aria-hidden="true">
+                <Logo size={20} />
+              </span>
+              <p class="version mono">v{release.version}</p>
+              <p class="date">
+                <time datetime={release.date}>{day(release.date)}</time>
+              </p>
+              {i === 0 && <p class="latest">Latest</p>}
+            </div>
+            <article class="card">
+              <h2>{release.title}</h2>
+              <p class="summary">{release.summary}</p>
+              <ul class="changes">
+                {release.changes.map((change) => (
+                  <li data-kind={change.kind}>
+                    <span class={`kind kind--${change.kind}`}>
+                      {kinds.find((k) => k.id === change.kind)!.label}
+                    </span>
+                    <span>{change.text}</span>
+                  </li>
+                ))}
+              </ul>
+              {repo && (
+                <footer class="files">
+                  {files(release.version).map((file) => (
+                    <a href={file.href}>
+                      <Icon name="download" size={15} />
+                      {file.label}
+                    </a>
+                  ))}
+                  <a
+                    class="notes"
+                    href={`${repo}/releases/tag/v${release.version}`}
+                  >
+                    Full notes
+                    <Icon name="arrow-up-right" size={14} />
+                  </a>
+                </footer>
+              )}
+            </article>
+          </li>
+        ))}
+      </ol>
+    </div>
+  </main>
+  <SiteFooter />
+</PageLayout>
+
+<script>
+  // Keep the release in view marked in the side list.
+  const links = new Map(
+    [...document.querySelectorAll<HTMLAnchorElement>('.versions a')].map(
+      (link) => [link.hash.slice(1), link],
+    ),
+  );
+  const seen = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        links.forEach((link, id) =>
+          link.classList.toggle('is-current', id === entry.target.id),
+        );
+      }
+    },
+    { rootMargin: '-30% 0px -60% 0px' },
+  );
+  document.querySelectorAll('.release').forEach((r) => seen.observe(r));
+</script>
+
+<style>
+  .changelog {
+    padding-top: calc(var(--nav) + clamp(48px, 8vh, 96px));
+    padding-bottom: clamp(80px, 10vw, 140px);
+  }
+  .intro {
+    margin-bottom: clamp(48px, 7vw, 88px);
+  }
+  h1 {
+    max-width: 15em;
+    font-size: clamp(40px, 5.2vw, 68px);
+    line-height: 1.02;
+    letter-spacing: -0.04em;
+  }
+  .soft {
+    color: var(--faint);
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 200px 1fr;
+    gap: clamp(32px, 5vw, 72px);
+    align-items: start;
+  }
+  .side {
+    position: sticky;
+    top: calc(var(--nav) + 24px);
+    display: grid;
+    gap: 28px;
+  }
+
+  /* Filter chips: native radios, so they work without JavaScript. */
+  .filter {
+    display: grid;
+    gap: 2px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+  .filter label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 12px;
+    border-radius: 10px;
+    color: var(--ink-2);
+    font-size: 14px;
+    cursor: pointer;
+    transition: background-color 150ms var(--ease-out);
+  }
+  .filter label:hover {
+    background: #0e10120a;
+  }
+  .filter label:has(:checked) {
+    background: var(--surface);
+    color: var(--ink);
+    box-shadow:
+      0 0 0 1px #0e10120f,
+      0 1px 2px #0e10120a;
+  }
+  .filter label:has(:focus-visible) {
+    outline: 2px solid var(--teal);
+    outline-offset: 2px;
+  }
+  .filter input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .filter label::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--line-2);
+  }
+  .filter label[data-kind='new']::before {
+    background: #2fb86a;
+  }
+  .filter label[data-kind='improved']::before {
+    background: #8a6cf0;
+  }
+  .filter label[data-kind='fixed']::before {
+    background: #f08a3c;
+  }
+  .n {
+    margin-left: auto;
+    color: var(--faint);
+    font-size: 12px;
+  }
+
+  .versions {
+    display: grid;
+    gap: 2px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+  }
+  .versions a {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 12px;
+    border-radius: 8px;
+    color: var(--muted);
+    font-size: 13px;
+    transition: color 150ms var(--ease-out);
+  }
+  .versions a:hover,
+  .versions a.is-current {
+    color: var(--ink);
+  }
+  .versions a.is-current {
+    background: #0e10120a;
+  }
+  .latest {
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--ink);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  /* The timeline: a rail with each release hanging off it like a folder. */
+  .releases {
+    position: relative;
+    display: grid;
+    gap: clamp(40px, 5vw, 64px);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .releases::before {
+    content: '';
+    position: absolute;
+    top: 12px;
+    bottom: 0;
+    left: 15px;
+    width: 1px;
+    background: linear-gradient(var(--line-2) 80%, transparent);
+  }
+  .release {
+    position: relative;
+    display: grid;
+    grid-template-columns: 150px 1fr;
+    gap: 24px;
+    padding-left: 48px;
+    scroll-margin-top: calc(var(--nav) + 24px);
+  }
+  .when {
+    position: sticky;
+    top: calc(var(--nav) + 24px);
+    align-self: start;
+    display: grid;
+    justify-items: start;
+    gap: 2px;
+  }
+  .node {
+    position: absolute;
+    top: 0;
+    left: -48px;
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
+    background: var(--bg);
+    box-shadow: inset 0 0 0 1px var(--line-2);
+  }
+  .is-latest .node {
+    background: var(--surface);
+  }
+  .version {
+    font-size: 20px;
+    font-weight: 500;
+    letter-spacing: -0.02em;
+    line-height: 32px;
+  }
+  .date {
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .when .latest {
+    margin-top: 8px;
+  }
+
+  .card {
+    padding: clamp(22px, 3vw, 32px);
+    border-radius: 20px;
+    background: var(--surface);
+    box-shadow:
+      0 0 0 1px #0e10120f,
+      0 1px 2px #0e10120a,
+      0 24px 48px -36px #0e101233;
+  }
+  h2 {
+    font-size: clamp(24px, 2.4vw, 30px);
+    line-height: 1.15;
+  }
+  .summary {
+    margin-top: 8px;
+    color: var(--muted);
+  }
+
+  /* Changes hang off a tree line, like files in a folder. */
+  .changes {
+    display: grid;
+    gap: 14px;
+    margin: 24px 0 0;
+    padding: 4px 0 4px 20px;
+    list-style: none;
+    border-left: 1px solid var(--line);
+  }
+  .changes li {
+    position: relative;
+    display: grid;
+    grid-template-columns: 76px 1fr;
+    gap: 12px;
+    align-items: baseline;
+    color: var(--ink-2);
+    font-size: 15px;
+    line-height: 1.5;
+  }
+  .changes li::before {
+    content: '';
+    position: absolute;
+    top: 0.75em;
+    left: -20px;
+    width: 12px;
+    height: 1px;
+    background: var(--line);
+  }
+  .kind {
+    justify-self: start;
+    padding: 1px 8px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .kind--new {
+    background: color-mix(in srgb, #2fb86a 15%, transparent);
+    color: #1d7a46;
+  }
+  .kind--improved {
+    background: color-mix(in srgb, #8a6cf0 13%, transparent);
+    color: #5b3fc4;
+  }
+  .kind--fixed {
+    background: color-mix(in srgb, #f08a3c 15%, transparent);
+    color: #a2501a;
+  }
+
+  .files {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+  }
+  .files a {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 32px;
+    padding: 0 12px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--ink-2);
+    font-size: 13px;
+    transition: background-color 150ms var(--ease-out);
+  }
+  .files a:hover {
+    background: var(--line);
+    color: var(--ink);
+  }
+  .files .notes {
+    margin-left: auto;
+    background: none;
+    color: var(--muted);
+  }
+
+  /* Filtering hides other kinds, and releases left with nothing to show. */
+  .changelog:has(#kind-new:checked) .changes li:not([data-kind='new']),
+  .changelog:has(#kind-improved:checked)
+    .changes
+    li:not([data-kind='improved']),
+  .changelog:has(#kind-fixed:checked) .changes li:not([data-kind='fixed']),
+  .changelog:has(#kind-new:checked) .release:not(:has([data-kind='new'])),
+  .changelog:has(#kind-improved:checked)
+    .release:not(:has([data-kind='improved'])),
+  .changelog:has(#kind-fixed:checked) .release:not(:has([data-kind='fixed'])) {
+    display: none;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .changes li {
+      animation: in 400ms var(--ease-out) backwards;
+    }
+    @keyframes in {
+      from {
+        opacity: 0;
+        transform: translateY(4px);
+      }
+    }
+  }
+
+  @media (max-width: 960px) {
+    .layout {
+      grid-template-columns: 1fr;
+    }
+    .side {
+      position: static;
+    }
+    .filter {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .versions {
+      display: none;
+    }
+    .release {
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+    .node {
+      left: 0;
+    }
+    .when {
+      position: static;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 4px 12px;
+    }
+    .when .latest {
+      margin: 0;
+    }
+  }
+  @media (max-width: 560px) {
+    .release {
+      padding-left: 0;
+    }
+    .releases::before,
+    .node {
+      display: none;
+    }
+    .changes {
+      padding-left: 0;
+      border: 0;
+    }
+    .changes li {
+      grid-template-columns: 1fr;
+      gap: 4px;
+    }
+    .changes li::before {
+      display: none;
+    }
+    .files .notes {
+      margin-left: 0;
+    }
+  }
+</style>

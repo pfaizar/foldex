@@ -1,0 +1,1031 @@
+---
+import PageLayout from '../layouts/PageLayout.astro';
+import SiteHeader from '../components/SiteHeader.astro';
+import SiteFooter from '../components/SiteFooter.astro';
+import Icon from '../components/ui/Icon.astro';
+import Keys from '../components/ui/Keys.astro';
+import { shortcuts } from '../data/shortcuts';
+import { site } from '../config/site';
+
+const repo = site.repository?.replace(/\/$/, '');
+const issues = repo ? `${repo}/issues` : undefined;
+
+const chapters = [
+  {
+    name: 'Get started',
+    pages: [
+      { id: 'install', title: 'Install Foldex' },
+      { id: 'portable', title: 'The portable copy' },
+      { id: 'first-steps', title: 'First steps' },
+      { id: 'updates', title: 'Updates' },
+      { id: 'uninstall', title: 'Uninstall' },
+    ],
+  },
+  {
+    name: 'Using Foldex',
+    pages: [
+      { id: 'tabs', title: 'Tabs and split panes' },
+      { id: 'search', title: 'Find files' },
+      { id: 'files', title: 'Copy, move and undo' },
+      { id: 'launcher', title: 'The launcher' },
+      { id: 'home', title: 'Home and the sidebar' },
+    ],
+  },
+  {
+    name: 'Make it yours',
+    pages: [
+      { id: 'themes', title: 'Themes and layout' },
+      { id: 'shortcuts', title: 'Keyboard shortcuts' },
+      { id: 'default', title: 'Open folders in Foldex' },
+      { id: 'storage', title: 'Where settings live' },
+    ],
+  },
+  {
+    name: 'Help',
+    pages: [
+      { id: 'faq', title: 'Questions' },
+      { id: 'help', title: 'Report a problem' },
+    ],
+  },
+];
+---
+
+<PageLayout
+  title="Documentation — Foldex"
+  description="Learn Foldex in plain words: install it, find your way around, and make it yours."
+>
+  <SiteHeader />
+  <main id="main" class="docs" tabindex="-1">
+    <header class="wrap intro">
+      <h1>
+        Learn Foldex. <span class="soft">Everything, in plain words.</span>
+      </h1>
+      <div class="quick">
+        <a href="#install">
+          <span class="quick-icon">
+            <Icon name="download" size={18} />
+          </span>
+          <span class="quick-name">Install Foldex</span>
+          <span class="quick-text">Up and running in a minute.</span>
+        </a>
+        <a href="#shortcuts">
+          <span class="quick-icon">
+            <Icon name="keyboard" size={18} />
+          </span>
+          <span class="quick-name">Learn the shortcuts</span>
+          <span class="quick-text">Try them right here on the page.</span>
+        </a>
+        <a href="#faq">
+          <span class="quick-icon">
+            <Icon name="help" size={18} />
+          </span>
+          <span class="quick-name">Something not right?</span>
+          <span class="quick-text">Answers to common questions.</span>
+        </a>
+      </div>
+    </header>
+
+    <div class="wrap layout">
+      <aside class="side">
+        <label class="find">
+          <Icon name="search" size={16} />
+          <span class="sr-only">Search the documentation</span>
+          <input
+            type="search"
+            placeholder="Search the docs"
+            autocomplete="off"
+            spellcheck="false"
+            data-find
+          />
+          <kbd class="key slash" aria-hidden="true">
+            /
+          </kbd>
+        </label>
+        <nav class="toc" aria-label="Documentation">
+          {chapters.map((chapter) => (
+            <div class="chapter">
+              <p class="chapter-name">{chapter.name}</p>
+              <ul>
+                {chapter.pages.map((page) => (
+                  <li>
+                    <a href={`#${page.id}`} data-toc={page.id}>
+                      {page.title}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </nav>
+      </aside>
+
+      <article class="content" data-content>
+        <p class="empty" data-empty hidden>
+          Nothing matches <q data-query></q>. Try fewer words, or{' '}
+          {issues ? <a href={issues}>ask on GitHub</a> : 'ask on GitHub'}.
+        </p>
+
+        <section id="install" data-doc>
+          <p class="crumb">Get started</p>
+          <h2>Install Foldex</h2>
+          <p>
+            Foldex runs on Windows 10 (version 1809 or later) and Windows 11,
+            64-bit. Your PC needs graphics that support DirectX 12, which almost
+            every PC from the last few years has.
+          </p>
+          <ol class="steps">
+            <li>
+              <b>Download the installer.</b> Get it from the{' '}
+              <a href="/#download">download list</a>. It’s called{' '}
+              <code>Foldex-{site.version}-windows-x64-setup.exe</code>.
+            </li>
+            <li>
+              <b>Open it.</b> Foldex isn’t code-signed yet, so Windows may show{' '}
+              <q>Windows protected your PC</q>. Choose <b>More info</b>, then{' '}
+              <b>Run anyway</b>.
+            </li>
+            <li>
+              <b>Follow the steps.</b> Pick a folder and, if you like, a desktop
+              shortcut. Foldex installs just for you, so it doesn’t ask for an
+              admin password.
+            </li>
+            <li>
+              <b>Open Foldex</b> from the Start menu. It’s also listed in
+              Windows Settings, under Apps.
+            </li>
+          </ol>
+        </section>
+
+        <section id="portable" data-doc>
+          <p class="crumb">Get started</p>
+          <h2>The portable copy</h2>
+          <p>
+            Prefer not to install anything? The portable ZIP runs from any
+            folder, even a USB stick, and keeps its settings right beside it.
+          </p>
+          <ol class="steps">
+            <li>Download the portable ZIP from the download list.</li>
+            <li>
+              Extract the <b>whole</b> ZIP into a folder you can write to.
+              Foldex needs the files next to it.
+            </li>
+            <li>
+              Open <code>Foldex.exe</code>.
+            </li>
+          </ol>
+          <p class="tip">
+            <Icon name="bulb" size={18} />
+            <span>
+              On GitHub, the <q>Source code</q> downloads are Foldex’s code, not
+              the app. Pick the file whose name ends in{' '}
+              <code>portable.zip</code>.
+            </span>
+          </p>
+        </section>
+
+        <section id="first-steps" data-doc>
+          <p class="crumb">Get started</p>
+          <h2>First steps</h2>
+          <p>
+            Foldex opens on Home, with your recent work. Click a folder in the
+            sidebar to start browsing, or start typing to filter what you see.
+          </p>
+          <ul class="facts">
+            <li>
+              Press <Keys keys={['F1']} /> any time for the full list of keys.
+            </li>
+            <li>
+              Press <Keys keys={['Ctrl', 'Shift', 'P']} /> to search every
+              command by name.
+            </li>
+            <li>
+              Closing the window can keep Foldex running in the system tray, so
+              the launcher still answers. Choose <b>Exit Foldex</b> from the
+              tray icon to quit completely, or turn this off in Options.
+            </li>
+          </ul>
+        </section>
+
+        <section id="updates" data-doc>
+          <p class="crumb">Get started</p>
+          <h2>Updates</h2>
+          <p>
+            Foldex checks for new versions on its own. To check now, open{' '}
+            <b>Options</b>, then <b>Application Updates</b>, and choose{' '}
+            <b>Install and restart</b> when an update is ready. Your settings
+            and themes stay as they are.
+          </p>
+          <p>
+            Foldex always asks before installing, and waits for any copying or
+            moving to finish. Downloading updates automatically, and trying
+            preview versions, are both optional.
+          </p>
+          <p class="tip">
+            <Icon name="bulb" size={18} />
+            <span>
+              A portable copy tells you when a new version is out. To update it,
+              download the new ZIP and keep your <code>theme.toml</code>,{' '}
+              <code>foldex-session.json</code> and{' '}
+              <code>foldex-preferences.json</code>.
+            </span>
+          </p>
+        </section>
+
+        <section id="uninstall" data-doc>
+          <p class="crumb">Get started</p>
+          <h2>Uninstall</h2>
+          <p>
+            Exit Foldex, including its tray icon, then remove it from Windows
+            Settings, under Apps. Your preferences are kept in case you come
+            back. To erase them too, delete the{' '}
+            <code>%LOCALAPPDATA%\Foldex</code> folder afterwards.
+          </p>
+        </section>
+
+        <section id="tabs" data-doc>
+          <p class="crumb">Using Foldex</p>
+          <h2>Tabs and split panes</h2>
+          <p>
+            Keep several folders open at once. Drag a tab to reorder it, or drag
+            it out into a window of its own. Split the view to see two folders
+            side by side, and drag files between them.
+          </p>
+          <dl class="pairs">
+            <div>
+              <dt>New tab</dt>
+              <dd>
+                <Keys keys={['Ctrl', 'T']} />
+              </dd>
+            </div>
+            <div>
+              <dt>Close tab</dt>
+              <dd>
+                <Keys keys={['Ctrl', 'W']} />
+              </dd>
+            </div>
+            <div>
+              <dt>Bring back a closed tab</dt>
+              <dd>
+                <Keys keys={['Ctrl', 'Shift', 'T']} />
+              </dd>
+            </div>
+            <div>
+              <dt>Split to the right</dt>
+              <dd>
+                <Keys keys={['Ctrl', 'Shift', 'S']} />
+              </dd>
+            </div>
+            <div>
+              <dt>Split below</dt>
+              <dd>
+                <Keys keys={['Ctrl', 'S']} />
+              </dd>
+            </div>
+            <div>
+              <dt>Move between panes</dt>
+              <dd>
+                <Keys keys={['Ctrl', 'Alt', '→']} />
+              </dd>
+            </div>
+          </dl>
+        </section>
+
+        <section id="search" data-doc>
+          <p class="crumb">Using Foldex</p>
+          <h2>Find files</h2>
+          <p>
+            Start typing in any folder and the list narrows as you type. Press{' '}
+            <Keys keys={['Ctrl', 'E']} /> to look through every folder inside it
+            too.
+          </p>
+          <p>
+            For more, open the filter button in the search bar. You can search
+            by name, location, size and date, leave out folders you don’t care
+            about, and save the whole search as a collection in the sidebar to
+            use again. Sizes understand units such as <code>MB</code>.
+          </p>
+          <p class="tip">
+            <Icon name="bulb" size={18} />
+            <span>
+              Results stay live: when files change while you look, the list
+              keeps up.
+            </span>
+          </p>
+        </section>
+
+        <section id="files" data-doc>
+          <p class="crumb">Using Foldex</p>
+          <h2>Copy, move and undo</h2>
+          <p>
+            Copy, cut and paste work as they do everywhere in Windows, with the
+            same progress and <q>replace or skip</q> windows. You can also drag
+            files onto a folder, the other pane, the path at the top, or the
+            sidebar, and to or from File Explorer. Hold <Keys keys={['Ctrl']} />{' '}
+            while dragging to copy, or <Keys keys={['Shift']} /> to move.
+          </p>
+          <p>
+            <Keys keys={['Del']} /> sends files to the Recycle Bin. Made a
+            mistake? <Keys keys={['Ctrl', 'Z']} /> undoes it while the window
+            stays open.
+          </p>
+          <p class="tip is-warn">
+            <Icon name="shield" size={18} />
+            <span>
+              <Keys keys={['Shift', 'Del']} /> deletes for good, after asking.
+              That, and replacing a file with another, can’t be undone.
+            </span>
+          </p>
+        </section>
+
+        <section id="launcher" data-doc>
+          <p class="crumb">Using Foldex</p>
+          <h2>The launcher</h2>
+          <p>
+            Press <Keys keys={['Ctrl', 'Alt', 'Space']} /> anywhere in Windows,
+            even when Foldex is hidden, to open apps, recent files and
+            favourites by typing a few letters.
+          </p>
+          <ul class="facts">
+            <li>
+              <Keys keys={['Enter']} /> opens the result;{' '}
+              <Keys keys={['Shift', 'Enter']} /> shows it in Foldex instead.
+            </li>
+            <li>
+              Type a sum such as <code>12*4+7</code> to calculate it, then copy
+              the answer.
+            </li>
+            <li>Change the launcher’s shortcut in Hotkeys.</li>
+          </ul>
+        </section>
+
+        <section id="home" data-doc>
+          <p class="crumb">Using Foldex</p>
+          <h2>Home and the sidebar</h2>
+          <p>
+            Home gathers what you worked on lately and the files you open most.
+            Show them as details, a list, columns or icons. Keep bookmarks in
+            the sidebar, and choose which sections and places it shows.
+          </p>
+        </section>
+
+        <section id="themes" data-doc>
+          <p class="crumb">Make it yours</p>
+          <h2>Themes and layout</h2>
+          <p>
+            Choose Dark, Light, or follow Windows with System. Every color can
+            be changed: save your colors as a named theme, then share it or
+            bring in one someone else made. Options also sets the text size, how
+            tightly rows are packed, how round the corners are, and how much
+            things move.
+          </p>
+        </section>
+
+        <section id="shortcuts" data-doc>
+          <p class="crumb">Make it yours</p>
+          <h2>Keyboard shortcuts</h2>
+          <p>
+            These are the keys a fresh copy of Foldex uses. Change any of them
+            in <b>Hotkeys</b>: record a combination, or several in a row, then
+            choose Assign. Go on, press a few: the keys below light up.
+          </p>
+          <dl class="pairs pairs--all">
+            {shortcuts.map((shortcut) => (
+              <div>
+                <dt>{shortcut.name}</dt>
+                <dd>
+                  <Keys keys={shortcut.keys} />
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+
+        <section id="default" data-doc>
+          <p class="crumb">Make it yours</p>
+          <h2>Open folders in Foldex</h2>
+          <p>
+            Turn on <b>Default File Explorer</b> in Options and folders you open
+            from anywhere in Windows, and <Keys keys={['Win', 'E']} />, open in
+            Foldex. Turn it off again and File Explorer is back as it was.
+          </p>
+          <p class="tip is-warn">
+            <Icon name="shield" size={18} />
+            <span>
+              Using the portable copy? Turn this off before you move or delete
+              its folder.
+            </span>
+          </p>
+        </section>
+
+        <section id="storage" data-doc>
+          <p class="crumb">Make it yours</p>
+          <h2>Where settings live</h2>
+          <p>
+            The installed app keeps everything in{' '}
+            <code>%LOCALAPPDATA%\Foldex\data</code>. The portable copy keeps it
+            in its own folder. Either way, you’ll find:
+          </p>
+          <dl class="pairs pairs--files">
+            <div>
+              <dt>
+                <code>theme.toml</code>
+              </dt>
+              <dd>The theme you’re using.</dd>
+            </div>
+            <div>
+              <dt>
+                <code>themes</code>
+              </dt>
+              <dd>Themes you saved or brought in.</dd>
+            </div>
+            <div>
+              <dt>
+                <code>foldex-session.json</code>
+              </dt>
+              <dd>Your open tabs and panes.</dd>
+            </div>
+            <div>
+              <dt>
+                <code>foldex-preferences.json</code>
+              </dt>
+              <dd>Bookmarks, shortcuts and launcher settings.</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section id="faq" data-doc>
+          <p class="crumb">Help</p>
+          <h2>Questions</h2>
+          <div class="faq">
+            <details>
+              <summary>Why does Windows say it protected my PC?</summary>
+              <p>
+                Windows warns about apps that aren’t code-signed, and Foldex
+                isn’t yet. Choose <b>More info</b>, then <b>Run anyway</b>. You
+                only need to do this once.
+              </p>
+            </details>
+            <details>
+              <summary>Is Foldex really free?</summary>
+              <p>
+                Yes. Foldex is free and open source, under the AGPL-3.0 license.
+                Its code is on {repo ? <a href={repo}>GitHub</a> : 'GitHub'}.
+              </p>
+            </details>
+            <details>
+              <summary>Does Foldex upload my files?</summary>
+              <p>
+                No. Foldex works locally, on your PC. It goes online to check
+                for updates.
+              </p>
+            </details>
+            <details>
+              <summary>Is there a Mac or Linux version?</summary>
+              <p>
+                Not yet. Both are on their way, along with Windows on Arm.
+                Follow the{' '}
+                {repo ? <a href={`${repo}/releases`}>releases</a> : 'releases'}{' '}
+                to hear first.
+              </p>
+            </details>
+            <details>
+              <summary>My Win key shortcut doesn’t work.</summary>
+              <p>
+                Shortcuts that use the Windows key, such as{' '}
+                <Keys keys={['Win', 'Space']} />, are new and don’t work on
+                every PC. Pick a different combination in Hotkeys.
+              </p>
+            </details>
+            <details>
+              <summary>Foldex won’t start.</summary>
+              <p>
+                Check your PC runs 64-bit Windows 10 (1809 or later) or 11, and
+                that its graphics drivers are up to date. Foldex needs DirectX
+                12. If it still won’t open, let us know.
+              </p>
+            </details>
+          </div>
+        </section>
+
+        <section id="help" data-doc>
+          <p class="crumb">Help</p>
+          <h2>Report a problem</h2>
+          <p>
+            Found a bug, or something confusing? Open an issue on GitHub. Say
+            which version of Windows you use, what you did, and what you
+            expected. A screenshot helps too.
+          </p>
+          {issues && (
+            <a class="button report" href={issues}>
+              <Icon name="github" size={16} />
+              Open an issue
+            </a>
+          )}
+        </section>
+      </article>
+    </div>
+  </main>
+  <SiteFooter />
+</PageLayout>
+
+<script>
+  const input = document.querySelector<HTMLInputElement>('[data-find]')!;
+  const sections = [...document.querySelectorAll<HTMLElement>('[data-doc]')];
+  const toc = new Map(
+    [...document.querySelectorAll<HTMLAnchorElement>('[data-toc]')].map(
+      (link) => [link.dataset.toc!, link],
+    ),
+  );
+  const empty = document.querySelector<HTMLElement>('[data-empty]')!;
+  const said = document.querySelector<HTMLElement>('[data-query]')!;
+  const highlights =
+    typeof Highlight === 'undefined' ? undefined : CSS.highlights;
+
+  // Filter as you type, like a folder in Foldex: hide what doesn't match and
+  // mark the words that do.
+  const find = () => {
+    const words = input.value.toLowerCase().split(/\s+/).filter(Boolean);
+    const ranges: Range[] = [];
+    let shown = 0;
+    for (const section of sections) {
+      const text = section.textContent!.toLowerCase();
+      const hit = words.every((word) => text.includes(word));
+      section.hidden = !hit;
+      toc.get(section.id)?.classList.toggle('is-out', !hit);
+      if (!hit) continue;
+      shown++;
+      if (!words.length || !highlights) continue;
+      const walk = document.createTreeWalker(section, NodeFilter.SHOW_TEXT);
+      for (let node = walk.nextNode(); node; node = walk.nextNode()) {
+        const value = node.nodeValue!.toLowerCase();
+        for (const word of words) {
+          for (
+            let at = value.indexOf(word);
+            at >= 0;
+            at = value.indexOf(word, at + 1)
+          ) {
+            const range = new Range();
+            range.setStart(node, at);
+            range.setEnd(node, at + word.length);
+            ranges.push(range);
+          }
+        }
+      }
+    }
+    empty.hidden = shown > 0;
+    said.textContent = input.value.trim();
+    highlights?.set('docs-find', new Highlight(...ranges));
+  };
+  input.addEventListener('input', find);
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      input.value = '';
+      find();
+      input.blur();
+    }
+  });
+  addEventListener('keydown', (event) => {
+    if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey)
+      return;
+    const target = event.target as HTMLElement;
+    if (target.closest('input, textarea, [contenteditable]')) return;
+    event.preventDefault();
+    input.focus();
+  });
+
+  // Mark the section being read.
+  const seen = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        toc.forEach((link, id) =>
+          link.classList.toggle('is-current', id === entry.target.id),
+        );
+      }
+    },
+    { rootMargin: '-25% 0px -65% 0px' },
+  );
+  sections.forEach((section) => seen.observe(section));
+</script>
+
+<style>
+  .docs {
+    padding-top: calc(var(--nav) + clamp(48px, 8vh, 96px));
+    padding-bottom: clamp(80px, 10vw, 140px);
+  }
+  .intro {
+    display: grid;
+    gap: 20px;
+    margin-bottom: clamp(48px, 7vw, 88px);
+  }
+  h1 {
+    max-width: 14em;
+    font-size: clamp(40px, 5.2vw, 68px);
+    line-height: 1.02;
+    letter-spacing: -0.04em;
+  }
+  .soft {
+    color: var(--faint);
+  }
+  .quick {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-top: 20px;
+  }
+  .quick a {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 14px;
+    padding: 18px;
+    border-radius: 16px;
+    background: var(--surface);
+    box-shadow:
+      0 0 0 1px #0e10120f,
+      0 1px 2px #0e10120a;
+    transition:
+      box-shadow 200ms var(--ease-out),
+      translate 200ms var(--ease-out);
+  }
+  .quick a:hover {
+    translate: 0 -2px;
+    box-shadow:
+      0 0 0 1px #0e101214,
+      0 16px 32px -20px #0e101240;
+  }
+  .quick-icon {
+    grid-row: span 2;
+    display: grid;
+    place-items: center;
+    width: 40px;
+    height: 40px;
+    border-radius: 12px;
+    background: var(--surface-2);
+    color: var(--ink-2);
+  }
+  .quick-name {
+    font-weight: 500;
+  }
+  .quick-text {
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 220px minmax(0, 720px);
+    gap: clamp(32px, 6vw, 96px);
+    align-items: start;
+  }
+  .side {
+    position: sticky;
+    grid-template-columns: minmax(0, 1fr);
+    top: calc(var(--nav) + 24px);
+    display: grid;
+    gap: 20px;
+    max-height: calc(100svh - var(--nav) - 48px);
+    overflow-y: auto;
+    padding: 2px;
+    scrollbar-width: thin;
+  }
+  .find {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    height: 40px;
+    padding: 0 8px 0 12px;
+    border-radius: 12px;
+    background: var(--surface);
+    color: var(--faint);
+    box-shadow: 0 0 0 1px var(--line-2);
+    transition: box-shadow 150ms var(--ease-out);
+  }
+  .find:focus-within {
+    box-shadow:
+      0 0 0 1px var(--teal),
+      0 0 0 4px color-mix(in srgb, var(--teal) 16%, transparent);
+  }
+  .find input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: none;
+    color: var(--ink);
+    font: inherit;
+    font-size: 14px;
+  }
+  .find input::placeholder {
+    color: var(--faint);
+  }
+  .find input::-webkit-search-cancel-button {
+    display: none;
+  }
+  .slash {
+    min-width: 1.6em;
+    height: 1.6em;
+    font-size: 12px;
+  }
+  .find:focus-within .slash {
+    display: none;
+  }
+  .toc {
+    display: grid;
+    gap: 20px;
+  }
+  .chapter-name {
+    margin-bottom: 6px;
+    padding-left: 12px;
+    color: var(--faint);
+    font-size: 12px;
+  }
+  .toc ul {
+    display: grid;
+    gap: 1px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .toc a {
+    position: relative;
+    display: block;
+    padding: 5px 12px;
+    border-radius: 8px;
+    color: var(--ink-2);
+    font-size: 14px;
+    transition:
+      color 150ms var(--ease-out),
+      opacity 150ms var(--ease-out);
+  }
+  .toc a:hover {
+    color: var(--ink);
+  }
+  .toc a.is-current {
+    background: var(--surface);
+    color: var(--ink);
+    font-weight: 500;
+    box-shadow: 0 0 0 1px var(--line);
+  }
+  .toc a.is-out {
+    opacity: 0.35;
+  }
+
+  /* The reading column. */
+  .content {
+    display: grid;
+    gap: clamp(56px, 6vw, 80px);
+    color: var(--ink-2);
+    font-size: 16px;
+    line-height: 1.7;
+  }
+  .content section {
+    display: grid;
+    gap: 16px;
+    scroll-margin-top: calc(var(--nav) + 24px);
+  }
+  .crumb {
+    color: var(--faint);
+    font-size: 13px;
+  }
+  h2 {
+    margin-top: -12px;
+    color: var(--ink);
+    font-size: clamp(26px, 2.6vw, 32px);
+    line-height: 1.15;
+  }
+  .content a:not(.button) {
+    color: var(--teal-ink);
+    text-decoration: underline;
+    text-decoration-color: color-mix(in srgb, var(--teal) 40%, transparent);
+    text-underline-offset: 3px;
+  }
+  .content b {
+    color: var(--ink);
+    font-weight: 500;
+  }
+  code {
+    padding: 1px 6px;
+    border-radius: 6px;
+    background: var(--surface-2);
+    box-shadow: inset 0 0 0 1px var(--line);
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 0.86em;
+    overflow-wrap: anywhere;
+  }
+  .content :global(.keys) {
+    vertical-align: 1px;
+    font-size: 14px;
+  }
+  .empty {
+    padding: 24px;
+    border-radius: 16px;
+    background: var(--surface);
+    box-shadow: 0 0 0 1px var(--line);
+  }
+
+  /* Numbered steps on a thin thread. */
+  .steps {
+    display: grid;
+    gap: 14px;
+    margin: 4px 0 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: step;
+  }
+  .steps li {
+    position: relative;
+    padding-left: 44px;
+    counter-increment: step;
+  }
+  .steps li::before {
+    content: counter(step);
+    position: absolute;
+    top: 1px;
+    left: 0;
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--surface);
+    box-shadow: inset 0 0 0 1px var(--line-2);
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 13px;
+  }
+  .steps li:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    top: 33px;
+    bottom: -12px;
+    left: 14px;
+    width: 1px;
+    background: var(--line);
+  }
+  .facts {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding-left: 20px;
+  }
+  .facts li::marker {
+    color: var(--faint);
+  }
+
+  .tip {
+    display: flex;
+    gap: 12px;
+    padding: 14px 16px;
+    border-radius: 14px;
+    background: color-mix(in srgb, var(--teal) 7%, var(--surface));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--teal) 18%, transparent);
+    font-size: 15px;
+  }
+  .tip :global(svg) {
+    flex-shrink: 0;
+    margin-top: 4px;
+    color: var(--teal-ink);
+  }
+  .tip.is-warn {
+    background: color-mix(in srgb, #f08a3c 8%, var(--surface));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, #f08a3c 22%, transparent);
+  }
+  .tip.is-warn :global(svg) {
+    color: #a2501a;
+  }
+
+  /* Name and keys, in a quiet table. */
+  .pairs {
+    display: grid;
+    margin: 4px 0 0;
+    border-radius: 14px;
+    background: var(--surface);
+    box-shadow: 0 0 0 1px var(--line);
+    overflow: hidden;
+  }
+  .pairs div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 9px 16px;
+  }
+  .pairs div + div {
+    border-top: 1px solid var(--line);
+  }
+  .pairs dt {
+    color: var(--ink-2);
+    font-size: 15px;
+  }
+  .pairs dd {
+    margin: 0;
+  }
+  .pairs--all {
+    grid-template-columns: 1fr 1fr;
+  }
+  .pairs--all div + div {
+    border-top: 0;
+  }
+  .pairs--all div:nth-child(n + 3) {
+    border-top: 1px solid var(--line);
+  }
+  .pairs--all div:nth-child(odd) {
+    border-right: 1px solid var(--line);
+  }
+  .pairs--files dd {
+    color: var(--muted);
+    font-size: 14px;
+    text-align: right;
+  }
+
+  .faq {
+    display: grid;
+    border-radius: 14px;
+    background: var(--surface);
+    box-shadow: 0 0 0 1px var(--line);
+  }
+  .faq details + details {
+    border-top: 1px solid var(--line);
+  }
+  .faq summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 18px;
+    color: var(--ink);
+    font-weight: 500;
+    cursor: pointer;
+    list-style: none;
+  }
+  .faq summary::-webkit-details-marker {
+    display: none;
+  }
+  .faq summary::after {
+    content: '+';
+    color: var(--faint);
+    font-family: var(--font-mono);
+    font-size: 18px;
+    font-weight: 400;
+    transition: rotate 200ms var(--ease-out);
+  }
+  .faq details[open] summary::after {
+    rotate: 45deg;
+  }
+  .faq details p {
+    padding: 0 18px 16px;
+  }
+  .report {
+    justify-self: start;
+    margin-top: 4px;
+  }
+
+  ::highlight(docs-find) {
+    background: color-mix(in srgb, var(--yellow) 70%, transparent);
+    color: var(--ink);
+  }
+
+  @media (max-width: 900px) {
+    .layout {
+      grid-template-columns: 1fr;
+    }
+    .side {
+      position: sticky;
+      top: calc(var(--nav) + 8px);
+      z-index: 5;
+      max-height: none;
+      overflow: visible;
+    }
+    .toc {
+      display: none;
+    }
+    .find {
+      box-shadow:
+        0 0 0 1px var(--line-2),
+        0 8px 24px -12px #0e101240;
+    }
+    .quick {
+      grid-template-columns: 1fr;
+    }
+  }
+  @media (max-width: 560px) {
+    .pairs--all {
+      grid-template-columns: 1fr;
+    }
+    .pairs--all div:nth-child(odd) {
+      border-right: 0;
+    }
+    .pairs--all div + div {
+      border-top: 1px solid var(--line);
+    }
+    .pairs--files div {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 2px;
+    }
+    .pairs--files dd {
+      text-align: left;
+    }
+  }
+</style>
