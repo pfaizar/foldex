@@ -1,0 +1,298 @@
+---
+// A split download button: the main half offers the build for the visitor's
+// system, the chevron lists every system. Without JavaScript it offers
+// Windows, the only build so far.
+import Icon from './ui/Icon.astro';
+import OsIcon from './ui/OsIcon.astro';
+import { platforms } from '../data/platforms';
+import { site } from '../config/site';
+
+const windows = platforms[0]!;
+const fallback = windows.installer?.href ?? site.download;
+---
+
+<div class="get" data-get data-icon="windows">
+  <a class="get-main" href={fallback} data-get-main>
+    <span class="get-icon">
+      <OsIcon name="windows" size={14} class="for-windows" />
+      <OsIcon name="apple" size={16} class="for-apple" />
+      <OsIcon name="linux" size={16} class="for-linux" />
+    </span>
+    <span data-get-label>Download for Windows</span>
+  </a>
+  <details class="get-more">
+    <summary aria-label="Other systems">
+      <Icon name="chevron-down" size={16} />
+    </summary>
+    <div class="get-menu">
+      <p class="get-head mono">Foldex {site.version}</p>
+      <ul>
+        {platforms.map((p) => (
+          <li data-os={p.id}>
+            {p.installer ? (
+              <a class="get-row" href={p.installer.href}>
+                <OsIcon name={p.icon} size={16} />
+                <span class="get-name">
+                  <span>
+                    {p.name}
+                    <span class="get-here">This device</span>
+                  </span>
+                  <small>{p.detail}</small>
+                </span>
+                <span class="get-tag mono">{p.installer.size}</span>
+              </a>
+            ) : (
+              <div class="get-row is-soon" aria-disabled="true">
+                <OsIcon name={p.icon} size={16} />
+                <span class="get-name">
+                  <span>
+                    {p.name}
+                    <span class="get-here">This device</span>
+                  </span>
+                  <small>{p.detail}</small>
+                </span>
+                <span class="get-tag">Coming soon</span>
+              </div>
+            )}
+          </li>
+        ))}
+        {windows.portable && (
+          <li>
+            <a class="get-row get-row--sub" href={windows.portable.href}>
+              <Icon name="package" size={16} />
+              <span class="get-name">
+                Windows, portable
+                <small>No install, runs from any folder</small>
+              </span>
+              <span class="get-tag mono">{windows.portable.size}</span>
+            </a>
+          </li>
+        )}
+      </ul>
+      {site.download && (
+        <a class="get-all" href={site.download}>
+          All releases
+          <Icon name="arrow-up-right" size={14} />
+        </a>
+      )}
+    </div>
+  </details>
+</div>
+
+<script>
+  import { platforms } from '../data/platforms';
+  import { detectPlatform } from '../lib/platform';
+
+  const names: Record<string, string> = {
+    windows: 'Windows',
+    'windows-arm': 'Windows on Arm',
+    macos: 'Mac',
+    linux: 'Linux',
+  };
+
+  for (const root of document.querySelectorAll<HTMLElement>('[data-get]')) {
+    const more = root.querySelector('details')!;
+    const main = root.querySelector<HTMLAnchorElement>('[data-get-main]')!;
+    const label = root.querySelector<HTMLElement>('[data-get-label]')!;
+
+    detectPlatform().then((id) => {
+      const platform = platforms.find((p) => p.id === id);
+      if (!platform) return;
+      root.querySelector(`li[data-os="${id}"]`)?.classList.add('is-here');
+      root.dataset.icon = platform.icon;
+      if (platform.installer) return;
+      // Not built yet: say so, and point at the section that explains.
+      main.href = '#download';
+      main.classList.add('is-soon');
+      label.textContent = `Coming soon for ${names[platform.id]}`;
+    });
+
+    // Close on a click elsewhere, on Escape, and once something is chosen.
+    document.addEventListener('pointerdown', (event) => {
+      if (more.open && !more.contains(event.target as Node)) more.open = false;
+    });
+    more.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || !more.open) return;
+      more.open = false;
+      more.querySelector('summary')!.focus();
+    });
+    more.addEventListener('click', (event) => {
+      if ((event.target as Element).closest('a')) more.open = false;
+    });
+  }
+</script>
+
+<style>
+  .get {
+    position: relative;
+    display: inline-flex;
+    height: 44px;
+    border-radius: 999px;
+    background: var(--ink);
+    color: #fff;
+    font-size: 15px;
+    font-weight: 500;
+  }
+  .get-main,
+  .get-more summary {
+    display: inline-flex;
+    align-items: center;
+    height: 100%;
+    color: inherit;
+    cursor: pointer;
+    transition: background-color 150ms var(--ease-out);
+  }
+  .get-main {
+    gap: 9px;
+    padding: 0 16px 0 20px;
+    border-radius: 999px 0 0 999px;
+    white-space: nowrap;
+  }
+  .get-main:hover,
+  .get-more summary:hover,
+  .get-more[open] summary {
+    background: #ffffff14;
+  }
+  .get-main:active {
+    background: #ffffff0a;
+  }
+  .get-main.is-soon {
+    color: #ffffffc7;
+  }
+  .get-icon {
+    display: grid;
+  }
+  .get-icon :global(svg) {
+    display: none;
+    grid-area: 1 / 1;
+  }
+  .get[data-icon='windows'] .get-icon :global(.for-windows),
+  .get[data-icon='apple'] .get-icon :global(.for-apple),
+  .get[data-icon='linux'] .get-icon :global(.for-linux) {
+    display: block;
+  }
+
+  .get-more summary {
+    padding: 0 14px 0 11px;
+    border-left: 1px solid #ffffff26;
+    border-radius: 0 999px 999px 0;
+    list-style: none;
+  }
+  .get-more summary::-webkit-details-marker {
+    display: none;
+  }
+  .get-more summary :global(svg) {
+    transition: rotate 200ms var(--ease-out);
+  }
+  .get-more[open] summary :global(svg) {
+    rotate: 180deg;
+  }
+
+  .get-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    z-index: 10;
+    width: min(340px, calc(100vw - 32px));
+    padding: 6px;
+    border-radius: 16px;
+    background: var(--surface);
+    color: var(--ink);
+    font-size: 14px;
+    font-weight: 400;
+    box-shadow:
+      0 0 0 1px #0e101214,
+      0 24px 48px -16px #0e101240;
+    transform-origin: 24px 0;
+  }
+  .get-menu ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .get-head {
+    padding: 8px 10px 6px;
+    color: var(--faint);
+    font-size: 11px;
+  }
+  .get-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 10px;
+    border-radius: 10px;
+    color: inherit;
+  }
+  a.get-row:hover,
+  a.get-row:focus-visible {
+    background: var(--surface-2);
+  }
+  .get-row.is-soon {
+    color: var(--muted);
+  }
+  .get-row--sub {
+    margin-top: 2px;
+    border-top: 1px solid var(--line);
+    border-radius: 0 0 10px 10px;
+  }
+  .get-name {
+    flex: 1;
+    display: grid;
+    gap: 1px;
+    line-height: 1.25;
+  }
+  .get-name small {
+    color: var(--faint);
+    font-size: 12px;
+  }
+  .get-tag {
+    color: var(--faint);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .is-soon .get-tag {
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--muted);
+  }
+  .get-here {
+    display: none;
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--teal) 14%, transparent);
+    color: #0a6e8e;
+    font-size: 11px;
+    font-weight: 500;
+    vertical-align: 1px;
+  }
+  .is-here .get-here {
+    display: inline;
+    margin-left: 6px;
+  }
+  .get-all {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 4px;
+    padding: 10px 10px 8px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .get-all:hover {
+    color: var(--ink);
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .get-more[open] .get-menu {
+      animation: get-open 220ms var(--ease-out);
+    }
+    @keyframes get-open {
+      from {
+        opacity: 0;
+        transform: translateY(-6px) scale(0.97);
+      }
+    }
+  }
+</style>

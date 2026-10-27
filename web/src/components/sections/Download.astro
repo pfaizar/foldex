@@ -1,124 +1,183 @@
 ---
-// The release as it would look opened in Foldex: an address bar and two files.
+// Getting Foldex: every download as a plain row, grouped by system and
+// separated by lines. Windows is the only build so far; the others are listed
+// as coming soon. The visitor's own system moves to the top.
 import Icon from '../ui/Icon.astro';
-import Keys from '../ui/Keys.astro';
-import Plate from '../Plate.astro';
+import OsIcon from '../ui/OsIcon.astro';
+import { platforms } from '../../data/platforms';
 import { site } from '../../config/site';
 
-const files = [
-  site.installer && {
-    name: `Foldex-${site.version}-windows-x64-setup.exe`,
-    kind: 'Installer',
-    note: 'Updates itself, no admin rights',
-    icon: 'windows' as const,
-    ...site.installer,
+const windows = platforms.find((p) => p.id === 'windows')!;
+const releases = site.repository
+  ? `${site.repository.replace(/\/$/, '')}/releases`
+  : site.download;
+
+interface Row {
+  name: string;
+  text: string;
+  tags: string[];
+  href?: string;
+  size?: string;
+}
+interface Group {
+  id: string;
+  os: string[];
+  name: string;
+  needs: string;
+  icon: 'windows' | 'apple' | 'linux';
+  rows: Row[];
+}
+
+const groups: Group[] = [
+  {
+    id: 'windows',
+    os: ['windows', 'windows-arm'],
+    name: 'Windows',
+    needs: 'Windows 10 (1809 or later) and 11',
+    icon: 'windows',
+    rows: [
+      {
+        name: 'Installer',
+        text: 'Adds Foldex to the Start menu and keeps it up to date.',
+        tags: ['.exe', 'x64'],
+        href: windows.installer?.href,
+        size: windows.installer?.size,
+      },
+      {
+        name: 'Portable',
+        text: 'No install. Runs from any folder, even a USB stick.',
+        tags: ['.zip', 'x64'],
+        href: windows.portable?.href,
+        size: windows.portable?.size,
+      },
+      {
+        name: 'Windows on Arm',
+        text: 'For Snapdragon and other Arm PCs.',
+        tags: ['arm64'],
+      },
+    ],
   },
-  site.portable && {
-    name: `Foldex-${site.version}-windows-x64-portable.zip`,
-    kind: 'Portable',
-    note: 'Runs from any folder or USB drive',
-    icon: 'package' as const,
-    ...site.portable,
+  {
+    id: 'macos',
+    os: ['macos'],
+    name: 'macOS',
+    needs: 'Apple silicon and Intel Macs',
+    icon: 'apple',
+    rows: [
+      {
+        name: 'Foldex for Mac',
+        text: 'One app for every Mac.',
+        tags: ['.dmg'],
+      },
+    ],
   },
-].filter((file) => !!file);
-const build = 'cargo build --locked --release';
+  {
+    id: 'linux',
+    os: ['linux'],
+    name: 'Linux',
+    needs: 'Most desktop distributions',
+    icon: 'linux',
+    rows: [
+      {
+        name: 'AppImage',
+        text: 'One file that runs on most distributions.',
+        tags: ['.AppImage', 'x64'],
+      },
+      {
+        name: 'Debian and Ubuntu',
+        text: 'A package for apt-based systems.',
+        tags: ['.deb', 'x64'],
+      },
+    ],
+  },
+];
 ---
 
 <section class="download" id="download" aria-labelledby="download-title">
-  <div class="wrap layout">
+  <div class="wrap">
     <h2 id="download-title" class="title" data-reveal>
-      Get Foldex. <span class="soft">Free, open source, and small.</span>
+      Get Foldex. <span class="soft">Free, and ready in a minute.</span>
     </h2>
 
-    <Plate class="stage" palette="moss" seed={13} data-reveal>
-      <div class="window">
-        <p class="address mono" aria-hidden="true">
-          <span>C:</span>
-          <Icon name="chevron-right" size={12} />
-          <span>Releases</span>
-          <Icon name="chevron-right" size={12} />
-          <span>v{site.version}</span>
-        </p>
-        <ul class="files" aria-label={`Foldex ${site.version} downloads`}>
-          {files.map((file) => (
-            <li>
-              <a class="file" href={file.href}>
-                <span class="icon">
-                  <Icon name={file.icon} size={18} />
-                </span>
-                <span class="name">
-                  <span class="mono">{file.name}</span>
-                  <span class="note">{file.note}</span>
-                </span>
-                <span class="kind">{file.kind}</span>
-                <span class="size mono">{file.size}</span>
-                <span class="get">
-                  <Icon name="download" size={16} />
-                  <span class="sr-only">
-                    Download {file.kind.toLowerCase()}
-                  </span>
-                </span>
-              </a>
-            </li>
-          ))}
-        </ul>
-        <p class="status mono" aria-hidden="true">
-          {files.length} items
-          <span>Windows 10 (1809+) and 11, x64</span>
-        </p>
-      </div>
-    </Plate>
-
-    <div class="aside" data-reveal style="--d: 1">
-      <div class="build">
-        <code class="mono">{build}</code>
-        <button
-          type="button"
-          class="copy"
-          data-copy={build}
-          aria-label="Copy the build command"
+    <div class="list" data-list data-reveal style="--d: 1">
+      {groups.map((group) => (
+        <section
+          class="group"
+          data-os={group.os.join(' ')}
+          aria-labelledby={`os-${group.id}`}
         >
-          <Icon name="copy" size={15} />
-        </button>
-        <span
-          class="sr-only"
-          role="status"
-          aria-live="polite"
-          data-copy-status
-        ></span>
-      </div>
+          <header class="os">
+            <OsIcon name={group.icon} size={22} />
+            <span class="os-text">
+              <span class="os-name" id={`os-${group.id}`}>
+                {group.name}
+              </span>
+              <span class="os-needs">{group.needs}</span>
+            </span>
+          </header>
+          <ul class="rows">
+            {group.rows.map((row) => {
+              const body = (
+                <>
+                  <span class="row-text">
+                    <span class="row-name">{row.name}</span>
+                    <span class="row-more">{row.text}</span>
+                  </span>
+                  <span class="meta mono">
+                    {[...row.tags, row.size].filter(Boolean).join(' · ')}
+                  </span>
+                </>
+              );
+              return (
+                <li>
+                  {row.href ? (
+                    <a class="row" href={row.href}>
+                      {body}
+                      <span class="action">
+                        Download
+                        <Icon name="arrow-down" size={15} />
+                      </span>
+                    </a>
+                  ) : (
+                    <div class="row is-soon">
+                      {body}
+                      <span class="action">Coming soon</span>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      ))}
+    </div>
+
+    <div class="notes" data-reveal style="--d: 2">
+      <p class="note">
+        Foldex isn’t code-signed yet, so the first time it runs Windows may say{' '}
+        <q>Windows protected your PC</q>. Choose <b>More info</b>, then{' '}
+        <b>Run anyway</b>.
+      </p>
       <p class="links">
-        {site.repository && <a href={site.repository}>Source on GitHub</a>}
-        <a href={site.license}>AGPL-3.0 license</a>
-        {site.download && <a href={site.download}>All releases</a>}
-      </p>
-      <p class="fine">
-        Builds aren’t code-signed yet, so SmartScreen may ask before the first
-        run.
-      </p>
-      <p class="press">
-        Already installed? <Keys keys={['Win', 'E']} /> can open Foldex instead
-        of File Explorer.
+        <a href="/changelog/">What’s new in {site.version}</a>
+        {releases && <a href={releases}>All releases</a>}
+        <a href="/docs/#install">Install help</a>
       </p>
     </div>
   </div>
 </section>
 
 <script>
-  const button = document.querySelector<HTMLButtonElement>('[data-copy]');
-  const status = document.querySelector<HTMLElement>('[data-copy-status]');
-  button?.addEventListener('click', async () => {
-    try {
-      await navigator.clipboard.writeText(button.dataset.copy!);
-      button.classList.add('is-done');
-      status!.textContent = 'Copied.';
-      window.setTimeout(() => {
-        button.classList.remove('is-done');
-        status!.textContent = '';
-      }, 1800);
-    } catch {
-      status!.textContent = 'Select the command to copy it.';
-    }
+  import { detectPlatform } from '../../lib/platform';
+
+  // Put the visitor's own system first.
+  detectPlatform().then((id) => {
+    if (!id) return;
+    const list = document.querySelector<HTMLElement>('[data-list]');
+    const group = list?.querySelector<HTMLElement>(
+      `[data-os~="${CSS.escape(id)}"]`,
+    );
+    if (list && group) list.prepend(group);
   });
 </script>
 
@@ -126,146 +185,133 @@ const build = 'cargo build --locked --release';
   .download {
     padding-bottom: clamp(96px, 12vw, 160px);
   }
-  .layout {
-    display: grid;
-    grid-template-columns: minmax(0, 7fr) minmax(0, 4fr);
-    gap: 48px clamp(32px, 5vw, 80px);
-    align-items: center;
-  }
   h2 {
-    grid-column: 1 / -1;
     max-width: 14em;
+    margin-bottom: clamp(32px, 5vw, 56px);
   }
 
-  .window {
-    overflow: hidden;
-    border-radius: 14px;
-    background: #ffffffeb;
-    box-shadow: var(--shadow-window);
-    -webkit-backdrop-filter: blur(20px);
-    backdrop-filter: blur(20px);
-  }
-  .address {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 12px 18px;
+  /* Systems and their rows, divided only by hairlines. */
+  .list {
     border-bottom: 1px solid var(--line);
-    color: var(--ink-2);
-    font-size: 12px;
   }
-  .address :global(svg) {
-    color: var(--faint);
+  .group {
+    display: grid;
+    grid-template-columns: minmax(200px, 300px) 1fr;
+    gap: 12px 32px;
+    padding: 28px 0;
+    border-top: 1px solid var(--line);
   }
-  .files {
+  .os {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding-top: 14px;
+    color: var(--ink);
+  }
+  .os :global(svg) {
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .os-text {
+    display: grid;
+    gap: 2px;
+  }
+  .os-name {
+    font-size: 18px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+    line-height: 1.3;
+  }
+  .os-needs {
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  .rows {
+    display: grid;
     margin: 0;
-    padding: 6px;
+    padding: 0;
     list-style: none;
   }
-  .file {
+  .rows li + li {
+    border-top: 1px solid var(--line);
+  }
+  .row {
     display: grid;
-    grid-template-columns: 36px minmax(0, 1fr) auto auto auto;
+    grid-template-columns: 1fr auto 140px;
     align-items: center;
-    gap: 16px;
-    padding: 12px;
-    border-radius: 10px;
-    transition: background-color 150ms var(--ease-out);
+    gap: 8px 32px;
+    padding: 16px 0;
   }
-  .file:hover {
-    background: var(--surface-2);
-  }
-  .icon {
+  .row-text {
     display: grid;
-    place-items: center;
-    width: 36px;
-    height: 36px;
-    border-radius: 10px;
-    background: var(--surface-2);
-    color: var(--ink-2);
-  }
-  .name {
-    display: grid;
+    gap: 2px;
     min-width: 0;
   }
-  .name .mono {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: 13px;
+  .row-name {
+    font-weight: 500;
   }
-  .note {
+  .row-more {
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .meta {
     color: var(--muted);
     font-size: 13px;
+    white-space: nowrap;
   }
-  .kind,
-  .size {
-    color: var(--faint);
-    font-size: 13px;
+  .action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    font-size: 15px;
+    font-weight: 500;
+    white-space: nowrap;
   }
-  .get {
-    display: grid;
-    place-items: center;
-    width: 36px;
-    height: 36px;
+  a.row .action {
+    justify-self: end;
+    height: 40px;
+    padding: 0 16px 0 18px;
     border-radius: 999px;
     background: var(--ink);
     color: #fff;
-    transition: transform 150ms var(--ease-out);
-  }
-  .file:hover .get {
-    transform: translateY(1px);
-  }
-  .status {
-    display: flex;
-    justify-content: space-between;
-    gap: 16px;
-    padding: 10px 18px;
-    border-top: 1px solid var(--line);
-    color: var(--faint);
-    font-size: 11px;
-  }
-
-  .aside {
-    display: grid;
-    gap: 20px;
-    font-size: 14px;
-  }
-  .build {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 6px 6px 16px;
-    border-radius: 12px;
-    background: var(--ink);
-    color: #d6dadc;
-  }
-  .build code {
-    flex: 1;
-    overflow-x: auto;
-    font-size: 13px;
-    white-space: nowrap;
-  }
-  .build code::before {
-    content: '$ ';
-    color: #6b7176;
-  }
-  .copy {
-    display: grid;
-    place-items: center;
-    width: 32px;
-    height: 32px;
-    border: 0;
-    border-radius: 8px;
-    background: #ffffff14;
-    cursor: pointer;
     transition: background-color 150ms var(--ease-out);
   }
-  .copy:hover {
-    background: #ffffff24;
+  a.row:hover .action {
+    background: #2a2e32;
   }
-  .copy.is-done {
-    background: var(--teal);
-    color: #fff;
+  a.row:hover .row-name {
+    text-decoration: underline;
+    text-decoration-color: var(--line-2);
+    text-underline-offset: 4px;
+  }
+  .is-soon .row-name {
+    color: var(--ink-2);
+  }
+  .is-soon .meta,
+  .is-soon .action {
+    color: var(--faint);
+    font-weight: 400;
+  }
+
+  .notes {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: start;
+    justify-content: space-between;
+    gap: 16px 40px;
+    margin-top: 24px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .note {
+    max-width: 62ch;
+  }
+  .note b,
+  q {
+    color: var(--ink-2);
+    font-weight: 500;
   }
   .links {
     display: flex;
@@ -273,35 +319,58 @@ const build = 'cargo build --locked --release';
     gap: 8px 20px;
   }
   .links a {
-    text-decoration: underline;
-    text-decoration-color: var(--line-2);
-    text-underline-offset: 4px;
-    transition: text-decoration-color 150ms var(--ease-out);
+    color: var(--ink-2);
   }
   .links a:hover {
-    text-decoration-color: currentColor;
-  }
-  .fine,
-  .press {
-    color: var(--muted);
-    font-size: 13px;
+    color: var(--ink);
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
 
-  @media (max-width: 900px) {
-    .layout {
-      grid-template-columns: minmax(0, 1fr);
+  @media (prefers-reduced-motion: no-preference) {
+    a.row:hover .action :global(svg) {
+      animation: drop 700ms var(--ease-out);
+    }
+    @keyframes drop {
+      45% {
+        transform: translateY(6px);
+        opacity: 0;
+      }
+      46% {
+        transform: translateY(-6px);
+      }
+    }
+  }
+
+  @media (max-width: 860px) {
+    .group {
+      grid-template-columns: 1fr;
+      padding: 24px 0 8px;
+    }
+    .os {
+      padding-top: 0;
     }
   }
   @media (max-width: 560px) {
-    .file {
-      grid-template-columns: 36px minmax(0, 1fr) 36px;
+    .row {
+      grid-template-columns: 1fr auto;
     }
-    .kind,
-    .size {
-      display: none;
+    .meta {
+      grid-row: 2;
     }
-    .status span {
-      display: none;
+    .action {
+      grid-row: 1 / 3;
+      grid-column: 2;
+    }
+    a.row .action {
+      width: 44px;
+      padding: 0;
+      justify-content: center;
+      font-size: 0;
+      gap: 0;
+    }
+    .is-soon .action {
+      font-size: 13px;
     }
   }
 </style>
