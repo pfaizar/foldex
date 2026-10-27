@@ -1,6 +1,6 @@
 // Key presses captured while recording each loop (seconds from the start of
 // the encoded video). Generated from the recording log; used by the keycast.
-export type LoopName = 'palette' | 'search' | 'navigate' | 'theme' | 'launcher';
+export type LoopName = 'palette' | 'search' | 'navigate';
 
 export const loops: Record<
   LoopName,
@@ -53,34 +53,6 @@ export const loops: Record<
       [2.92, '{ENTER}'],
       [4.16, '%{UP}'],
       [5.12, '%{UP}'],
-    ],
-  },
-  theme: {
-    duration: 4.36,
-    keys: [
-      [1.2, '^+r'],
-      [3.52, '^+r'],
-    ],
-  },
-  launcher: {
-    duration: 6.2,
-    keys: [
-      [0.6, '1'],
-      [0.76, '9'],
-      [0.88, '2'],
-      [1.08, '0'],
-      [1.24, '*'],
-      [1.44, '1'],
-      [1.6, '0'],
-      [1.76, '8'],
-      [1.92, '0'],
-      [2.12, '/'],
-      [2.28, '1'],
-      [2.4, '0'],
-      [2.56, '2'],
-      [2.72, '4'],
-      [4.72, '^a'],
-      [4.92, '{BACKSPACE}'],
     ],
   },
 };

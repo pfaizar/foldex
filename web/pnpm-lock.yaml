@@ -17,9 +17,6 @@ importers:
       '@fontsource-variable/geist-mono':
         specifier: ^5.3.0
         version: 5.3.0
-      '@fontsource-variable/geist-pixel':
-        specifier: ^5.3.1
-        version: 5.3.1
       astro:
         specifier: ^7.4.2
         version: 7.4.2(@types/node@24.19.2)(yaml@2.9.1)
@@ -263,9 +260,6 @@ packages:
 
   '@fontsource-variable/geist-mono@5.3.0':
     resolution: {integrity: sha512-vBbuwDEo9AkrqADMXOrlAR3DFcJi4/JxeuU43FoiQERnNwsfXNnvxvReZG02cQKmyk4DZkZdBZX3oTDvy2zBAw==}
-
-  '@fontsource-variable/geist-pixel@5.3.1':
-    resolution: {integrity: sha512-2DA1zXUu6/F/7RJxtFGRrdsLmYWuuwhT8n/HAuCUsKLryCFHIAVSiSg6rYHsTCk7Qiu0q9D9QMpqbfOSC5Eugg==}
 
   '@fontsource-variable/geist@5.3.0':
     resolution: {integrity: sha512-j0m+vLQuG5XAYoHtGCVu0spvlGreR3EzpECUVzkFmI1mTVnAO38l/NEPDCFgZ177JxzYJCLSmTQibIiYPilGrA==}
@@ -1840,8 +1834,6 @@ snapshots:
       tslib: 2.8.1
 
   '@fontsource-variable/geist-mono@5.3.0': {}
-
-  '@fontsource-variable/geist-pixel@5.3.1': {}
 
   '@fontsource-variable/geist@5.3.0': {}
 
