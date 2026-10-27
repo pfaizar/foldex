@@ -29,14 +29,11 @@ pnpm preview
 
 `src/pages/index.astro` composes the sections. Reorder, replace, or remove their imports and markup there:
 
-- `Hero.astro`: the headline, download button, and the command-palette loop over a live dither field (`DitherField.astro`). Drag on the hero to rubber-band select the headline.
+- `Hero.astro`: the headline, download button, and the command-palette loop on a colour plate. Behind it, `HeroField.astro` lays an endless Foldex large-icons view back in perspective; it drifts slowly and a ghost rubber band selects a few items now and then. Drag on the hero to rubber-band select the headline and the icons.
 - `Benchmarks.astro`: a file-list table of results with a headline multiplier and racing bars. Figures live in `src/data/benchmarks.ts`; while `placeholder` is `true` the section is labelled as sample data.
 - `Features.astro`: the search and navigation loops, and `ShortcutBoard.astro`, a keyboard that names Foldex's default shortcuts (`src/data/shortcuts.ts`) as the visitor presses them.
-- `Themes.astro`: the dark/light comparison slider and a `theme.toml` card whose values restyle the page.
-- `Launcher.astro`: the launcher loop on the folder-yellow band.
+- `Launcher.astro`: a working launcher over a small desk of windows. Ctrl+Alt+Space (or clicking the keys) opens it; it searches the entries in `src/data/launcher.ts`, switches windows, and answers sums and unit conversions with `src/data/calculator.ts`, a port of the app's calculator. When idle on screen it runs a short demo, which stops the moment the visitor does anything.
 - `Download.astro`: the release as a Foldex folder listing, the build command, and links.
-
-Sections take their colour from `data-tone` (`night`, `paper`, or `yellow`); the header's tabs follow it and mark the section in view. A `.dither-edge` with `--from` set to the previous section's colour draws the ordered-dither transition between them.
 
 Keycaps come from `ui/Keys.astro`; every cap on the page goes down while the visitor holds that key. Labels map to key names in `src/data/keys.ts`.
 
@@ -46,15 +43,15 @@ Keycaps come from `ui/Keys.astro`; every cap on the page goes down while the vis
 
 The clips are recordings of the actual app: a portable copy pointed at a fictional demo folder, captured window-only, so no personal files appear. Each is crossfaded into its own start so it loops seamlessly. When recording new ones, keep the demo folder fictional and regenerate the matching key timings.
 
-### Dithered art
+### Colour backgrounds
 
-`scripts/dither.py` (Pillow and NumPy) writes `public/dither/`: the Atkinson-dithered folder art, the section-edge mask, and `hero.png`, the static frame shown before (or instead of) the WebGL field. Run it from the repository root with `python web/scripts/dither.py`; the outputs are committed.
+`Aura.astro` is a small WebGL shader: domain-warped noise folded into soft, slowly drifting shapes, drawn at low resolution and covered with film grain (`public/grain.png`, blended at `--grain`). Its four-colour palettes (base, shadow, mid, light) live in `src/data/auras.ts`; keep them neutral and low in saturation, and avoid pairing blue with yellow in one palette, since they mix to olive. `Plate.astro` wraps an aura with rounded corners behind a product shot. Each aura starts its WebGL context only when it nears the screen, pauses offscreen, and draws a single still frame under reduced motion; without WebGL it falls back to a CSS gradient of the same colours.
 
-Screenshots in `src/assets/screenshots/` are the dark and light captures used by the comparison slider. The release version and asset sizes shown on the page are set in `src/config/site.ts`; update them with each release.
+The release version and asset sizes shown on the page are set in `src/config/site.ts`; update them with each release.
 
 Edit colors, typography, spacing, and the content width in `src/styles/global.css`. `src/layouts/PageLayout.astro` owns semantic HTML, font preloads, canonical metadata, social cards, and SoftwareApplication structured data. Add future routes in `src/pages/` and reuse that layout.
 
-Content, navigation, and downloads work without JavaScript; scripts only add motion and interaction. Fonts (Geist, Geist Mono, and Geist Pixel) are bundled locally.
+Content, navigation, and downloads work without JavaScript; scripts only add motion and interaction. Fonts (Geist and Geist Mono) are bundled locally.
 
 ## Public URLs
 
