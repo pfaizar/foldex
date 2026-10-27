@@ -1,8 +1,15 @@
 ---
-// The hero's backdrop: an endless Foldex large-icons view, laid back in
-// perspective and drifting over a soft, grainy glow. Every so often a ghost
-// rubber band selects a few items, the way a hand would. Tiles are built by
-// the script, so the page's HTML stays small and readers skip it.
+// The hero's backdrop: files drifting sideways at different depths, like a
+// shallow depth of field. Far layers are small, slow and soft; near ones are
+// large and sharp, and can be clicked, ctrl-clicked and rubber-banded. A few
+// huge, out-of-focus files sweep past in front. Now and then a ghost cursor
+// picks a few, the way a hand would.
+//
+// Each layer is a strip of files followed by an identical copy, slid by the
+// compositor on a seamless loop, so the drift stays smooth whatever the page
+// or the pointer is doing. A file and its copy share an id, so a selection
+// survives the loop. Items are built by the script, so the page's HTML stays
+// small and readers skip it.
 import Aura from './Aura.astro';
 ---
 
@@ -10,343 +17,679 @@ import Aura from './Aura.astro';
   <div class="glow">
     <Aura palette="fog" seed={2} />
   </div>
-  <div class="scene">
-    <div class="plane">
-      <div class="track" data-track></div>
-    </div>
-  </div>
+  <div class="layers" data-layers></div>
 </div>
 
 <script>
-  const track = document.querySelector<HTMLElement>('[data-track]')!;
-  const field = track.closest<HTMLElement>('.field')!;
+  import {
+    folderArt,
+    folderInk,
+    heroFiles,
+    iconMask,
+    scenes,
+    type HeroFile,
+  } from '../data/heroFiles';
+
+  const field = document.querySelector<HTMLElement>('.hero .field')!;
+  const host = field.querySelector<HTMLElement>('[data-layers]')!;
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
 
-  const COLS = 14;
-  const ROWS = 12;
-  const CELL = 132;
+  // Back to front. Depth sets size, speed (px/s), spacing and focus.
+  const LAYERS = [
+    { name: 'far', size: 0.5, speed: 9, spacing: 97 },
+    { name: 'back', size: 0.7, speed: 16, spacing: 124 },
+    { name: 'mid', size: 0.88, speed: 26, spacing: 207 },
+    { name: 'near', size: 1.18, speed: 40, spacing: 340 },
+    { name: 'front', size: 3, speed: 95, spacing: 1333 },
+  ];
+  // Layers you can touch.
+  const TOUCHABLE = new Set(['mid', 'near']);
 
-  const folders = [
-    'Brand',
-    'Design',
-    'Development',
-    'Meeting notes',
-    'References',
-    'Releases',
-    'Exports',
-    'Photos',
-    'Screenshots',
-    'Archive',
-    'Music',
-    'Invoices',
-  ];
-  const documents: [string, string][] = [
-    ['launch-plan.md', 'MD'],
-    ['README.md', 'MD'],
-    ['budget-2026.xlsx', 'XLSX'],
-    ['roadmap.xlsx', 'XLSX'],
-    ['quarterly-review.pptx', 'PPTX'],
-    ['notes.txt', 'TXT'],
-    ['main.rs', 'RS'],
-    ['Cargo.toml', 'TOML'],
-    ['theme.toml', 'TOML'],
-    ['specs.pdf', 'PDF'],
-    ['invoice-0412.pdf', 'PDF'],
-    ['backup.zip', 'ZIP'],
-  ];
-  const images = [
-    'team-photo.jpg',
-    'moodboard.jpg',
-    'cover.png',
-    'sketch-03.png',
-    'hero-shot.png',
-    'dunes.jpg',
-    'studio-01.jpg',
-    'texture.png',
-  ];
-  // Thumbnails: soft gradients in the page's neutral palettes.
-  const thumbs = [
-    ['#1c2024', '#5d7183', '#dcb894'],
-    ['#262c33', '#8193a3', '#e3e6e5'],
-    ['#1b2321', '#5c7a70', '#d5dccd'],
-    ['#28211e', '#9a6c55', '#ead9c6'],
-    ['#8c969c', '#cfd3d2', '#f6f2ea'],
-  ];
-
-  // A small seeded random, so the wall is the same on every visit.
-  let state = 7;
+  // A small seeded random, so the composition is the same on every visit.
+  let state = 11;
   const random = () => {
     state = (state * 16807) % 2147483647;
     return state / 2147483647;
   };
-  const pick = <T,>(list: readonly T[]) =>
-    list[Math.floor(random() * list.length)]!;
 
-  const tile = () => {
-    const el = document.createElement('div');
-    const roll = random();
-    let label: string;
-    let ext = '';
-    if (roll < 0.36) {
-      el.className = 'tile is-folder';
-      label = pick(folders);
-    } else if (roll < 0.72) {
-      const [name, type] = pick(documents);
-      el.className = 'tile is-doc';
-      ext = type;
-      label = name;
-    } else {
-      const [a, b, c] = pick(thumbs);
-      const x = Math.round(random() * 100);
-      el.className = 'tile is-image';
-      el.style.setProperty(
-        '--thumb',
-        `radial-gradient(90% 80% at ${x}% 20%, ${c}, transparent 70%), linear-gradient(${Math.round(random() * 360)}deg, ${a}, ${b})`,
-      );
-      label = pick(images);
+  // Deal the files out shuffled, without repeats until all are used.
+  let deck: HeroFile[] = [];
+  const draw = () => {
+    if (!deck.length) {
+      deck = [...heroFiles];
+      for (let i = deck.length - 1; i > 0; i--) {
+        const j = Math.floor(random() * (i + 1));
+        [deck[i], deck[j]] = [deck[j]!, deck[i]!];
+      }
     }
-    el.innerHTML = `<i data-ext="${ext}"></i><span>${label}</span>`;
+    return deck.pop()!;
+  };
+
+  const item = (touchable: boolean) => {
+    const file = draw();
+    const el = document.createElement('div');
+    const icon = document.createElement('i');
+    const glyph = document.createElement('b');
+    let kind: string = file.kind;
+    if (file.kind === 'folder') {
+      icon.style.background = `${folderArt(file.colour)} center / contain no-repeat`;
+      if (file.emblem) {
+        glyph.style.setProperty('--mask', iconMask(file.emblem));
+        glyph.style.background = folderInk(file.colour);
+        icon.append(glyph);
+      }
+    } else if (file.kind === 'doc') {
+      icon.dataset.ext = file.ext;
+      el.style.setProperty('--c', file.colour);
+      glyph.className = `g-${file.glyph}`;
+      if (file.glyph === 'date')
+        glyph.dataset.n = String(4 + Math.floor(random() * 24));
+      icon.append(glyph);
+    } else if (file.kind === 'app') {
+      el.style.setProperty('--c', file.colour);
+      glyph.style.setProperty('--mask', iconMask(file.icon));
+      icon.append(glyph);
+    } else {
+      kind = 'image';
+      icon.style.setProperty('--thumb', scenes[file.scene]!);
+      if (file.shape) el.classList.add(`is-${file.shape}`);
+      if (file.video) {
+        glyph.className = 'g-play';
+        icon.append(glyph);
+      }
+    }
+    el.className += ` item is-${kind}${touchable ? ' tile' : ''}`;
+    const label = document.createElement('span');
+    label.textContent = file.name;
+    el.append(icon, label);
     return el;
   };
 
-  // One screen of tiles, then the same again below it, so the drift loops.
-  const cells: HTMLElement[] = [];
-  for (let i = 0; i < COLS * ROWS; i++) cells.push(tile());
-  const copies = cells.map((cell) => cell.cloneNode(true) as HTMLElement);
-  track.append(...cells, ...copies);
-  track.style.setProperty('--cols', String(COLS));
-  track.style.setProperty('--cell', `${CELL}px`);
-  track.style.setProperty('--loop', `${-ROWS * CELL}px`);
-  const tiles = [...cells, ...copies];
-  field.classList.add('is-ready');
+  interface Placed {
+    id: string;
+    x: number;
+    y: number;
+  }
+  interface Layer {
+    strip: HTMLElement;
+    animation?: Animation;
+    duration: number;
+    items: Placed[];
+  }
+  let layers: Record<string, Layer> = {};
+  let span = 0;
 
-  // The ghost selection: a band drawn in the plane over a block of tiles.
-  const band = document.createElement('div');
-  band.className = 'band';
-  const chip = document.createElement('div');
-  chip.className = 'chip';
-  track.append(band, chip);
+  const build = () => {
+    state = 11;
+    deck = [];
+    span = Math.max(2200, field.clientWidth + 600);
+    host.textContent = '';
+    layers = {};
+    for (const spec of LAYERS) {
+      const layer = document.createElement('div');
+      layer.className = `layer layer--${spec.name}`;
+      layer.style.setProperty('--s', String(spec.size));
+      const strip = document.createElement('div');
+      strip.className = 'strip';
+      layer.append(strip);
+      const count = Math.max(2, Math.round(span / spec.spacing));
+      const slot = span / count;
+      const touchable = TOUCHABLE.has(spec.name);
+      const items: Placed[] = [];
+      for (let i = 0; i < count; i++) {
+        const node = item(touchable);
+        const x = (i + 0.1 + random() * 0.8) * slot;
+        // Files stay in the band between the navbar and the window below;
+        // the front layer's close-ups cross its upper half.
+        const y =
+          spec.name === 'front' ? -4 + random() * 40 : 9 + random() * 54;
+        const id = `${spec.name}-${i}`;
+        node.dataset.id = id;
+        node.style.top = `${y}%`;
+        node.style.setProperty('--k', (0.82 + random() * 0.4).toFixed(2));
+        const twin = node.cloneNode(true) as HTMLElement;
+        node.style.left = `${x}px`;
+        twin.style.left = `${x + span}px`;
+        strip.append(node, twin);
+        items.push({ id, x, y });
+      }
+      host.append(layer);
+      layers[spec.name] = {
+        strip,
+        items,
+        duration: (span / spec.speed) * 1000,
+      };
+    }
+    field.classList.add('is-ready');
+    sync();
+  };
 
-  const visible = (el: HTMLElement) => {
-    const r = el.getBoundingClientRect();
-    const f = field.getBoundingClientRect();
-    const x = (r.left + r.right) / 2 - f.left;
-    const y = (r.top + r.bottom) / 2 - f.top;
-    return (
-      x > f.width * 0.62 && x < f.width * 0.95 && y > 90 && y < f.height * 0.62
-    );
+  // The compositor runs the loop; the script only starts and pauses it.
+  let visible = false;
+  const sync = () => {
+    for (const layer of Object.values(layers)) {
+      if (reduced.matches) {
+        layer.animation?.cancel();
+        layer.animation = undefined;
+        continue;
+      }
+      layer.animation ??= layer.strip.animate(
+        [
+          { transform: 'translate3d(0, 0, 0)' },
+          { transform: `translate3d(${-span}px, 0, 0)` },
+        ],
+        { duration: layer.duration, iterations: Infinity },
+      );
+      if (visible) layer.animation.play();
+      else layer.animation.pause();
+    }
+  };
+  new IntersectionObserver((entries) => {
+    visible = entries.some((entry) => entry.isIntersecting);
+    sync();
+  }).observe(field);
+  reduced.addEventListener('change', sync);
+  build();
+
+  let width = field.clientWidth;
+  new ResizeObserver(() => {
+    if (Math.abs(field.clientWidth - width) < 80) return;
+    width = field.clientWidth;
+    if (width + 400 > span) build();
+  }).observe(field);
+
+  // Where the strip is now, from the animation's clock rather than layout.
+  const offset = (layer: Layer) => {
+    const time = Number(layer.animation?.currentTime ?? 0);
+    return ((time % layer.duration) / layer.duration) * span;
+  };
+  // The copy of a file that is on screen, in strip coordinates.
+  const onScreen = (layer: Layer, placed: Placed) => {
+    const shift = offset(layer);
+    const x = placed.x - shift < -200 ? placed.x + span : placed.x;
+    return { x, screen: x - shift };
+  };
+  const copies = (id: string) =>
+    field.querySelectorAll<HTMLElement>(`[data-id="${id}"]`);
+
+  // The ghost: a cursor that glides to a near file, clicks it, then
+  // ctrl-clicks a neighbour or two. It lives inside the near strip, so it
+  // drifts with the files without the script tracking them.
+  const ghost = document.createElement('div');
+  ghost.className = 'ghost';
+  ghost.innerHTML =
+    '<svg viewBox="0 0 20 24"><path d="M2 1.5v17.2l4.6-4.3 3 7 3.1-1.3-3-6.9h6.4z" fill="#0e1012" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></svg><p class="chip"></p>';
+  const chip = ghost.querySelector<HTMLElement>('.chip')!;
+  const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms));
+  const moveGhost = (x: number, y: number) => {
+    ghost.style.transform = `translate3d(${x}px, ${y}px, 0)`;
   };
 
   let busy = false;
-  const ghost = () => {
-    if (busy || document.hidden || reduced.matches) return;
+  const haunt = async () => {
+    const near = layers.near;
+    if (busy || !near?.animation || !visible || document.hidden) return;
     if (document.querySelector('.hero .is-selected')) return;
-    const starts = tiles
-      .map((el, i) => ({ el, i }))
-      .filter(({ el, i }) => i % COLS < COLS - 3 && visible(el));
-    if (!starts.length) return;
-    const { i } = pick(starts);
-    const w = 2 + Math.floor(random() * 2);
-    const h = 2;
-    const col = i % COLS;
-    const row = Math.floor(i / COLS);
-    const block: HTMLElement[] = [];
-    for (let dy = 0; dy < h; dy++)
-      for (let dx = 0; dx < w; dx++) {
-        const el = tiles[(row + dy) * COLS + col + dx];
-        if (el) block.push(el);
-      }
+    const w = field.clientWidth;
+    const h = field.clientHeight;
+    const pool = near.items
+      .map((placed) => ({ placed, ...onScreen(near, placed) }))
+      .filter(
+        ({ placed, screen }) =>
+          screen > w * 0.68 &&
+          screen < w * 0.94 &&
+          placed.y > 14 &&
+          placed.y < 58,
+      );
+    const first = pool[Math.floor(random() * pool.length)];
+    if (!first) return;
+    const picks = [
+      first,
+      ...pool
+        .filter((p) => p !== first)
+        .map((p) => ({
+          p,
+          d: Math.hypot(
+            p.x - first.x,
+            ((p.placed.y - first.placed.y) * h) / 100,
+          ),
+        }))
+        .filter(({ d }) => d < 340)
+        .sort((a, b) => a.d - b.d)
+        .slice(0, 1 + Math.floor(random() * 2))
+        .map(({ p }) => p),
+    ];
+    const at = (p: (typeof pool)[number]) =>
+      [p.x + 12, (p.placed.y * h) / 100 + 8] as const;
+
     busy = true;
-    band.style.cssText = `left:${col * CELL + 10}px;top:${row * CELL + 6}px;--w:${w * CELL - 20}px;--h:${h * CELL - 12}px`;
-    chip.style.cssText = `left:${(col + w) * CELL - 10}px;top:${(row + h) * CELL - 2}px`;
-    chip.textContent = `${block.length} items selected`;
-    band.classList.add('is-on');
-    block.forEach((el, n) =>
-      window.setTimeout(() => el.classList.add('is-picked'), 220 + n * 90),
+    near.strip.append(ghost);
+    const [x0, y0] = at(first);
+    ghost.classList.add('is-still');
+    moveGhost(x0 + 150, y0 + 130);
+    ghost.getBoundingClientRect();
+    ghost.classList.remove('is-still');
+    ghost.classList.add('is-on');
+    for (const [n, p] of picks.entries()) {
+      moveGhost(...at(p));
+      await sleep(n ? 620 : 950);
+      ghost.classList.add('is-down');
+      copies(p.placed.id).forEach((el) => el.classList.add('is-picked'));
+      await sleep(140);
+      ghost.classList.remove('is-down');
+      if (n) {
+        chip.textContent = `${n + 1} items selected`;
+        chip.classList.add('is-on');
+      }
+    }
+    await sleep(1700);
+    ghost.classList.remove('is-on');
+    chip.classList.remove('is-on');
+    await sleep(500);
+    picks.forEach((p) =>
+      copies(p.placed.id).forEach((el) => el.classList.remove('is-picked')),
     );
-    window.setTimeout(() => chip.classList.add('is-on'), 700);
-    window.setTimeout(() => band.classList.remove('is-on'), 1100);
-    window.setTimeout(() => {
-      chip.classList.remove('is-on');
-      block.forEach((el) => el.classList.remove('is-picked'));
-      busy = false;
-    }, 3600);
+    ghost.remove();
+    busy = false;
   };
-  window.setInterval(ghost, 5200);
-  window.setTimeout(ghost, 1800);
+  window.setInterval(haunt, 6400);
+  window.setTimeout(haunt, 2200);
 </script>
 
 <style>
   .field {
     position: absolute;
     inset: 0 0 auto;
-    height: min(100%, 860px);
+    height: min(100%, 880px);
     overflow: hidden;
     pointer-events: none;
-    /* Clear behind the headline, fading into the page at every edge. */
+    /* Files fade as they pass behind the headline, and into the page below. */
     -webkit-mask:
-      linear-gradient(90deg, transparent 30%, #000 66%),
-      linear-gradient(transparent 6%, #000 22%, #000 64%, transparent 88%);
+      radial-gradient(50% 32% at 30% 33%, #00000024 55%, #000 100%),
+      linear-gradient(transparent 4%, #000 16%, #000 62%, transparent 92%);
     -webkit-mask-composite: source-in;
     mask:
-      linear-gradient(90deg, transparent 30%, #000 66%),
-      linear-gradient(transparent 6%, #000 22%, #000 64%, transparent 88%);
+      radial-gradient(50% 32% at 30% 33%, #00000024 55%, #000 100%),
+      linear-gradient(transparent 4%, #000 16%, #000 62%, transparent 92%);
     mask-composite: intersect;
   }
   .glow {
     position: absolute;
     top: -10%;
     right: -12%;
-    width: 72%;
-    height: 90%;
-    opacity: 0.8;
+    width: 78%;
+    height: 96%;
+    opacity: 0.85;
     --grain: 0.25;
     -webkit-mask: radial-gradient(closest-side, #000 30%, transparent);
     mask: radial-gradient(closest-side, #000 30%, transparent);
   }
-  .scene {
+  .layers {
     position: absolute;
     inset: 0;
-    perspective: 2400px;
-    perspective-origin: 75% 0%;
-  }
-  .plane {
-    position: absolute;
-    top: 2%;
-    left: 40%;
-    width: calc(var(--cell, 132px) * 14);
-    transform: rotateX(54deg) rotateZ(-34deg) scale(0.62);
-    transform-origin: 0 0;
-  }
-  .track {
-    display: grid;
-    grid-template-columns: repeat(var(--cols), var(--cell));
-    grid-auto-rows: var(--cell);
-    position: relative;
     opacity: 0;
-    transition: opacity 1200ms var(--ease-out);
+    transition: opacity 1400ms var(--ease-out);
   }
-  .is-ready .track {
+  .is-ready .layers {
     opacity: 1;
   }
-  @media (prefers-reduced-motion: no-preference) {
-    .track {
-      animation: drift 90s linear infinite;
-    }
-    @keyframes drift {
-      to {
-        transform: translateY(var(--loop));
-      }
-    }
+  .layers :global(.layer),
+  .layers :global(.strip) {
+    position: absolute;
+    inset: 0;
+  }
+  .layers :global(.strip) {
+    will-change: transform;
   }
 
-  /* Tiles: the app's large-icons view. */
-  .track :global(.tile) {
+  /* Depth of field: the far layers are soft and pale, the front one is a
+     close-up blur. */
+  .layers :global(.layer--far) {
+    opacity: 0.45;
+    filter: blur(2.6px) saturate(0.6);
+  }
+  .layers :global(.layer--back) {
+    opacity: 0.7;
+    filter: blur(1.1px) saturate(0.8);
+  }
+  .layers :global(.layer--front) {
+    opacity: 0.55;
+    filter: blur(10px) saturate(0.8);
+  }
+
+  .layers :global(.item) {
+    position: absolute;
     display: grid;
     justify-items: center;
-    align-content: start;
-    gap: 10px;
-    margin: 6px 10px;
-    padding: 12px 6px 8px;
-    border-radius: 10px;
-    transition: background-color 300ms var(--ease-out);
+    gap: 0.55em;
+    width: 7em;
+    padding: 0.7em 0.4em 0.5em;
+    border-radius: 0.65em;
+    font-size: calc(var(--s) * var(--k, 1) * 15px);
+    translate: -50% -50%;
+    transition:
+      background-color 300ms var(--ease-out),
+      box-shadow 300ms var(--ease-out);
   }
-  .track :global(.tile i) {
+  .layers :global(.tile) {
+    pointer-events: auto;
+    cursor: default;
+  }
+  .layers :global(.tile:hover) {
+    background: #0e10120d;
+  }
+  .layers :global(.item i) {
     position: relative;
     display: block;
-    width: 64px;
-    height: 52px;
+    width: 4.2em;
+    height: 3.4em;
   }
-  .track :global(.tile span) {
+  .layers :global(.item span) {
     max-width: 100%;
     overflow: hidden;
     color: var(--ink-2);
-    font-size: 12px;
+    font-size: 0.72em;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .track :global(.is-folder i) {
-    background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 52'%3E%3Cpath d='M2 6a4 4 0 0 1 4-4h17l6 6h29a4 4 0 0 1 4 4v6H2z' fill='%23d9a63c'/%3E%3Cpath d='M2 15h60v31a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4z' fill='%23f5c859'/%3E%3C/svg%3E")
-      center / contain no-repeat;
+  .layers :global(.layer--front .item span) {
+    display: none;
   }
-  .track :global(.is-doc i) {
-    width: 44px;
-    border-radius: 4px 12px 4px 4px;
-    background: #fff;
+  .layers :global(.item b) {
+    position: absolute;
+    display: block;
+  }
+
+  /* Folders, in several colours; some carry an emblem. */
+  .layers :global(.is-folder b) {
+    left: 50%;
+    top: 1.45em;
+    width: 1.35em;
+    height: 1.35em;
+    translate: -50% 0;
+    opacity: 0.75;
+    -webkit-mask: var(--mask) center / contain no-repeat;
+    mask: var(--mask) center / contain no-repeat;
+  }
+
+  /* Documents: a page tinted by its type, with a coloured label. */
+  .layers :global(.is-doc i) {
+    width: 2.9em;
+    border-radius: 0.25em 0.75em 0.25em 0.25em;
+    background: linear-gradient(
+      #fff 40%,
+      color-mix(in srgb, var(--c) 7%, #fff)
+    );
     box-shadow:
       inset 0 0 0 1px #0e101221,
-      0 4px 10px -6px #0e101259;
+      0 0.3em 0.7em -0.4em #0e101259;
   }
-  .track :global(.is-doc i::after) {
+  .layers :global(.is-doc i::after) {
     content: attr(data-ext);
     position: absolute;
-    left: -6px;
-    bottom: 8px;
-    padding: 1px 4px;
-    border-radius: 3px;
-    background: var(--ink-2);
+    left: -0.4em;
+    bottom: 0.4em;
+    padding: 0.08em 0.3em;
+    border-radius: 0.2em;
+    background: var(--c);
     color: #fff;
-    font: 600 9px/1.3 var(--font-mono);
+    font: 600 0.52em/1.3 var(--font-mono);
   }
-  .track :global(.is-image i) {
-    width: 64px;
-    height: 48px;
-    border-radius: 5px;
+  .layers :global(.is-doc b) {
+    inset: 0.55em 0.42em 1.2em;
+    background-repeat: no-repeat;
+  }
+  .layers :global(.g-lines) {
+    background: repeating-linear-gradient(
+      #d6d9dd 0 0.14em,
+      transparent 0.14em 0.36em
+    );
+  }
+  .layers :global(.g-heading) {
+    background:
+      linear-gradient(var(--c), var(--c)) 0 0 / 70% 0.24em no-repeat,
+      repeating-linear-gradient(#d6d9dd 0 0.13em, transparent 0.13em 0.34em) 0
+        0.5em / 100% 100% no-repeat;
+  }
+  .layers :global(.g-grid) {
+    background:
+      linear-gradient(color-mix(in srgb, var(--c) 30%, #fff) 0 0) 0 0 / 100%
+        0.38em no-repeat,
+      linear-gradient(
+          color-mix(in srgb, var(--c) 45%, #fff) 1px,
+          transparent 1px
+        )
+        0 0 / 100% 0.38em,
+      linear-gradient(
+          90deg,
+          color-mix(in srgb, var(--c) 45%, #fff) 1px,
+          transparent 1px
+        )
+        0 0 / 33.4% 100%;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 45%, #fff);
+  }
+  .layers :global(.g-code) {
+    background:
+      linear-gradient(var(--c), var(--c)) 0 0 / 46% 0.14em,
+      linear-gradient(#c3c8ce, #c3c8ce) 0.3em 0.34em / 62% 0.14em,
+      linear-gradient(color-mix(in srgb, var(--c) 55%, #fff) 0 0) 0.3em 0.68em /
+        44% 0.14em,
+      linear-gradient(#c3c8ce, #c3c8ce) 0.6em 1.02em / 40% 0.14em,
+      linear-gradient(var(--c), var(--c)) 0 1.36em / 22% 0.14em;
+    background-repeat: no-repeat;
+  }
+  .layers :global(.g-mixed) {
+    background:
+      linear-gradient(color-mix(in srgb, var(--c) 28%, #fff) 0 0) 0 0 / 100%
+        0.7em no-repeat,
+      repeating-linear-gradient(#d6d9dd 0 0.13em, transparent 0.13em 0.32em) 0
+        0.9em / 100% 100% no-repeat;
+  }
+  .layers :global(.g-slide) {
+    inset: 0.7em 0.36em auto;
+    height: 1.15em;
+    border-radius: 0.12em;
+    background:
+      linear-gradient(#fff, #fff) 22% 34% / 50% 0.16em no-repeat,
+      linear-gradient(#ffffffaa, #ffffffaa) 22% 66% / 34% 0.12em no-repeat,
+      var(--c);
+  }
+  .layers :global(.g-zip) {
+    inset: 0 auto 1.2em 50%;
+    width: 0.36em;
+    translate: -50% 0;
+    background: repeating-linear-gradient(
+      var(--c) 0 0.14em,
+      transparent 0.14em 0.28em
+    );
+  }
+  .layers :global(.g-zip::after) {
+    content: '';
+    position: absolute;
+    left: -0.06em;
+    bottom: -0.5em;
+    width: 0.48em;
+    height: 0.56em;
+    border-radius: 0.1em;
+    background: var(--c);
+  }
+  .layers :global(.g-play),
+  .layers :global(.g-wave) {
+    inset: 0.8em auto auto 50%;
+    width: 1.3em;
+    height: 1.3em;
+    translate: -50% 0;
+    border-radius: 50%;
+    background: var(--c);
+  }
+  .layers :global(.g-play::after) {
+    content: '';
+    position: absolute;
+    inset: 28% 24% 28% 36%;
+    background: #fff;
+    clip-path: polygon(0 0, 100% 50%, 0 100%);
+  }
+  .layers :global(.g-wave) {
+    border-radius: 0;
+    width: 1.7em;
+    background:
+      linear-gradient(var(--c), var(--c)) 0 50% / 0.18em 40%,
+      linear-gradient(var(--c), var(--c)) 25% 50% / 0.18em 90%,
+      linear-gradient(var(--c), var(--c)) 50% 50% / 0.18em 60%,
+      linear-gradient(var(--c), var(--c)) 75% 50% / 0.18em 100%,
+      linear-gradient(var(--c), var(--c)) 100% 50% / 0.18em 50%;
+    background-repeat: no-repeat;
+  }
+  .layers :global(.g-font::before) {
+    content: 'Aa';
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: var(--c);
+    font:
+      500 1.1em/1 Georgia,
+      'Times New Roman',
+      serif;
+  }
+  .layers :global(.g-date) {
+    inset: 0 0 1.1em;
+    border-radius: 0.25em 0.75em 0 0;
+    background: linear-gradient(var(--c), var(--c)) 0 0 / 100% 0.6em no-repeat;
+  }
+  .layers :global(.g-date::before) {
+    content: attr(data-n);
+    position: absolute;
+    inset: 0.6em 0 0;
+    display: grid;
+    place-items: center;
+    color: var(--ink);
+    font: 600 1em/1 var(--font-sans);
+  }
+  .layers :global(.g-shapes) {
+    background:
+      radial-gradient(circle, var(--c) 0 62%, transparent 64%) 0 0 / 1.05em
+        1.05em no-repeat,
+      linear-gradient(135deg, transparent 50%, #6b8cff 50%) 100% 100% / 1.1em
+        1.1em no-repeat;
+  }
+  .layers :global(.g-braces::before) {
+    content: '{ }';
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: var(--c);
+    font: 600 0.95em/1 var(--font-mono);
+  }
+
+  /* Apps: a rounded tile with a white glyph. */
+  .layers :global(.is-app i) {
+    width: 3.2em;
+    height: 3.2em;
+    border-radius: 0.8em;
+    background: linear-gradient(
+      160deg,
+      color-mix(in srgb, var(--c) 70%, #fff),
+      var(--c) 60%
+    );
+    box-shadow:
+      inset 0 0 0 1px #0e10121a,
+      0 0.4em 0.9em -0.5em #0e101266;
+  }
+  .layers :global(.is-app b) {
+    inset: 22%;
+    background: #fff;
+    -webkit-mask: var(--mask) center / contain no-repeat;
+    mask: var(--mask) center / contain no-repeat;
+  }
+
+  /* Pictures and clips, each with its own scene. */
+  .layers :global(.is-image i) {
+    width: 4.4em;
+    height: 3.2em;
+    border-radius: 0.3em;
     background:
       url('/grain.png') 0 0 / 80px,
       var(--thumb);
     background-blend-mode: overlay, normal;
     box-shadow:
-      0 0 0 3px #fff,
-      0 0 0 4px #0e10121a,
-      0 6px 14px -8px #0e101266;
+      0 0 0 0.2em #fff,
+      0 0 0 calc(0.2em + 1px) #0e10121a,
+      0 0.4em 0.9em -0.5em #0e101266;
   }
-  .track :global(.is-picked),
-  .track :global(.is-selected) {
+  .layers :global(.is-tall i) {
+    width: 2.7em;
+    height: 3.5em;
+  }
+  .layers :global(.is-square i) {
+    width: 3.4em;
+    height: 3.4em;
+  }
+  .layers :global(.is-image .g-play) {
+    --c: #0e101299;
+    top: 50%;
+    width: 1.1em;
+    height: 1.1em;
+    translate: -50% -50%;
+    box-shadow: 0 0 0 1px #ffffff66;
+  }
+  /* Near files cast a little more shadow, so they read as closer. */
+  .layers :global(.layer--near i) {
+    filter: drop-shadow(0 10px 12px #0e101224);
+  }
+  .layers :global(.is-picked),
+  .layers :global(.is-selected) {
     background: color-mix(in srgb, var(--teal) 16%, transparent);
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--teal) 50%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--teal) 55%, transparent);
   }
 
-  .track :global(.band) {
+  .layers :global(.ghost) {
     position: absolute;
-    width: 0;
-    height: 0;
-    border: 1px solid var(--teal);
-    border-radius: 3px;
-    background: color-mix(in srgb, var(--teal) 14%, transparent);
+    top: 0;
+    left: 0;
+    z-index: 2;
     opacity: 0;
     transition:
-      width 900ms var(--ease-out),
-      height 900ms var(--ease-out),
+      transform 800ms var(--ease-out),
       opacity 400ms var(--ease-out);
   }
-  .track :global(.band.is-on) {
-    width: var(--w);
-    height: var(--h);
+  .layers :global(.ghost.is-still) {
+    transition: none;
+  }
+  .layers :global(.ghost.is-on) {
     opacity: 1;
   }
-  .track :global(.chip) {
+  .layers :global(.ghost svg) {
+    display: block;
+    width: 20px;
+    height: 24px;
+    filter: drop-shadow(0 2px 3px #0e101240);
+    transition: scale 120ms var(--ease-out);
+  }
+  .layers :global(.ghost.is-down svg) {
+    scale: 0.86;
+  }
+  .layers :global(.chip) {
     position: absolute;
+    top: 26px;
+    left: 18px;
     padding: 6px 12px;
     border-radius: 999px;
     background: var(--ink);
     color: #fff;
-    font: 500 14px/1.2 var(--font-sans);
+    font-size: 13px;
     white-space: nowrap;
     opacity: 0;
-    transform: translate(-100%, 8px);
-    transition:
-      opacity 400ms var(--ease-out),
-      transform 400ms var(--ease-out);
+    transition: opacity 300ms var(--ease-out);
   }
-  .track :global(.chip.is-on) {
+  .layers :global(.chip.is-on) {
     opacity: 1;
-    transform: translate(-100%, 0);
   }
 
   @media (max-width: 900px) {
     .field {
-      opacity: 0.5;
+      opacity: 0.6;
       -webkit-mask: linear-gradient(
         transparent 6%,
         #000 16%,
@@ -360,8 +703,8 @@ import Aura from './Aura.astro';
         transparent 56%
       );
     }
-    .plane {
-      left: 10%;
+    .layers :global(.layer--front) {
+      display: none;
     }
   }
 </style>

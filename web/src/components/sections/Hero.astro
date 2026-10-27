@@ -1,13 +1,12 @@
 ---
+import DownloadSplit from '../DownloadSplit.astro';
 import HeroField from '../HeroField.astro';
 import LoopVideo from '../LoopVideo.astro';
 import Plate from '../Plate.astro';
-import Icon from '../ui/Icon.astro';
 import { site } from '../../config/site';
 
 const headline = 'Files, without the friction.';
 const words = headline.split(' ');
-const download = site.installer?.href ?? site.download;
 ---
 
 <section class="hero" id="top" aria-labelledby="hero-title">
@@ -28,23 +27,13 @@ const download = site.installer?.href ?? site.download;
       search that keeps up with your keyboard.
     </p>
     <div class="actions">
-      {download && (
-        <a class="button" href={download}>
-          <Icon name="windows" size={15} />
-          Download for Windows
-        </a>
-      )}
+      <DownloadSplit />
       {site.repository && (
         <a class="button button--quiet" href={site.repository}>
           View source
         </a>
       )}
     </div>
-    <p class="meta mono">
-      v{site.version}
-      {site.installer && <span>{site.installer.size}</span>}
-      <span>Free and open source</span>
-    </p>
   </div>
 
   <div class="stage">
@@ -62,68 +51,106 @@ const download = site.installer?.href ?? site.download;
 </section>
 
 <script>
-  // Rubber-band selection over the headline and the icons behind it, as in a
-  // file list.
+  // Selection over the headline and the drifting files, as in a file list:
+  // click a file, ctrl-click to add, or drag a rubber band over several.
+  // Selection is kept by key: a file and its looping copy share one.
   const hero = document.querySelector<HTMLElement>('.hero')!;
   const marquee = hero.querySelector<HTMLElement>('.marquee')!;
   const count = hero.querySelector<HTMLElement>('.count')!;
   const words = [...hero.querySelectorAll<HTMLElement>('.word')];
   let origin: { x: number; y: number } | null = null;
-  let items: HTMLElement[] = [];
+  let moved = false;
+  let base = new Set<string>();
+  let selected = new Set<string>();
 
-  const select = (picked: Set<HTMLElement>) => {
-    for (const item of items)
-      item.classList.toggle('is-selected', picked.has(item));
+  words.forEach((word, i) => (word.dataset.id = `word-${i}`));
+  const all = () => [...words, ...hero.querySelectorAll<HTMLElement>('.tile')];
+  const select = (picked: Set<string>) => {
+    selected = picked;
+    for (const item of all())
+      item.classList.toggle('is-selected', picked.has(item.dataset.id!));
     count.textContent = picked.size
       ? `${picked.size} item${picked.size === 1 ? '' : 's'} selected`
       : '';
-    count.classList.toggle('is-on', picked.size > 0);
+  };
+  const place = (event: PointerEvent) => {
+    const box = hero.getBoundingClientRect();
+    count.style.left = `${event.clientX - box.left + 14}px`;
+    count.style.top = `${event.clientY - box.top + 18}px`;
   };
 
   hero.addEventListener('pointerdown', (event) => {
-    if (event.pointerType !== 'mouse' || event.button !== 0) return;
-    if ((event.target as Element).closest('a, button, figure, p')) return;
-    event.preventDefault();
+    if (event.button !== 0) return;
+    if ((event.target as Element).closest('a, button, details, figure, p'))
+      return;
+    const additive = event.ctrlKey || event.metaKey || event.shiftKey;
+    base = additive ? new Set(selected) : new Set();
     origin = { x: event.clientX, y: event.clientY };
-    hero.setPointerCapture(event.pointerId);
-    items = [...words, ...hero.querySelectorAll<HTMLElement>('.tile')];
-    select(new Set());
+    moved = false;
+    place(event);
+    if (event.pointerType === 'mouse') {
+      event.preventDefault();
+      hero.setPointerCapture(event.pointerId);
+    }
   });
   hero.addEventListener('pointermove', (event) => {
-    if (!origin) return;
+    if (!origin || event.pointerType !== 'mouse') return;
+    if (
+      !moved &&
+      Math.hypot(event.clientX - origin.x, event.clientY - origin.y) < 4
+    )
+      return;
+    moved = true;
     const left = Math.min(origin.x, event.clientX);
     const top = Math.min(origin.y, event.clientY);
     const right = Math.max(origin.x, event.clientX);
     const bottom = Math.max(origin.y, event.clientY);
     const box = hero.getBoundingClientRect();
     marquee.style.cssText = `left:${left - box.left}px;top:${top - box.top}px;width:${right - left}px;height:${bottom - top}px`;
-    count.style.cssText = `left:${event.clientX - box.left + 14}px;top:${event.clientY - box.top + 18}px`;
     marquee.classList.add('is-on');
-    select(
-      new Set(
-        items.filter((item) => {
-          const r = item.getBoundingClientRect();
-          if (!r.width) return false;
-          // Icons count by their centre, which is how they look selected.
-          const x = (r.left + r.right) / 2;
-          const y = (r.top + r.bottom) / 2;
-          return item.classList.contains('word')
-            ? r.left < right &&
-                r.right > left &&
-                r.top < bottom &&
-                r.bottom > top
-            : x > left && x < right && y > top && y < bottom;
-        }),
-      ),
-    );
+    place(event);
+    const picked = new Set(base);
+    for (const item of all()) {
+      const r = item.getBoundingClientRect();
+      if (!r.width) continue;
+      // Files count by their centre, which is how they look selected.
+      const x = (r.left + r.right) / 2;
+      const y = (r.top + r.bottom) / 2;
+      const hit = item.classList.contains('word')
+        ? r.left < right && r.right > left && r.top < bottom && r.bottom > top
+        : x > left && x < right && y > top && y < bottom;
+      if (hit) picked.add(item.dataset.id!);
+    }
+    select(picked);
+    // The count only follows the pointer while the band is being dragged.
+    count.classList.toggle('is-on', picked.size > 0);
   });
-  const end = () => {
+  const end = (event: Event) => {
+    if (!origin) return;
+    if (!moved && event.type === 'pointerup') {
+      // A click: select that file, toggle it with ctrl, or clear.
+      // The hero holds the pointer, so ask what is under it.
+      const { clientX, clientY } = event as PointerEvent;
+      const tile = document
+        .elementFromPoint(clientX, clientY)
+        ?.closest<HTMLElement>('.tile');
+      const picked = new Set(base);
+      const id = tile?.dataset.id;
+      if (id) {
+        if (base.has(id)) picked.delete(id);
+        else picked.add(id);
+      }
+      select(picked);
+    }
     origin = null;
     marquee.classList.remove('is-on');
     count.classList.remove('is-on');
   };
-  hero.addEventListener('pointerup', end);
-  hero.addEventListener('pointercancel', end);
+  // However the drag ends, the band and the count go with it.
+  addEventListener('pointerup', end);
+  addEventListener('pointercancel', end);
+  hero.addEventListener('lostpointercapture', end);
+  addEventListener('blur', end);
 </script>
 
 <style>
@@ -132,9 +159,15 @@ const download = site.installer?.href ?? site.download;
     padding-top: calc(var(--nav) + clamp(56px, 10vh, 112px));
     overflow-x: clip;
   }
+  /* The copy sits over the files; only its own content takes the pointer. */
   .copy {
     position: relative;
     z-index: 2;
+    pointer-events: none;
+  }
+  .copy > * {
+    width: fit-content;
+    pointer-events: auto;
   }
   h1 {
     max-width: 12em;
@@ -170,14 +203,6 @@ const download = site.installer?.href ?? site.download;
     flex-wrap: wrap;
     gap: 10px;
     margin-top: 32px;
-  }
-  .meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px 16px;
-    margin-top: 20px;
-    color: var(--faint);
-    font-size: 12px;
   }
 
   /* The window sits on a grainy panel, in front of the icon field. */
@@ -240,16 +265,12 @@ const download = site.installer?.href ?? site.download;
     }
     .lede,
     .actions,
-    .meta,
     .shot {
       animation: rise 900ms var(--ease-out) backwards;
       animation-delay: 380ms;
     }
     .actions {
       animation-delay: 440ms;
-    }
-    .meta {
-      animation-delay: 500ms;
     }
     .shot {
       animation-delay: 560ms;
