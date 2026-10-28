@@ -732,8 +732,31 @@ pub(super) fn pane_ui(
                         false,
                     );
                 }
+                // A path can be both a card and a Recent row. Edit it where the
+                // keyboard is, else in Recent when that row is on screen.
+                let rename_target = pane.renaming_path().map(std::path::Path::to_path_buf);
+                let is_target = |path: &std::path::Path| {
+                    rename_target
+                        .as_deref()
+                        .is_some_and(|target| crate::bookmarks::path_eq(path, target))
+                };
+                let rename_on_card = visible_cards
+                    .iter()
+                    .any(|(index, _)| is_target(&history.rows[*index].entry.path))
+                    && (keyboard
+                        .focused
+                        .as_ref()
+                        .is_some_and(|item| item.card && is_target(&item.path))
+                        || !rows[first..end]
+                            .iter()
+                            .any(|&index| is_target(&history.rows[index].entry.path)));
+                let mut rename_anchor = None;
+                let mut rename_order = Vec::new();
                 for (asset, (index, rect)) in visible_cards.iter().enumerate() {
                     let row = &history.rows[*index];
+                    if rename_on_card {
+                        rename_order.push(row.entry.path.clone());
+                    }
                     let label_text = &labels.rows[*index];
                     let response = item_response(
                         ui,
@@ -797,16 +820,18 @@ pub(super) fn pane_ui(
                         label_text.icon,
                         assets.image(pane.id, epoch, asset + 1),
                     );
-                    label(
-                        &p,
-                        Rect::from_min_max(
-                            pos2(rect.left() + 12.0 * scale, rect.bottom() - 47.0 * scale),
-                            pos2(rect.right() - 12.0 * scale, rect.bottom() - 25.0 * scale),
-                        ),
-                        t,
-                        &label_text.name,
-                        t.fg(),
+                    let name_rect = Rect::from_min_max(
+                        pos2(rect.left() + 12.0 * scale, rect.bottom() - 47.0 * scale),
+                        pos2(rect.right() - 12.0 * scale, rect.bottom() - 25.0 * scale),
                     );
+                    if rename_on_card && is_target(&row.entry.path) {
+                        rename_anchor = Some((
+                            name_rect.expand2(vec2(4.0 * scale, 0.0)),
+                            foldex_ui::inline_edit::InlineLayout::SingleLine,
+                        ));
+                    } else {
+                        label(&p, name_rect, t, &label_text.name, t.fg());
+                    }
                     label(
                         &p,
                         Rect::from_min_max(
@@ -832,6 +857,10 @@ pub(super) fn pane_ui(
                 for (offset, index) in rows[first..end].iter().copied().enumerate() {
                     let row = &history.rows[index];
                     let label_text = &labels.rows[index];
+                    let renaming_row = !rename_on_card && is_target(&row.entry.path);
+                    if rename_target.is_some() && !rename_on_card {
+                        rename_order.push(row.entry.path.clone());
+                    }
                     let rect = grid
                         .rect_for(first + offset)
                         .translate(origin.to_vec2() + vec2(0.0, list_top));
@@ -862,7 +891,7 @@ pub(super) fn pane_ui(
                     p.multiply_opacity(crate::cut_state::content_opacity(
                         assets.is_cut_key(label_text.cut_key.as_ref()),
                     ));
-                    paint_recent(
+                    let name_rect = paint_recent(
                         &p,
                         t,
                         grid,
@@ -870,7 +899,24 @@ pub(super) fn pane_ui(
                         row,
                         label_text,
                         assets.image(pane.id, epoch, visible_cards.len() + offset + 1),
+                        renaming_row,
                     );
+                    if renaming_row {
+                        rename_anchor = Some(if grid.mode.is_grid() {
+                            (
+                                name_rect.expand2(vec2(2.0, 2.0 * scale)),
+                                foldex_ui::inline_edit::InlineLayout::Wrapping { max_lines: 6 },
+                            )
+                        } else {
+                            (
+                                Rect::from_min_max(
+                                    pos2(name_rect.left() - 4.0 * scale, rect.top() + 1.0),
+                                    pos2(name_rect.right(), rect.bottom() - 1.0),
+                                ),
+                                foldex_ui::inline_edit::InlineLayout::SingleLine,
+                            )
+                        });
+                    }
                     home_focus(ui, t, pane.id, rect, row, false, &keyboard);
                     if let Some(probe) = &mut probe {
                         probe.rows.push(rect);
@@ -902,6 +948,18 @@ pub(super) fn pane_ui(
                         },
                         t.dim(),
                         false,
+                    );
+                }
+                if rename_target.is_some() {
+                    let listed = !history.pending()
+                        && history.rows.iter().any(|row| is_target(&row.entry.path));
+                    pane.place_home_rename_editor(
+                        ui,
+                        t,
+                        rename_anchor,
+                        rename_order,
+                        listed || history.pending(),
+                        &mut actions,
                     );
                 }
             });
@@ -1048,7 +1106,8 @@ fn paint_recent(
     row: &Validated,
     label: &HomeLabel,
     image: Option<crate::assets::AssetImage>,
-) {
+    hide_name: bool,
+) -> Rect {
     let scale = t.metrics().scale;
     let image_rect = Rect::from_center_size(
         if grid.mode.is_grid() {
@@ -1079,8 +1138,8 @@ fn paint_recent(
             pos2((rect.right() - 8.0 * scale).max(rect.left()), rect.bottom()),
         )
     };
-    if name_rect.width() <= 0.0 {
-        return;
+    if name_rect.width() <= 0.0 || hide_name {
+        return name_rect;
     }
     let has_parent = grid.mode == ViewMode::Details && !label.parent.is_empty();
     let width = foldex_ui::components::file_name_width(name_rect.width(), scale, has_parent);
@@ -1138,6 +1197,7 @@ fn paint_recent(
             );
         }
     }
+    name_rect
 }
 
 fn item_response(

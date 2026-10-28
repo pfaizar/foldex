@@ -64,17 +64,22 @@ pub enum Job {
     Console(PathBuf),
     NewWindow(PathBuf),
     NewHomeWindow,
+    /// Creates `name`, or `name (2)`… when it is taken. `origin` is the pane
+    /// that opens the new item's name editor.
     NewFile {
         parent: PathBuf,
         name: String,
+        origin: u64,
     },
     NewFolder {
         parent: PathBuf,
         name: String,
+        origin: u64,
     },
     Rename {
         path: PathBuf,
         name: String,
+        origin: u64,
     },
     Copy {
         sources: Vec<PathBuf>,
@@ -153,6 +158,19 @@ impl Job {
     }
 }
 
+/// Where a create or rename job left its item, for the pane that asked.
+#[derive(Clone, Debug)]
+pub enum JobOutcome {
+    /// `to` is the item's actual new path, or None when nothing was renamed.
+    Renamed {
+        origin: u64,
+        from: PathBuf,
+        to: Option<PathBuf>,
+    },
+    /// `path` is the created item, or None when creation failed.
+    Created { origin: u64, path: Option<PathBuf> },
+}
+
 #[derive(Debug)]
 pub enum PreviewContent {
     Text(String),
@@ -171,12 +189,10 @@ pub enum Event {
     Done {
         message: String,
         refresh: bool,
+        outcome: Option<JobOutcome>,
     },
     /// `what` is the plain-language action; `detail` is the raw error for Developer Mode.
-    Failed {
-        what: &'static str,
-        detail: String,
-    },
+    Failed { what: &'static str, detail: String },
     Resolved {
         id: u64,
         path: PathBuf,
@@ -518,10 +534,13 @@ impl Platform {
             .or_else(|| self.resolve.result.try_lock().ok()?.take())
             .or_else(|| self.preview.result.try_lock().ok()?.take())
             .or_else(|| {
-                self.properties.try_recv()?.err().map(|detail| Event::Failed {
-                    what: "Couldn't open Properties",
-                    detail,
-                })
+                self.properties
+                    .try_recv()?
+                    .err()
+                    .map(|detail| Event::Failed {
+                        what: "Couldn't open Properties",
+                        detail,
+                    })
             })
     }
 }
@@ -670,6 +689,7 @@ fn run_shell_job(job: Job, events: &SyncSender<Event>, stop: &AtomicBool, wake: 
                 Ok(()) => Event::Done {
                     message: String::new(),
                     refresh: false,
+                    outcome: None,
                 },
                 Err(error) => Event::Failed {
                     what,
@@ -726,6 +746,7 @@ fn operation_worker(
             op.start();
         }
         let what = job.failure_context();
+        let mut outcome = None;
         let (result, refresh) = match job {
             Job::ExplorerIntegration { .. } | Job::Properties(_) | Job::Launcher { .. } => {
                 unreachable!("Independent on-demand shell work")
@@ -739,24 +760,39 @@ fn operation_worker(
             | Job::Console(_)
             | Job::NewWindow(_)
             | Job::NewHomeWindow => unreachable!("Interactive Shell lane"),
-            Job::NewFile { parent, name } => (
-                history.mutate("New File", || {
-                    Mutation::created(new_file(&parent, &name), &parent.join(&name))
-                }),
-                true,
-            ),
-            Job::NewFolder { parent, name } => (
-                history.mutate("New Folder", || {
-                    Mutation::created(new_folder(&parent, &name), &parent.join(&name))
-                }),
-                true,
-            ),
-            Job::Rename { path, name } => (
-                history.mutate("Rename", || {
-                    rename_tracked_owned(&path, &name, owner.load(Ordering::Acquire), &stop)
-                }),
-                true,
-            ),
+            Job::NewFile {
+                parent,
+                name,
+                origin,
+            } => {
+                let (result, path) = create_tracked(&history, &parent, &name, false);
+                outcome = Some(JobOutcome::Created { origin, path });
+                (result, true)
+            }
+            Job::NewFolder {
+                parent,
+                name,
+                origin,
+            } => {
+                let (result, path) = create_tracked(&history, &parent, &name, true);
+                outcome = Some(JobOutcome::Created { origin, path });
+                (result, true)
+            }
+            Job::Rename { path, name, origin } => {
+                let mut actual = None;
+                let result = history.mutate("Rename", || {
+                    let (mutation, renamed) =
+                        rename_tracked_owned(&path, &name, owner.load(Ordering::Acquire), &stop);
+                    actual = renamed;
+                    mutation
+                });
+                outcome = Some(JobOutcome::Renamed {
+                    origin,
+                    from: path,
+                    to: actual.filter(|_| result.is_ok()),
+                });
+                (result, true)
+            }
             Job::Copy {
                 sources,
                 destination,
@@ -826,7 +862,11 @@ fn operation_worker(
             break;
         }
         let event = match result {
-            Ok(message) => Event::Done { message, refresh },
+            Ok(message) => Event::Done {
+                message,
+                refresh,
+                outcome,
+            },
             Err(error) => {
                 // A recursive operation can leave a partial destination. Refresh
                 // before reporting failure so the visible filesystem stays true.
@@ -835,6 +875,7 @@ fn operation_worker(
                         .send(Event::Done {
                             message: String::new(),
                             refresh: true,
+                            outcome,
                         })
                         .is_err()
                 {
@@ -930,35 +971,15 @@ fn contextual(path: &Path, error: io::Error) -> io::Error {
 }
 
 fn validate_name(name: &str) -> io::Result<()> {
-    if name.is_empty()
-        || name == "."
-        || name == ".."
-        || name.ends_with([' ', '.'])
-        || name.encode_utf16().count() > 255
-        || name.chars().any(|c| {
-            c <= '\u{1f}' || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|')
-        })
-    {
-        return Err(invalid(
+    match crate::naming::problem(name) {
+        None => Ok(()),
+        Some(crate::naming::NameProblem::Reserved(_)) => {
+            Err(invalid("This name is reserved by Windows"))
+        }
+        Some(_) => Err(invalid(
             "Use a nonempty name up to 255 characters, without / \\ : * ? \" < > | or a final space/dot",
-        ));
+        )),
     }
-    let stem = name.split('.').next().unwrap_or("").to_uppercase();
-    let reserved = matches!(
-        stem.as_str(),
-        "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
-    ) || ["COM", "LPT"].iter().any(|prefix| {
-        stem.strip_prefix(prefix).is_some_and(|suffix| {
-            matches!(
-                suffix,
-                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
-            )
-        })
-    });
-    if reserved {
-        return Err(invalid("This name is reserved by Windows"));
-    }
-    Ok(())
 }
 
 fn reject_reparse(path: &Path, metadata: &fs::Metadata) -> io::Result<()> {
@@ -1015,6 +1036,66 @@ fn new_file(parent: &Path, name: &str) -> io::Result<String> {
     Ok(format!("Created {name}"))
 }
 
+/// Creates `base` in `parent`, or the first free `base (n)` like File Explorer.
+/// Returns the created item's path, under `parent` as the caller spelled it.
+fn create_unique(parent: &Path, base: &str, folder: bool) -> io::Result<PathBuf> {
+    validate_name(base)?;
+    existing_directory(parent)?;
+    for _ in 0..64 {
+        let name = crate::naming::unique_name(base, folder, |name| {
+            fs::symlink_metadata(parent.join(name)).is_ok()
+        });
+        let path = parent.join(&name);
+        let created = if folder {
+            fs::create_dir(&path)
+        } else {
+            OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .map(drop)
+        };
+        match created {
+            Ok(()) => return Ok(path),
+            // Another program took the name between the check and the create.
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(contextual(&path, error)),
+        }
+    }
+    Err(io::Error::new(
+        io::ErrorKind::AlreadyExists,
+        format!("Couldn't find a free name for {base}"),
+    ))
+}
+
+/// Creates a new item as one undoable step, returning where it landed.
+fn create_tracked(
+    history: &HistoryHandle,
+    parent: &Path,
+    base: &str,
+    folder: bool,
+) -> (io::Result<String>, Option<PathBuf>) {
+    let mut created = None;
+    let result =
+        history.mutate(
+            if folder { "New Folder" } else { "New File" },
+            || match create_unique(parent, base, folder) {
+                Ok(path) => {
+                    let message = format!(
+                        "Created {}",
+                        path.file_name().unwrap_or_default().to_string_lossy()
+                    );
+                    let mutation = Mutation::created(Ok(message), &path);
+                    created = Some(path);
+                    mutation
+                }
+                Err(error) => Mutation::failed(error),
+            },
+        );
+    let created = created.filter(|_| result.is_ok());
+    (result, created)
+}
+
 fn open_console(path: &Path) -> io::Result<()> {
     #[cfg(windows)]
     {
@@ -1055,14 +1136,23 @@ fn rename_owned(
     }
 }
 
-fn rename_tracked_owned(path: &Path, name: &str, owner: isize, stop: &Arc<AtomicBool>) -> Mutation {
+/// Also returns the item's actual new path. Windows can choose `name (2)`
+/// when the user accepts its offer after a name collision.
+fn rename_tracked_owned(
+    path: &Path,
+    name: &str,
+    owner: isize,
+    stop: &Arc<AtomicBool>,
+) -> (Mutation, Option<PathBuf>) {
     #[cfg(windows)]
     {
         windows_ops::rename_tracked(path, name, owner, stop.clone())
     }
     #[cfg(not(windows))]
     {
-        untracked(rename_owned(path, name, owner, stop))
+        let mutation = untracked(rename_owned(path, name, owner, stop));
+        let renamed = mutation.result.is_ok().then(|| path.with_file_name(name));
+        (mutation, renamed)
     }
 }
 
@@ -2048,6 +2138,22 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
 
     #[test]
+    fn create_unique_numbers_taken_names_like_file_explorer() {
+        let dir = TestDirectory::new("create-unique");
+        let first = create_unique(&dir.0, "New folder", true).unwrap();
+        let second = create_unique(&dir.0, "New folder", true).unwrap();
+        assert_eq!(first, dir.0.join("New folder"));
+        assert_eq!(second, dir.0.join("New folder (2)"));
+        assert!(first.is_dir() && second.is_dir());
+        let file = create_unique(&dir.0, "New Text Document.txt", false).unwrap();
+        let next = create_unique(&dir.0, "New Text Document.txt", false).unwrap();
+        assert_eq!(next, dir.0.join("New Text Document (2).txt"));
+        assert!(file.is_file() && next.is_file());
+        assert!(create_unique(&dir.0, "bad:name", false).is_err());
+        assert!(create_unique(&dir.0.join("missing"), "x.txt", false).is_err());
+    }
+
+    #[test]
     fn cancellation_skips_queued_jobs_and_jobs_waiting_for_the_journal() {
         use std::time::{Duration, Instant};
         let dir = TestDirectory::new("cancel-queue");
@@ -2072,6 +2178,7 @@ mod tests {
                 .try_submit(Job::NewFolder {
                     parent: dir.0.clone(),
                     name: name.into(),
+                    origin: 0,
                 })
                 .unwrap();
         }
@@ -2141,6 +2248,7 @@ mod tests {
             .try_submit(Job::NewFolder {
                 parent: dir.0.clone(),
                 name: "queued".into(),
+                origin: 0,
             })
             .unwrap();
         let begin = Instant::now();
@@ -2394,6 +2502,7 @@ mod tests {
             .try_submit(Job::NewFolder {
                 parent: fixture.0.clone(),
                 name: "created".into(),
+                origin: 0,
             })
             .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);

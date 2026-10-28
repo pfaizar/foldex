@@ -15,6 +15,8 @@ mod keyboard;
 mod listing;
 mod navigation;
 mod recycle;
+mod rename;
+pub(crate) use rename::CommitOutcome;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -67,6 +69,18 @@ pub enum Action {
     Paste(PathBuf),
     Rename(PathBuf),
     RenameMany(Vec<PathBuf>),
+    /// An inline edit was committed: rename `path` to `name` in its folder.
+    RenameInline {
+        origin: u64,
+        path: PathBuf,
+        name: String,
+    },
+    /// The committed name changes the file's extension; ask first.
+    ConfirmRenameExtension {
+        origin: u64,
+        path: PathBuf,
+        name: String,
+    },
     CopyPaths(Vec<PathBuf>),
     Properties(Vec<PathBuf>),
     Notify(String),
@@ -251,6 +265,18 @@ pub struct Pane {
     invert_pending: bool,
     pending_action: Option<(u64, SelectionCommand, Vec<(u32, u32)>)>,
     deferred_action: Option<Action>,
+    /// Actions produced outside painting, such as a rename committed on navigation.
+    queued_actions: Vec<Action>,
+    rename: Option<rename::InlineRename>,
+    /// Names listed before a shell New template ran, to find what it made.
+    new_item_watch: Option<rename::NewItemWatch>,
+    /// Opens the editor on this item once the view lists it, with optional text.
+    pending_rename: Option<(PathBuf, Option<String>)>,
+    /// New names shown while their rename job runs: (old path, new name, since).
+    renamed: Vec<(PathBuf, String, Instant)>,
+    /// The editor's painted box last frame, which also counts as a press on an item.
+    rename_rect: Option<Rect>,
+    slow_click: Option<listing::SlowClick>,
 }
 
 const PANE_MENU_SECTIONS: [foldex_ui::components::MenuSection<'static>; 4] = [
@@ -606,6 +632,13 @@ impl Pane {
             invert_pending: false,
             pending_action: None,
             deferred_action: None,
+            queued_actions: Vec::new(),
+            rename: None,
+            new_item_watch: None,
+            pending_rename: None,
+            renamed: Vec::new(),
+            rename_rect: None,
+            slow_click: None,
         }
     }
 
@@ -816,7 +849,9 @@ impl Pane {
     }
 
     pub fn drain_action(&mut self) -> Option<Action> {
-        self.deferred_action.take()
+        self.deferred_action
+            .take()
+            .or_else(|| (!self.queued_actions.is_empty()).then(|| self.queued_actions.remove(0)))
     }
 
     fn complete_selected_paths(&self) -> Option<Vec<PathBuf>> {
@@ -899,6 +934,8 @@ impl Pane {
             self.navigate_route(route, remember);
             return;
         }
+        self.flush_rename();
+        self.slow_click = None;
         self.columns.leave_recycle();
         self.recycle_model = None;
         self.recycle_requested = None;
@@ -1199,6 +1236,7 @@ impl Pane {
     }
 
     fn change_indexed_view(&mut self) {
+        self.flush_rename();
         self.memory_retry = None;
         self.routing_revision = self.routing_revision.wrapping_add(1);
         if self.recursive {
@@ -1310,7 +1348,10 @@ impl Pane {
                     self.loading = false;
                     self.scanning = false;
                     self.finish_search_timer();
-                    self.error = Some(crate::friendly::present("Couldn't search this folder", &message));
+                    self.error = Some(crate::friendly::present(
+                        "Couldn't search this folder",
+                        &message,
+                    ));
                 }
                 SearchEvent::Selection { selection, result } => {
                     if let Some((id, command, ranges)) = self.pending_action.take() {
@@ -1450,6 +1491,7 @@ impl Pane {
                         }
                         self.keyboard.cancel_range();
                         self.clamp_keyboard_state();
+                        self.after_view_published(self.focused);
                     }
                 }
                 Event::Error {
@@ -1568,6 +1610,7 @@ impl Pane {
             }
             self.request_window(self.window_start, false);
         }
+        self.prune_renamed();
     }
 
     pub fn breadcrumb_trail(&self) -> Vec<(PathBuf, Id)> {

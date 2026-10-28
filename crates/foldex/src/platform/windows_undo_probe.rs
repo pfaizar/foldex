@@ -675,6 +675,7 @@ impl Case {
                     owner,
                     self.stop.clone(),
                 )
+                .0
             }
             Mode::Recycle | Mode::PermanentDelete => delete_tracked(
                 sources,

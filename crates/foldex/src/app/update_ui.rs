@@ -4,7 +4,8 @@ impl Foldex {
     pub(super) fn can_install_update(&self) -> bool {
         !self.platform.update_busy()
             && self.batch.is_none()
-            && self.edit.is_none()
+            && self.rename_confirm.is_none()
+            && !self.renaming()
             && !self.window_transfer.busy()
             && !self.deletion.is_open()
             && !self.recycle.is_open()

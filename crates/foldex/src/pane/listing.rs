@@ -6,6 +6,64 @@ use foldex_ui::{
 
 const RETAINED_ROWS: usize = 512;
 
+/// A click on the name of the item that was already selected. Like File
+/// Explorer, the editor opens only after the system double-click time passes
+/// without a second click, a drag, a key press or a selection change.
+pub(super) struct SlowClick {
+    path: PathBuf,
+    row: usize,
+    at: f64,
+}
+
+/// Windows' double-click time, which also separates a slow click from a double click.
+fn double_click_seconds() -> f64 {
+    #[cfg(windows)]
+    {
+        let milliseconds =
+            unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime() };
+        if milliseconds > 0 {
+            return f64::from(milliseconds) / 1000.0;
+        }
+    }
+    0.5
+}
+
+/// Where the name editor sits for one item in the current view mode.
+fn rename_anchor_for(
+    grid: GridMetrics,
+    item: Rect,
+    name: Rect,
+    name_clip_right: f32,
+    scale: f32,
+) -> (Rect, foldex_ui::inline_edit::InlineLayout) {
+    let pad = 4.0 * scale;
+    if grid.mode.is_grid() {
+        (
+            Rect::from_min_max(
+                pos2(item.left() + 2.0, name.top() - 2.0 * scale),
+                pos2(item.right() - 2.0, name.bottom() + 2.0 * scale),
+            ),
+            foldex_ui::inline_edit::InlineLayout::Wrapping { max_lines: 6 },
+        )
+    } else {
+        let right = if grid.mode == ViewMode::Details {
+            name_clip_right
+        } else {
+            name.right()
+        };
+        (
+            Rect::from_min_max(
+                pos2(name.left() - pad, item.top() + 1.0),
+                pos2(
+                    right.max(name.left() - pad + 24.0 * scale),
+                    item.bottom() - 1.0,
+                ),
+            ),
+            foldex_ui::inline_edit::InlineLayout::SingleLine,
+        )
+    }
+}
+
 #[derive(Default)]
 pub(super) struct ListingClicks {
     previous: Option<(Id, Pos2, f64)>,
@@ -169,6 +227,76 @@ impl Pane {
         }
     }
 
+    /// Arms, cancels or fires the click-to-rename timer.
+    fn slow_click_rename(
+        &mut self,
+        ui: &Ui,
+        candidate: Option<(usize, PathBuf)>,
+        interrupted: bool,
+    ) {
+        let now = ui.input(|input| input.time);
+        let delay = double_click_seconds();
+        // Raw events: shortcuts consume their keys before the list is drawn.
+        let input_seen = ui.input(|input| {
+            input.pointer.any_pressed()
+                || input.raw.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Key { pressed: true, .. }
+                            | egui::Event::Text(_)
+                            | egui::Event::MouseWheel { .. }
+                    )
+                })
+        });
+        if let Some((row, path)) = candidate {
+            // A second click inside the double-click time is a double click,
+            // even when egui's shorter threshold didn't pair it.
+            let repeated = self
+                .slow_click
+                .as_ref()
+                .is_some_and(|armed| now - armed.at < delay);
+            self.slow_click = (!repeated && !interrupted && self.rename.is_none())
+                .then_some(SlowClick { path, row, at: now });
+            if self.slow_click.is_some() {
+                ui.ctx()
+                    .request_repaint_after(Duration::from_secs_f64(delay));
+            }
+            return;
+        }
+        let Some(armed) = &self.slow_click else {
+            return;
+        };
+        if interrupted || input_seen {
+            // Keep the time so a following click still counts as a double click.
+            if now - armed.at >= delay {
+                self.slow_click = None;
+            } else if let Some(armed) = &mut self.slow_click {
+                armed.row = usize::MAX;
+            }
+            return;
+        }
+        if armed.row == usize::MAX {
+            if now - armed.at >= delay {
+                self.slow_click = None;
+            }
+            return;
+        }
+        if now - armed.at < delay {
+            ui.ctx().request_repaint_after(Duration::from_secs_f64(
+                (delay - (now - armed.at)).max(0.01),
+            ));
+            return;
+        }
+        let armed = self.slow_click.take().expect("checked above");
+        let still_selected = self.selected.len() == 1
+            && self.selected.contains(&(armed.row as u32))
+            && self.path_at(armed.row).as_deref() == Some(armed.path.as_path())
+            && self.listing_owns_keyboard(ui.ctx());
+        if still_selected && self.rename.is_none() {
+            self.begin_rename(armed.path);
+        }
+    }
+
     pub(super) fn listing(
         &mut self,
         ui: &mut Ui,
@@ -250,7 +378,44 @@ impl Pane {
                 _ => None,
             })
         });
-        let mut pressed_on_item = false;
+        // The editor is painted over the list, so a press inside it is a press on an item.
+        let mut pressed_on_item = press_position
+            .zip(self.rename_rect.filter(|_| self.rename.is_some()))
+            .is_some_and(|(point, rect)| rect.contains(point));
+        self.rename_rect = None;
+        // egui moves focus on the press, so remember who owned the keyboard
+        // then: only a click on an already active list starts a rename.
+        let owned_id = ui.id().with((self.id, "owned-at-press"));
+        if press_position.is_some() {
+            ui.data_mut(|data| data.insert_temp(owned_id, listing_focused));
+        }
+        let owned_before_click = ui.data(|data| data.get_temp(owned_id).unwrap_or(false));
+        let rename_row = self.rename_row();
+        let mut rename_anchor = None;
+        let mut slow_click_candidate = None;
+        let wheel = ui.input(|input| {
+            input
+                .pointer
+                .hover_pos()
+                .is_some_and(|point| body.contains(point))
+                && input
+                    .raw
+                    .events
+                    .iter()
+                    .any(|event| matches!(event, egui::Event::MouseWheel { .. }))
+        });
+        if wheel {
+            self.slow_click = None;
+            // Explorer ends a rename when the list scrolls under it.
+            if self
+                .rename
+                .as_ref()
+                .is_some_and(|rename| rename.editor.had_focus)
+                && let CommitOutcome::Rename(action) = self.commit_rename(ui.ctx())
+            {
+                actions.push(action);
+            }
+        }
         let mut dragged_row = None;
         let drag_distance = ui
             .ctx()
@@ -717,6 +882,11 @@ impl Pane {
                         // epaint rounds finite wrap widths before its cache key.
                         // Match it before deciding to rebuild a highlighted job.
                         .round();
+                        // A committed rename shows its new name until the
+                        // refreshed listing replaces the row.
+                        let optimistic = self.renamed_label(|| e.path(s)).map(|name| {
+                            name_galley(&p, t, name, &foldex_match::Matcher::new(""), color, width)
+                        });
                         let cached = self.name_cache.entry(idx).or_insert_with(|| {
                             (
                                 width.to_bits(),
@@ -732,7 +902,7 @@ impl Pane {
                             );
                         }
                         cached.2 = cache_frame;
-                        let gal = &cached.1;
+                        let gal = optimistic.as_ref().unwrap_or(&cached.1);
                         let x = if grid.mode.is_grid() {
                             nr.center().x - gal.size().x.min(nr.width()) * 0.5
                         } else {
@@ -755,8 +925,33 @@ impl Pane {
                                 },
                             );
                         }
-                        p.with_clip_rect(name_clip)
-                            .galley(text_position, gal.clone(), color);
+                        let name_hit =
+                            Rect::from_min_size(text_position, gal.size()).intersect(name_clip);
+                        if rename_row == Some(row) {
+                            // The editor replaces the label; it is drawn above the rows.
+                            rename_anchor = Some(rename_anchor_for(
+                                grid,
+                                rect,
+                                nr,
+                                name_clip.right(),
+                                metrics.scale,
+                            ));
+                        } else {
+                            p.with_clip_rect(name_clip)
+                                .galley(text_position, gal.clone(), color);
+                        }
+                        if !recycle_bin
+                            && response.clicked_by(egui::PointerButton::Primary)
+                            && ui.input(|input| input.modifiers.is_none())
+                            && owned_before_click
+                            && self.selected.len() == 1
+                            && self.selected.contains(&(row as u32))
+                            && response
+                                .interact_pointer_pos()
+                                .is_some_and(|point| name_hit.contains(point))
+                        {
+                            slow_click_candidate = Some((row, e.path(s)));
+                        }
                         if let Some(parent) = parent {
                             let text = self.row_cache.entry(idx).or_default();
                             text.seen = cache_frame;
@@ -938,6 +1133,10 @@ impl Pane {
                 }
             });
             self.remember_listing_viewport(out.state.offset.y, out.inner_rect);
+            if rename_anchor.is_some() {
+                ui.set_clip_rect(out.inner_rect.intersect(body));
+            }
+            self.place_rename_editor(ui, t, rename_anchor, rename_row, actions);
             let pointer = ui.input(|i| i.pointer.interact_pos());
             let origin = out.inner_rect.min.to_vec2() - out.state.offset;
             // A fast drag can deliver its press, motion and release in one frame.
@@ -1128,6 +1327,11 @@ impl Pane {
                 actions.push(Action::DragFiles(paths));
             }
         }
+        self.slow_click_rename(
+            ui,
+            slow_click_candidate,
+            double.is_some() || dragged_row.is_some() || self.marquee.is_some(),
+        );
         self.sync_selection();
         if listing_focused
             && active

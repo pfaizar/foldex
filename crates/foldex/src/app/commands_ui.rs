@@ -33,7 +33,7 @@ impl Foldex {
             || self.updates.open
             || self.updates.exit_pending
             || self.options_popup.owns_navigation(&self.ui_context)
-            || self.edit.is_some()
+            || self.rename_confirm.is_some()
             || self.deletion.is_open()
             || self.recycle.is_open()
             || self.save_layout_name.is_some()
@@ -182,6 +182,8 @@ impl Foldex {
             Command::ReopenTab => self.reopen_tab(),
             Command::SearchTabs => self.open_tab_picker(),
             Command::Refresh => {
+                // Like File Explorer, refreshing keeps what was typed.
+                self.flush_renames();
                 if self.pane().is_home() {
                     self.home.refresh();
                 }
@@ -217,21 +219,14 @@ impl Foldex {
             Command::Redo => self.job(Job::Redo),
             Command::Cut => self.execute_selection(crate::pane::SelectionCommand::Cut),
             Command::Paste => self.action(Action::Paste(self.pane().path.clone())),
+            Command::Rename if self.pane().rename_has_focus(ctx) => {}
             Command::Rename => self.execute_selection(crate::pane::SelectionCommand::Rename),
             Command::Recycle => self.execute_selection(crate::pane::SelectionCommand::Recycle),
             Command::DeletePermanent => self.execute_selection(
                 crate::pane::SelectionCommand::Delete(crate::pane::DeleteMode::Permanent),
             ),
             Command::NewFolder => self.action(Action::NewFolder(self.pane().path.clone())),
-            Command::NewFile => {
-                self.edit = Some(EditDialog {
-                    path: self.pane().path.clone(),
-                    name: "New file.txt".into(),
-                    create: false,
-                    create_file: true,
-                    focus: true,
-                });
-            }
+            Command::NewFile => self.create_item(self.pane().path.clone(), false),
             Command::SelectAll => self.pane_mut().select_all(),
             Command::InvertSelection => self.pane_mut().invert_selection(),
             Command::CopyPath => self.execute_selection(crate::pane::SelectionCommand::CopyPaths),
@@ -412,6 +407,13 @@ impl Foldex {
         if !update.errors.is_empty() {
             self.toast_error("Couldn't complete that action", &update.errors.join("\n"));
         }
+        if let Some((origin, directory)) = update.new_template {
+            self.flush_renames();
+            let origin = if origin == 0 { self.pane().id } else { origin };
+            if let Some(pane) = self.pane_by_id_mut(origin) {
+                pane.watch_for_new_item(&directory);
+            }
+        }
         if update.invoked {
             self.pane_mut().refresh();
         }
@@ -464,13 +466,7 @@ impl Foldex {
                 }
                 CoreVerb::NewFile => {
                     if let Some(parent) = core.paths.into_iter().next() {
-                        self.edit = Some(EditDialog {
-                            path: parent,
-                            name: "New file.txt".into(),
-                            create: false,
-                            create_file: true,
-                            focus: true,
-                        });
+                        self.create_item(parent, false);
                     }
                 }
             }

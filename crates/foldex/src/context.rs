@@ -40,6 +40,9 @@ pub struct ContextUpdate {
     pub pins_changed: bool,
     pub truncated: bool,
     pub core_action: Option<CoreAction>,
+    /// A New menu template is being created in this directory, for the
+    /// origin pane, which then opens the new item's name editor.
+    pub new_template: Option<(u64, PathBuf)>,
     /// A menu Tab dismissal: true requests previous root control, false next.
     /// Root routing should apply this after drawing/closing the popup.
     pub tab_exit: Option<bool>,
@@ -784,6 +787,12 @@ impl ContextMenu {
                     } else {
                         let invocation = if let Some((kind, key)) = &row.builtin {
                             let (paths, background) = popup.builtin_target(*kind);
+                            if *kind == BuiltinKind::New
+                                && key.starts_with("new:template:")
+                                && let Some(directory) = &popup.new_directory
+                            {
+                                update.new_template = Some((popup.origin, directory.clone()));
+                            }
                             self.system.invoke(
                                 popup.request,
                                 *kind,

@@ -1107,6 +1107,8 @@ fn compact_pane(ui: &mut Ui, t: &Theme, pane: &mut Pane, rect: Rect, active: boo
     pane.remember_listing_layout(grid);
     pane.grid_columns = 1;
     let offset = pane.keyboard_scroll_offset(grid, rect.height());
+    let rename_row = pane.rename_row();
+    let mut rename_anchor = None;
     let mut scroll = egui::ScrollArea::vertical()
         .id_salt((pane.id, "compact-files"))
         .auto_shrink([false, false]);
@@ -1121,8 +1123,11 @@ fn compact_pane(ui: &mut Ui, t: &Theme, pane: &mut Pane, rect: Rect, active: boo
             let Some(entry) = pane.entry_at(row) else {
                 continue;
             };
-            let title = entry.name.clone();
+            let mut title = entry.name.clone();
             let is_dir = entry.is_dir;
+            if let Some(renamed) = pane.renamed_label(|| pane.path_at(row).unwrap_or_default()) {
+                title = renamed.into();
+            }
             let glyph = foldex_ui::file_icon(&title, is_dir);
             let color = if is_dir {
                 Theme::color(t.folder)
@@ -1165,7 +1170,12 @@ fn compact_pane(ui: &mut Ui, t: &Theme, pane: &mut Pane, rect: Rect, active: boo
                 color,
                 14.0_f32.min(r.width() - 2.0),
             );
-            if r.width() > 42.0 {
+            if rename_row == Some(row) {
+                rename_anchor = Some((
+                    Rect::from_min_max(r.min + vec2(20.0, 1.0), r.max - vec2(3.0, 1.0)),
+                    foldex_ui::inline_edit::InlineLayout::SingleLine,
+                ));
+            } else if r.width() > 42.0 {
                 foldex_ui::components::elided_label(
                     &p,
                     Rect::from_min_max(r.min + vec2(24.0, 0.0), r.max - vec2(5.0, 0.0)),
@@ -1194,6 +1204,10 @@ fn compact_pane(ui: &mut Ui, t: &Theme, pane: &mut Pane, rect: Rect, active: boo
         }
     });
     pane.remember_listing_viewport(result.state.offset.y, result.inner_rect);
+    if rename_anchor.is_some() {
+        ui.set_clip_rect(result.inner_rect.intersect(rect));
+    }
+    pane.place_rename_editor(ui, t, rename_anchor, rename_row, &mut actions);
     let _ = active;
     pane.ensure_window(pane.visible_rows.clone());
     if count == 0 {

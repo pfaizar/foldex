@@ -1222,16 +1222,18 @@ pub(super) fn rename(
     owner: isize,
     stop: Arc<AtomicBool>,
 ) -> io::Result<String> {
-    rename_tracked(path, name, owner, stop).result
+    rename_tracked(path, name, owner, stop).0.result
 }
 
+/// Renames through the shell, which shows Explorer's own collision, in-use
+/// and permission dialogs. Also returns the path Windows actually produced.
 pub(super) fn rename_tracked(
     path: &Path,
     name: &str,
     owner: isize,
     stop: Arc<AtomicBool>,
-) -> Mutation {
-    let attempt = || -> io::Result<Mutation> {
+) -> (Mutation, Option<PathBuf>) {
+    let attempt = || -> io::Result<(Mutation, Option<PathBuf>)> {
         validate_name(name)?;
         validate_paths(&[path.to_owned()])?;
         let _apartment = Apartment::new()?;
@@ -1247,14 +1249,18 @@ pub(super) fn rename_tracked(
             owner,
             &state,
         );
-        Ok(history::mutation(
-            completed_report(&state, result),
-            vec![input],
-            "Renamed",
-            false,
+        let report = completed_report(&state, result);
+        let renamed = report
+            .created
+            .first()
+            .and_then(Option::as_ref)
+            .map(|created| created.path.clone());
+        Ok((
+            history::mutation(report, vec![input], "Renamed", false),
+            renamed,
         ))
     };
-    attempt().unwrap_or_else(Mutation::failed)
+    attempt().unwrap_or_else(|error| (Mutation::failed(error), None))
 }
 
 #[cfg(test)]

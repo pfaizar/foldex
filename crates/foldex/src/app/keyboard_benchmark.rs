@@ -2264,8 +2264,8 @@ impl Foldex {
                         .is_some_and(|probe| probe.focus.is_some())
             }
             Owner::Context => self.context.is_open(),
-            // Rename is a separate modal draft; Escape is its only script key.
-            Owner::Options => self.options || self.edit.is_some(),
+            // The inline name editor owns Escape while it is open.
+            Owner::Options => self.options || self.renaming(),
             Owner::Help => self.keyboard_condition(run, Check::HelpOpen),
             Owner::Launcher => self.launcher_open,
             Owner::Menu => self.popup_active(),
@@ -2346,7 +2346,7 @@ impl Foldex {
             }
             Check::ImeCommitted => ready && pane.filter == "键盘" && pane.view_len() == 1,
             Check::NoFileAction => {
-                self.edit.is_none()
+                !self.renaming()
                     && !self.deletion.is_open()
                     && pane.path == run.path_before
                     && !pane.address_mode
@@ -2514,8 +2514,8 @@ impl Foldex {
                 .as_ref()
                 .is_some_and(|goto| goto.input_text() == "Keyboard"),
             Check::GoToClosed => self.goto.is_none(),
-            Check::RenameOpen => self.edit.is_some() && !self.deletion.is_open(),
-            Check::RenameCancelled => self.edit.is_none() && !self.deletion.is_open(),
+            Check::RenameOpen => self.renaming() && !self.deletion.is_open(),
+            Check::RenameCancelled => !self.renaming() && !self.deletion.is_open(),
             Check::HelpOpen => {
                 self.keyboard_help
                     && self.popup_active()
@@ -2744,7 +2744,7 @@ impl Foldex {
             "display_current":pane.displayed_view_is_current(),
             "selected_intervals":pane.selected.intervals(),"focused_row":pane.focused,
             "visible_rows":[pane.visible_rows.start,pane.visible_rows.end],
-            "rename_open":self.edit.is_some(),"delete_dialog_open":self.deletion.is_open(),
+            "rename_open":self.renaming(),"delete_dialog_open":self.deletion.is_open(),
             "options_open":self.options,"context_open":self.context.is_open(),
             "keyboard_help_open":self.keyboard_help,
             "keyboard_help_scroll":self.ui_context.data(|data|data.get_temp::<(f32,f32,f32)>(Id::new("keyboard-guide-focus"))),

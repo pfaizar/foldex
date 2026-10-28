@@ -154,11 +154,13 @@ pub struct Operations {
 impl Operations {
     pub fn track(&self, job: &Job, wake: Wake) -> Result<Option<Arc<Operation>>, String> {
         let (label, description) = match job {
-            Job::NewFile { parent, name } => ("New file", parent.join(name).display().to_string()),
-            Job::NewFolder { parent, name } => {
+            Job::NewFile { parent, name, .. } => {
+                ("New file", parent.join(name).display().to_string())
+            }
+            Job::NewFolder { parent, name, .. } => {
                 ("New folder", parent.join(name).display().to_string())
             }
-            Job::Rename { path, name } => ("Rename", format!("{} → {name}", path.display())),
+            Job::Rename { path, name, .. } => ("Rename", format!("{} → {name}", path.display())),
             Job::Copy {
                 sources,
                 destination,

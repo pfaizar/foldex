@@ -144,6 +144,31 @@ impl History {
             bytes <= PATH_BUDGET
         });
     }
+    /// Follows a rename: `from` and everything under it now lives at `to`.
+    pub fn remap(&mut self, from: &Path, to: &Path) -> bool {
+        let mut changed = false;
+        for entry in &mut self.entries {
+            if same_path(&entry.path, from) {
+                entry.path = to.to_path_buf();
+                changed = true;
+            } else if let Some(rest) = descendant(&entry.path, from) {
+                entry.path = to.join(rest);
+                changed = true;
+            }
+        }
+        if changed {
+            self.normalize();
+        }
+        changed
+    }
+}
+/// The part of `path` below `ancestor`, compared like `same_path`.
+fn descendant<'a>(path: &'a Path, ancestor: &Path) -> Option<&'a Path> {
+    let depth = ancestor.components().count();
+    let mut head = path.components();
+    let prefix: PathBuf = head.by_ref().take(depth).collect();
+    let rest = head.as_path();
+    (!rest.as_os_str().is_empty() && same_path(&prefix, ancestor)).then_some(rest)
 }
 pub fn now() -> i64 {
     SystemTime::now()
@@ -441,6 +466,20 @@ impl Drop for Service {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn remap_follows_renamed_items_and_their_contents() {
+        let mut history = History::default();
+        history.record("C:/work/Old".into(), Access::Visited, 3);
+        history.record("C:/work/old/inner/a.txt".into(), Access::Opened, 2);
+        history.record("C:/work/Older".into(), Access::Visited, 1);
+        assert!(history.remap(Path::new("C:/work/Old"), Path::new("C:/work/New")));
+        let paths: Vec<_> = history.entries.iter().map(|e| e.path.clone()).collect();
+        assert!(paths.contains(&PathBuf::from("C:/work/New")));
+        assert!(paths.contains(&Path::new("C:/work/New").join("inner/a.txt")));
+        assert!(paths.contains(&PathBuf::from("C:/work/Older")));
+        assert!(!history.remap(Path::new("C:/elsewhere"), Path::new("C:/x")));
+    }
 
     fn row(index: usize, uses: u32, last_used: i64) -> Validated {
         Validated {

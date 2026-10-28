@@ -349,7 +349,7 @@ mod tests {
             ],
         );
         assert_eq!(app.pane().filter, "g");
-        assert!(app.edit.is_none());
+        assert!(!app.renaming());
         assert_eq!(
             ctx.memory(|memory| memory.focused()),
             Some(Id::new((pane, "filter")))
@@ -420,10 +420,10 @@ mod tests {
     fn type_to_search_does_not_take_text_from_rename_or_modal_surfaces() {
         let (mut app, ctx, frame) = ready_fixture();
         app.execute_command(&ctx, Command::Rename);
-        let editor = Id::new("rename-name");
+        let editor = app.pane().rename_editor_id();
         let mut text_frame = frame;
-        // A newly created modal first measures its Area. Its rename field
-        // requests focus after drawing, so text must wait for that ownership.
+        // The inline editor requests focus after drawing, so text must wait
+        // for that ownership.
         while text_frame < frame + 8 {
             pump_events(&mut app, &ctx, text_frame, vec![]);
             text_frame += 1;
@@ -443,7 +443,7 @@ mod tests {
             vec![Event::Text("new-name".into())],
         );
         assert!(app.pane().filter.is_empty());
-        assert!(app.edit.as_ref().unwrap().name.contains("new-name"));
+        assert!(app.pane().rename_text().unwrap().contains("new-name"));
         assert_ne!(
             ctx.memory(|memory| memory.focused()),
             Some(Id::new((app.pane().id, "filter")))
@@ -451,7 +451,7 @@ mod tests {
 
         // Test stale listing ownership during opening too, before a modal has
         // painted its text editor or registered its egui layer.
-        app.edit = None;
+        app.pane_mut().drop_rename();
         for surface in 0..4 {
             app.options = surface == 0;
             app.launcher_open = surface == 1;

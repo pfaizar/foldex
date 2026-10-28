@@ -11,6 +11,8 @@ mod appearance;
 mod chrome;
 mod commands_ui;
 mod deletion_ui;
+#[cfg(test)]
+mod developer_tests;
 mod fixes_benchmark;
 mod home_ui;
 mod keyboard_benchmark;
@@ -23,10 +25,11 @@ mod lifecycle_tests;
 mod operations_ui;
 mod options_ui;
 #[cfg(test)]
-mod developer_tests;
-#[cfg(test)]
 mod persistence_tests;
 pub(crate) mod recycle_ui;
+#[cfg(test)]
+mod rename_tests;
+mod rename_ui;
 mod searches_ui;
 mod stress;
 mod update_ui;
@@ -111,12 +114,11 @@ struct TabDrag {
     press: egui::Pos2,
     active: bool,
 }
-struct EditDialog {
+/// A committed rename that changes a file's extension, waiting for Yes or No.
+struct RenameConfirm {
+    origin: u64,
     path: PathBuf,
     name: String,
-    create: bool,
-    create_file: bool,
-    focus: bool,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ResolveIntent {
@@ -181,7 +183,7 @@ pub struct Foldex {
     options: bool,
     updates: crate::updates::Updates,
     options_popup: options_ui::OptionsPopup,
-    edit: Option<EditDialog>,
+    rename_confirm: Option<RenameConfirm>,
     deletion: deletion_ui::Deletion,
     inspector: bool,
     inspector_width: f32,
@@ -514,7 +516,7 @@ impl Foldex {
             options: false,
             updates,
             options_popup: options_ui::OptionsPopup::default(),
-            edit: None,
+            rename_confirm: None,
             deletion: Default::default(),
             inspector: false,
             inspector_width: 0.0,
@@ -620,6 +622,44 @@ impl Foldex {
         } else {
             &mut tab.left
         }
+    }
+    fn panes_mut(&mut self) -> impl Iterator<Item = &mut Pane> {
+        self.tabs
+            .iter_mut()
+            .flat_map(|tab| std::iter::once(&mut tab.left).chain(tab.right.as_mut()))
+    }
+    fn pane_by_id_mut(&mut self, id: u64) -> Option<&mut Pane> {
+        self.panes_mut().find(|pane| pane.id == id)
+    }
+    fn renaming(&self) -> bool {
+        self.tabs
+            .iter()
+            .any(|tab| tab.left.is_renaming() || tab.right.as_ref().is_some_and(Pane::is_renaming))
+    }
+    /// Only one name editor is open at a time: starting another commits it.
+    fn flush_renames(&mut self) {
+        for pane in self.panes_mut() {
+            pane.flush_rename();
+        }
+    }
+    /// Creates "New folder" or "New Text Document.txt" (numbered when taken)
+    /// and then opens its name editor, like File Explorer.
+    fn create_item(&mut self, parent: PathBuf, folder: bool) {
+        self.flush_renames();
+        let origin = self.pane().id;
+        self.job(if folder {
+            Job::NewFolder {
+                parent,
+                name: crate::naming::DEFAULT_FOLDER.into(),
+                origin,
+            }
+        } else {
+            Job::NewFile {
+                parent,
+                name: crate::naming::DEFAULT_TEXT_FILE.into(),
+                origin,
+            }
+        });
     }
     /// An informational toast. Empty text shows nothing, so a silent success never
     /// produces an empty bubble.
@@ -969,18 +1009,14 @@ impl Foldex {
                 }
             }
             Action::Rename(path) => {
-                let name = path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .into_owned();
-                self.edit = Some(EditDialog {
-                    path,
-                    name,
-                    create: false,
-                    create_file: false,
-                    focus: true,
-                });
+                self.flush_renames();
+                self.pane_mut().begin_rename(path);
+            }
+            Action::RenameInline { origin, path, name } => {
+                self.job(Job::Rename { path, name, origin })
+            }
+            Action::ConfirmRenameExtension { origin, path, name } => {
+                self.rename_confirm = Some(RenameConfirm { origin, path, name });
             }
             Action::RenameMany(mut paths) => {
                 if paths.len() == 1 {
@@ -1015,15 +1051,7 @@ impl Foldex {
                 self.toast_error("Couldn't use the selected files", &message)
             }
             Action::Properties(paths) => self.job(Job::Properties(paths)),
-            Action::NewFolder(path) => {
-                self.edit = Some(EditDialog {
-                    path,
-                    name: "New folder".into(),
-                    create: true,
-                    create_file: false,
-                    focus: true,
-                })
-            }
+            Action::NewFolder(path) => self.create_item(path, true),
             Action::Recycle(paths) => self.request_delete(paths, crate::pane::DeleteMode::Recycle),
             Action::Delete { paths, mode } => self.request_delete(paths, mode),
             Action::Inspect(p) => {
@@ -1188,9 +1216,41 @@ impl Foldex {
                     }
                     self.options_popup.finish_integration(id, result);
                 }
-                platform::Event::Done { message, refresh } => {
-                    // Silent successes (Reveal, Open console, New window…) carry no text.
-                    self.toast(crate::friendly::present_notice(&message));
+                platform::Event::Done {
+                    message,
+                    refresh,
+                    outcome,
+                } => {
+                    match &outcome {
+                        // The item itself shows the result, as in File Explorer.
+                        Some(_) => {}
+                        // Silent successes (Reveal, Open console, New window…) carry no text.
+                        None => self.toast(crate::friendly::present_notice(&message)),
+                    }
+                    match outcome {
+                        Some(platform::JobOutcome::Renamed { origin, from, to }) => {
+                            if let Some(to) = &to {
+                                if self.home_history.remap(&from, to) {
+                                    self.home_usage_revision =
+                                        self.home_usage_revision.wrapping_add(1);
+                                }
+                            }
+                            for pane in self.panes_mut() {
+                                if pane.id == origin || to.is_none() {
+                                    pane.finish_rename(&from, to.as_deref());
+                                }
+                            }
+                        }
+                        Some(platform::JobOutcome::Created {
+                            origin,
+                            path: Some(path),
+                        }) => {
+                            if let Some(pane) = self.pane_by_id_mut(origin) {
+                                pane.created_for_rename(path);
+                            }
+                        }
+                        Some(platform::JobOutcome::Created { path: None, .. }) | None => {}
+                    }
                     if refresh {
                         for (i, t) in self.tabs.iter_mut().enumerate() {
                             if i == self.active {
@@ -1356,7 +1416,7 @@ impl Foldex {
             foldex_ui::components::close_dialog(ctx, Id::new("performance-dialog"));
             return;
         }
-        if self.popup_active() {
+        if self.popup_active() || self.pane().rename_opening(ctx) {
             self.hotkeys.cancel_pending();
             return;
         }
@@ -1469,11 +1529,11 @@ impl Foldex {
             crate::keyboard::request_id(ctx, crate::keyboard::listing_id(self.pane().id));
         }
         // Performance details are a Developer Mode tool; the shortcut does nothing otherwise.
-        if crate::friendly::developer_mode() && shortcut(Modifiers::CTRL | Modifiers::ALT, Key::P)
-        {
+        if crate::friendly::developer_mode() && shortcut(Modifiers::CTRL | Modifiers::ALT, Key::P) {
             self.show_stats = !self.show_stats;
         }
-        if !crate::keyboard::composing(ctx) {
+        // The inline name editor takes Tab itself to move to the next item.
+        if !crate::keyboard::composing(ctx) && !self.pane().rename_has_focus(ctx) {
             let backwards = shortcut(Modifiers::SHIFT, Key::Tab);
             if backwards || shortcut(Modifiers::NONE, Key::Tab) {
                 let editor_payload = ctx.input(|input| {
@@ -1680,104 +1740,7 @@ impl Foldex {
                 "Update installation was cancelled. Your current version is unchanged.",
             );
         }
-        let mut edit_result = None;
-        let mut edit_cancel = false;
-        if let Some(d) = &mut self.edit {
-            let m = self.theme.metrics();
-            let width =
-                (400.0 * m.scale).min((ctx.content_rect().width() - 32.0 * m.scale).max(160.0));
-            let mut edit_open = true;
-            foldex_ui::components::dialog(
-                ctx,
-                Id::new("rename-dialog"),
-                &self.theme,
-                if d.create_file {
-                    "New file"
-                } else if d.create {
-                    "New folder"
-                } else {
-                    "Rename"
-                },
-                width,
-                &mut edit_open,
-                |ui| {
-                    ui.spacing_mut().item_spacing = vec2(m.gap, m.gap);
-                    let width = ui.available_width();
-                    let (path_rect, path_hit) = ui.allocate_exact_size(
-                        vec2(width, (self.theme.font_size + 8.0).max(20.0)),
-                        Sense::hover(),
-                    );
-                    let caption = Theme {
-                        font_size: (self.theme.font_size - 1.0).max(10.0),
-                        ..self.theme.clone()
-                    };
-                    foldex_ui::components::elided_label(
-                        ui.painter(),
-                        path_rect,
-                        &caption,
-                        &d.path.to_string_lossy(),
-                        self.theme.dim(),
-                        false,
-                    );
-                    path_hit.on_hover_text(d.path.to_string_lossy());
-                    let (field, _) = ui.allocate_exact_size(vec2(width, m.control), Sense::hover());
-                    let r = foldex_ui::components::input_box(
-                        ui,
-                        field,
-                        Id::new("rename-name"),
-                        &self.theme,
-                        &mut d.name,
-                        "",
-                        1024,
-                    )
-                    .response;
-                    if d.focus && foldex_ui::components::can_focus(ui) {
-                        r.request_focus();
-                        d.focus = ui.is_sizing_pass() || !r.has_focus();
-                    }
-                    ui.add_space(m.gap);
-                    ui.horizontal_wrapped(|ui| {
-                        if foldex_ui::components::text_button(
-                            ui,
-                            &self.theme,
-                            if d.create_file {
-                                "Create file"
-                            } else if d.create {
-                                "Create folder"
-                            } else {
-                                "Rename"
-                            },
-                            true,
-                        )
-                        .clicked()
-                            || r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter))
-                        {
-                            edit_result =
-                                Some((d.path.clone(), d.name.clone(), d.create, d.create_file));
-                        }
-                        if foldex_ui::components::text_button(ui, &self.theme, "Cancel", false)
-                            .clicked()
-                        {
-                            ui.close();
-                        }
-                    });
-                },
-            );
-            edit_cancel |= !edit_open;
-        }
-        if edit_cancel {
-            self.edit = None;
-        }
-        if let Some((path, name, create, file)) = edit_result {
-            self.edit = None;
-            self.job(if file {
-                Job::NewFile { parent: path, name }
-            } else if create {
-                Job::NewFolder { parent: path, name }
-            } else {
-                Job::Rename { path, name }
-            });
-        }
+        self.rename_confirm_ui(ctx);
         self.delete_confirmation_ui(ctx);
         self.recycle_dialog_ui(ctx);
     }
@@ -2005,7 +1968,7 @@ mod tests {
         ] {
             app.execute_command(&ctx, command);
         }
-        assert!(app.edit.is_none());
+        assert!(!app.renaming());
         assert!(app.folder_views.is_empty());
         app.pane_mut().back();
         assert_eq!(
@@ -2093,7 +2056,7 @@ mod tests {
         );
         assert_eq!(app.pane().filter, "g");
         assert!(
-            app.edit.is_none(),
+            !app.renaming(),
             "F2 must not rename a file after the filter gained focus"
         );
         assert_eq!(
@@ -2132,7 +2095,7 @@ mod tests {
             vec![key_event(Key::F2, Modifiers::NONE)],
         );
         assert!(
-            app.edit.is_none(),
+            !app.renaming(),
             "A focused filter must not receive file rename commands"
         );
         pump_events(
@@ -2169,7 +2132,7 @@ mod tests {
             frame + 10,
             vec![key_event(Key::F2, Modifiers::NONE)],
         );
-        assert!(app.edit.is_none());
+        assert!(!app.renaming());
         pump_events(
             &mut app,
             &ctx,
@@ -2516,7 +2479,7 @@ mod tests {
         let mut output = ctx.run_ui(input, |ui| app.ui(ui, &mut eframe::Frame::_new_kittest()));
         output.textures_delta.clear();
         assert_eq!(app.tabs.len(), 1);
-        assert!(app.edit.is_none());
+        assert!(!app.renaming());
     }
 
     #[test]
