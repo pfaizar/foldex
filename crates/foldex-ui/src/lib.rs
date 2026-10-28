@@ -4,6 +4,7 @@ pub mod color;
 pub mod components;
 pub mod focus;
 pub mod fonts;
+pub mod inline_edit;
 pub mod motion;
 pub mod rolling;
 pub mod view;
