@@ -104,10 +104,11 @@ pub enum PlaceKind {
     Pictures,
     Music,
     Videos,
+    ThisPc,
     RecycleBin,
 }
 impl PlaceKind {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::User,
         Self::Desktop,
         Self::Downloads,
@@ -115,6 +116,7 @@ impl PlaceKind {
         Self::Pictures,
         Self::Music,
         Self::Videos,
+        Self::ThisPc,
         Self::RecycleBin,
     ];
     pub fn label(self) -> &'static str {
@@ -126,12 +128,16 @@ impl PlaceKind {
             Self::Pictures => "Pictures",
             Self::Music => "Music",
             Self::Videos => "Videos",
+            Self::ThisPc => "This PC",
             Self::RecycleBin => "Recycle Bin",
         }
     }
     pub fn icon_key(self, size: u16) -> foldex_assets::AssetKey {
         if self == Self::RecycleBin {
             return foldex_assets::AssetKey::stock_icon(foldex_assets::StockIcon::RecycleBin, size);
+        }
+        if self == Self::ThisPc {
+            return foldex_assets::AssetKey::stock_icon(foldex_assets::StockIcon::Computer, size);
         }
         use foldex_assets::KnownFolderIcon as Native;
         foldex_assets::AssetKey::known_folder_icon(
@@ -143,7 +149,7 @@ impl PlaceKind {
                 Self::Pictures => Native::Pictures,
                 Self::Music => Native::Music,
                 Self::Videos => Native::Videos,
-                Self::RecycleBin => unreachable!(),
+                Self::ThisPc | Self::RecycleBin => unreachable!(),
             },
             size,
         )
@@ -160,6 +166,7 @@ pub struct PlacesVisibility {
     pub pictures: bool,
     pub music: bool,
     pub videos: bool,
+    pub this_pc: bool,
     pub recycle_bin: bool,
 }
 impl Default for PlacesVisibility {
@@ -172,6 +179,7 @@ impl Default for PlacesVisibility {
             pictures: true,
             music: true,
             videos: true,
+            this_pc: true,
             recycle_bin: true,
         }
     }
@@ -186,6 +194,7 @@ impl PlacesVisibility {
             PlaceKind::Pictures => self.pictures,
             PlaceKind::Music => self.music,
             PlaceKind::Videos => self.videos,
+            PlaceKind::ThisPc => self.this_pc,
             PlaceKind::RecycleBin => self.recycle_bin,
         }
     }
@@ -198,6 +207,7 @@ impl PlacesVisibility {
             PlaceKind::Pictures => &mut self.pictures,
             PlaceKind::Music => &mut self.music,
             PlaceKind::Videos => &mut self.videos,
+            PlaceKind::ThisPc => &mut self.this_pc,
             PlaceKind::RecycleBin => &mut self.recycle_bin,
         };
         *value = !*value;
@@ -339,6 +349,8 @@ pub struct Data {
     pending: bool,
     next_refresh: Instant,
     revision: u64,
+    // A visible This PC page keeps drive samples current without the sidebar.
+    page_visible: bool,
     // Native capture harness only; at most 26 cloned records. The live worker
     // continues updating snapshot while a deterministic capture is displayed.
     benchmark_volumes: Option<Vec<Volume>>,
@@ -379,6 +391,7 @@ impl Data {
             pending: false,
             next_refresh: Instant::now(),
             revision: 1,
+            page_visible: false,
             benchmark_volumes: None,
         };
         Ok(data)
@@ -426,6 +439,27 @@ impl Data {
         } else {
             self.next_refresh = Instant::now() + REFRESH_INTERVAL;
         }
+    }
+    /// Opening This PC asks for a fresh free-space sample instead of showing
+    /// one up to a refresh interval old. Staying on the page adds no work.
+    pub fn set_page_visible(&mut self, visible: bool) {
+        if visible && !self.page_visible {
+            self.refresh_now();
+        }
+        self.page_visible = visible;
+    }
+    pub fn page_visible(&self) -> bool {
+        self.page_visible
+    }
+    /// Starts a refresh on the next service unless one is already running.
+    pub fn refresh_now(&mut self) {
+        if !self.pending {
+            self.next_refresh = Instant::now();
+        }
+    }
+    /// True while drive discovery or measurement is still in progress.
+    pub fn pending(&self) -> bool {
+        self.pending
     }
     pub fn places(&self) -> &[Place] {
         &self.snapshot.places
@@ -489,7 +523,7 @@ fn resolve_places(mut resolve: impl FnMut(PlaceKind) -> Option<PathBuf>) -> Vec<
     PlaceKind::ALL
         .into_iter()
         .filter_map(|kind| {
-            if kind == PlaceKind::RecycleBin {
+            if matches!(kind, PlaceKind::ThisPc | PlaceKind::RecycleBin) {
                 return None;
             }
             let path = resolve(kind)?;
@@ -571,7 +605,7 @@ mod native {
             PlaceKind::Pictures => FOLDERID_Pictures,
             PlaceKind::Music => FOLDERID_Music,
             PlaceKind::Videos => FOLDERID_Videos,
-            PlaceKind::RecycleBin => return None,
+            PlaceKind::ThisPc | PlaceKind::RecycleBin => return None,
         };
         let mut output = std::ptr::null_mut();
         unsafe {
@@ -695,6 +729,7 @@ mod tests {
                 pending: false,
                 next_refresh: Instant::now(),
                 revision: 0,
+                page_visible: false,
                 benchmark_volumes: None,
             },
             receiver,
@@ -961,6 +996,7 @@ mod tests {
                 "Pictures",
                 "Music",
                 "Videos",
+                "This PC",
                 "Recycle Bin"
             ]
         );

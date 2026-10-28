@@ -32,6 +32,7 @@ mod rename_tests;
 mod rename_ui;
 mod searches_ui;
 mod stress;
+mod this_pc_ui;
 mod update_ui;
 pub(crate) mod window_transfer;
 pub(crate) mod window_transfer_probe;
@@ -853,7 +854,7 @@ impl Foldex {
         if self.pane().is_recycle_bin() {
             return;
         }
-        if self.pane().is_home() && self.pane().primary_selected_path().is_none() {
+        if self.pane().is_page() && self.pane().primary_selected_path().is_none() {
             return;
         }
         let pane = self.pane();
@@ -899,11 +900,13 @@ impl Foldex {
         }
         match a {
             Action::RecycleBin(intent) => self.recycle_action(intent),
-            Action::Address => self.open_goto(if self.pane().is_recycle_bin() {
-                Some(self.pane().location_text().into())
-            } else {
-                (!self.pane().is_virtual()).then(|| self.pane().path.clone())
-            }),
+            Action::Address => self.open_goto(
+                if self.pane().is_recycle_bin() || self.pane().is_this_pc() {
+                    Some(self.pane().location_text().into())
+                } else {
+                    (!self.pane().is_virtual()).then(|| self.pane().path.clone())
+                },
+            ),
             Action::EditPath(path) => self.open_goto(Some(path)),
             Action::BreadcrumbChildren {
                 path,
@@ -970,6 +973,7 @@ impl Foldex {
                     match route {
                         crate::navigation::Route::Home => self.navigate_home(),
                         crate::navigation::Route::RecycleBin => self.navigate_recycle_bin(),
+                        crate::navigation::Route::ThisPc => self.navigate_this_pc(),
                         crate::navigation::Route::Folder(_)
                         | crate::navigation::Route::Search(_) => unreachable!(),
                     }
@@ -1068,8 +1072,12 @@ impl Foldex {
                 }
             }
             Action::ToggleInspector => {
-                if self.pane().is_home() && self.pane().primary_selected_path().is_none() {
-                    self.toast("Select a recent item to inspect it");
+                if self.pane().is_page() && self.pane().primary_selected_path().is_none() {
+                    self.toast(if self.pane().is_this_pc() {
+                        "Select a drive to inspect it"
+                    } else {
+                        "Select a recent item to inspect it"
+                    });
                     return;
                 }
                 if !crate::pane::inspector_available(&self.ui_context, &self.theme) {
@@ -1111,7 +1119,7 @@ impl Foldex {
                     },
                 );
                 self.context
-                    .set_new_directory((!self.pane().is_home()).then(|| self.pane().path.clone()));
+                    .set_new_directory((!self.pane().is_page()).then(|| self.pane().path.clone()));
                 if let Some(id) = self.ui_context.memory(|memory| memory.focused()) {
                     self.context.set_return_focus(id);
                 }
@@ -1457,7 +1465,7 @@ impl Foldex {
                     _ => None,
                 })
         });
-        if self.pane().is_home()
+        if self.pane().is_page()
             && crate::keyboard::listing_owns(ctx, self.pane().id)
             && first_stroke.is_some_and(|(key, modifiers)| {
                 modifiers.matches_exact(Modifiers::NONE)
@@ -1485,7 +1493,7 @@ impl Foldex {
         if context_first {
             // Open the local context surface before later commands in this
             // input batch. Its search/editor owns any following keys.
-            if !self.pane().is_home() && crate::keyboard::listing_owns(ctx, self.pane().id) {
+            if !self.pane().is_page() && crate::keyboard::listing_owns(ctx, self.pane().id) {
                 if let Some(action) = self.pane_mut().keyboard_navigation(ctx) {
                     self.action(action);
                 }
@@ -1568,7 +1576,7 @@ impl Foldex {
         {
             return;
         }
-        if !crate::keyboard::listing_owns(ctx, self.pane().id) || self.pane().is_home() {
+        if !crate::keyboard::listing_owns(ctx, self.pane().id) || self.pane().is_page() {
             return;
         }
         if shortcut(Modifiers::NONE, Key::Backspace) {
@@ -1641,7 +1649,7 @@ impl Foldex {
         if self.pane().is_recycle_bin() {
             return;
         }
-        if self.pane().is_home() && self.pane().primary_selected_path().is_none() {
+        if self.pane().is_page() && self.pane().primary_selected_path().is_none() {
             return;
         }
         let grip =
@@ -3097,7 +3105,7 @@ impl eframe::App for Foldex {
         let inspector_room = (rect.width() - content_minimum).max(0.0);
         let inspector_target = if self.inspector
             && !self.pane().is_recycle_bin()
-            && (!self.pane().is_home() || self.pane().primary_selected_path().is_some())
+            && (!self.pane().is_page() || self.pane().primary_selected_path().is_some())
             && inspector_room >= crate::pane::MIN_INSPECTOR_WIDTH * scale
         {
             self.inspector_target_width

@@ -16,7 +16,7 @@ impl Foldex {
                 self.bookmarks.clone(),
                 self.recent.iter().cloned().collect(),
             );
-            let current = if self.pane().is_home() {
+            let current = if self.pane().is_page() {
                 PathBuf::new()
             } else {
                 self.pane().path.clone()

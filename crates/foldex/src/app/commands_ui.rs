@@ -91,6 +91,8 @@ impl Foldex {
                     Icon::Home
                 } else if p.is_recycle_bin() {
                     Icon::Trash
+                } else if p.is_this_pc() {
+                    Icon::Computer
                 } else {
                     Icon::Folder
                 },
@@ -134,8 +136,12 @@ impl Foldex {
         if self.pane().is_recycle_bin() && !recycle_ui::command_allowed(command) {
             return;
         }
-        if self.pane().is_home() && folder_only(command) {
+        if self.pane().is_page() && folder_only(command) {
             self.toast("Open a folder to use this command");
+            return;
+        }
+        if self.pane().is_this_pc() && !this_pc_ui::command_allowed(command) {
+            self.toast("Open a drive to use this command");
             return;
         }
         match command {
@@ -168,7 +174,7 @@ impl Foldex {
             Command::NewWindow => {
                 if self.pane().is_home() {
                     self.job(Job::NewHomeWindow);
-                } else if self.pane().is_recycle_bin() {
+                } else if self.pane().is_recycle_bin() || self.pane().is_this_pc() {
                     self.job(Job::NewWindow(self.pane().location_text().into()));
                 } else {
                     self.job(Job::NewWindow(self.pane().path.clone()));
@@ -186,6 +192,9 @@ impl Foldex {
                 self.flush_renames();
                 if self.pane().is_home() {
                     self.home.refresh();
+                }
+                if self.pane().is_this_pc() {
+                    self.sidebar_data.refresh_now();
                 }
                 let _ = self.assets.invalidate_visible();
                 self.pane_mut().refresh();
@@ -308,10 +317,7 @@ impl Foldex {
                 (Command::Redo, self.platform.history_state().can_redo()),
                 (Command::Back, pane.navigation.can_back()),
                 (Command::Forward, pane.navigation.can_forward()),
-                (
-                    Command::Parent,
-                    !pane.is_home() && pane.path.parent().is_some(),
-                ),
+                (Command::Parent, pane.can_go_up()),
                 (Command::ClosePanel, self.desk.groups.len() > 1),
                 (Command::NextPanel, self.desk.groups.len() > 1),
                 (Command::PreviousPanel, self.desk.groups.len() > 1),
@@ -331,9 +337,11 @@ impl Foldex {
             for entry in crate::commands::COMMANDS {
                 if folder_only(entry.command) && entry.command != Command::Parent {
                     self.commands
-                        .set_enabled(entry.command, !self.pane().is_home());
+                        .set_enabled(entry.command, !self.pane().is_page());
                 }
-                if self.pane().is_recycle_bin() && !recycle_ui::command_allowed(entry.command) {
+                if self.pane().is_recycle_bin() && !recycle_ui::command_allowed(entry.command)
+                    || self.pane().is_this_pc() && !this_pc_ui::command_allowed(entry.command)
+                {
                     self.commands.set_enabled(entry.command, false);
                 }
             }
@@ -444,7 +452,7 @@ impl Foldex {
                             self.action(Action::GoPath(core.paths[0].clone()));
                             self.resolve_intent = ResolveIntent::Paste;
                         }
-                    } else if !self.pane().is_home() {
+                    } else if !self.pane().is_page() {
                         self.action(Action::Paste(self.pane().path.clone()));
                     } else {
                         self.toast("Open a folder before pasting files");

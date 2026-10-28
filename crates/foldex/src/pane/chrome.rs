@@ -67,7 +67,7 @@ impl Pane {
             let enabled = match n {
                 0 => self.navigation.can_back(),
                 1 => self.navigation.can_forward(),
-                _ => !self.is_virtual() && self.path.parent().is_some(),
+                _ => self.can_go_up(),
             };
             let response = foldex_ui::components::icon_button_at_enabled(
                 ui,
@@ -316,6 +316,13 @@ impl Pane {
                 Icon::Home,
                 "home-address",
                 "Home · Open a folder or address with Ctrl+L",
+            )
+        } else if self.is_this_pc() {
+            (
+                "This PC",
+                Icon::Computer,
+                "this-pc-address",
+                crate::navigation::THIS_PC_ADDRESS,
             )
         } else {
             (

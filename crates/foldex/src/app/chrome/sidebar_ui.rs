@@ -337,22 +337,27 @@ impl SidebarRows {
             data.places()
                 .iter()
                 .cloned()
-                .chain(std::iter::once(crate::sidebar::Place {
-                    kind: PlaceKind::RecycleBin,
-                    path: crate::navigation::RECYCLE_BIN_ADDRESS.into(),
-                }))
+                .chain([
+                    crate::sidebar::Place {
+                        kind: PlaceKind::ThisPc,
+                        path: crate::navigation::THIS_PC_ADDRESS.into(),
+                    },
+                    crate::sidebar::Place {
+                        kind: PlaceKind::RecycleBin,
+                        path: crate::navigation::RECYCLE_BIN_ADDRESS.into(),
+                    },
+                ])
                 .filter(|place| preferences.places.visible(place.kind))
                 .map(|place| SidebarRow {
-                    glyph: if place.kind == PlaceKind::User {
-                        Icon::Home
-                    } else if place.kind == PlaceKind::RecycleBin {
-                        Icon::Trash
-                    } else {
-                        Icon::Folder
+                    glyph: match place.kind {
+                        PlaceKind::User => Icon::Home,
+                        PlaceKind::ThisPc => Icon::Computer,
+                        PlaceKind::RecycleBin => Icon::Trash,
+                        _ => Icon::Folder,
                     },
                     label: place.kind.label().to_owned(),
                     path: place.path.clone(),
-                    cut_key: (place.kind != PlaceKind::RecycleBin)
+                    cut_key: (!matches!(place.kind, PlaceKind::ThisPc | PlaceKind::RecycleBin))
                         .then(|| crate::cut_state::PathKey::new(&place.path))
                         .flatten(),
                     place: Some(place.kind),
@@ -544,10 +549,19 @@ impl Foldex {
 
     pub(in crate::app) fn service_sidebar(&mut self, ctx: &egui::Context) {
         self.service_sidebar_network();
-        if self
-            .sidebar_data
-            .service(ctx, self.sidebar && self.explorer_visible)
-            || self.places.is_empty()
+        let this_pc_visible = self.explorer_visible
+            && self.desk.visible().iter().any(|id| {
+                self.tabs.iter().any(|tab| {
+                    std::iter::once(&tab.left)
+                        .chain(tab.right.iter())
+                        .any(|pane| pane.id == *id && pane.is_this_pc())
+                })
+            });
+        self.sidebar_data.set_page_visible(this_pc_visible);
+        if self.sidebar_data.service(
+            ctx,
+            self.sidebar && self.explorer_visible || this_pc_visible,
+        ) || self.places.is_empty()
         {
             self.places = self
                 .sidebar_data
@@ -564,11 +578,18 @@ impl Foldex {
                         place.path.clone(),
                     )
                 })
-                .chain(std::iter::once((
-                    Icon::Trash,
-                    "Recycle Bin".into(),
-                    PathBuf::from(crate::navigation::RECYCLE_BIN_ADDRESS),
-                )))
+                .chain([
+                    (
+                        Icon::Computer,
+                        PlaceKind::ThisPc.label().into(),
+                        PathBuf::from(crate::navigation::THIS_PC_ADDRESS),
+                    ),
+                    (
+                        Icon::Trash,
+                        "Recycle Bin".into(),
+                        PathBuf::from(crate::navigation::RECYCLE_BIN_ADDRESS),
+                    ),
+                ])
                 .chain(
                     self.sidebar_data
                         .volumes()
@@ -605,8 +626,8 @@ impl Foldex {
             self.sidebar_sections.menu.close();
             return actions;
         }
-        let current = if self.pane().is_recycle_bin() {
-            PathBuf::from(crate::navigation::RECYCLE_BIN_ADDRESS)
+        let current = if self.pane().is_recycle_bin() || self.pane().is_this_pc() {
+            PathBuf::from(self.pane().location_text())
         } else {
             self.pane().path.clone()
         };
@@ -1165,7 +1186,9 @@ impl Foldex {
                             let row_item = NavigationItem::Folder(section, item.path.clone());
                             let response =
                                 ui.interact(r.intersect(clip), identity.with("hit"), Sense::CLICK);
-                            crate::drag_drop::target(ui, r.intersect(clip), item.path.clone());
+                            if item.place != Some(PlaceKind::ThisPc) {
+                                crate::drag_drop::target(ui, r.intersect(clip), item.path.clone());
+                            }
                             background.exclude(r.intersect(clip));
                             if response.clicked()
                                 || response.secondary_clicked()
@@ -1301,6 +1324,8 @@ impl Foldex {
                                         .unwrap_or(r.left_bottom()),
                                         248.0 * scale,
                                     );
+                                } else if item.place == Some(PlaceKind::ThisPc) {
+                                    // A virtual page has no shell context menu.
                                 } else if item.place == Some(PlaceKind::RecycleBin) {
                                     let position = response.interact_pointer_pos().unwrap_or(r.left_bottom());
                                     actions.push(Action::Navigate(item.path.clone()));
@@ -1534,12 +1559,7 @@ impl Foldex {
         if delta.x != 0.0 {
             self.theme.sidebar_width = (self.theme.sidebar_width + delta.x).clamp(160.0, 500.0);
         }
-        self.sidebar_context_ui(
-            ui,
-            &current,
-            home_selected || self.pane().is_recycle_bin(),
-            &mut actions,
-        );
+        self.sidebar_context_ui(ui, &current, self.pane().is_virtual(), &mut actions);
         let network_visible = self
             .sidebar_sections
             .preferences
@@ -1883,7 +1903,7 @@ fn section_menu_items(
     })
 }
 
-fn place_menu_items(places: &crate::sidebar::PlacesVisibility) -> [MenuItem<'static>; 8] {
+fn place_menu_items(places: &crate::sidebar::PlacesVisibility) -> [MenuItem<'static>; 9] {
     std::array::from_fn(|index| {
         let kind = PlaceKind::ALL[index];
         menu_item(
@@ -1897,6 +1917,7 @@ fn place_menu_items(places: &crate::sidebar::PlacesVisibility) -> [MenuItem<'sta
                 PlaceKind::Pictures => Icon::Picture,
                 PlaceKind::Music => Icon::Music,
                 PlaceKind::Videos => Icon::Video,
+                PlaceKind::ThisPc => Icon::Computer,
                 PlaceKind::RecycleBin => Icon::Trash,
             },
             Some(places.visible(kind)),

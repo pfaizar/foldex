@@ -89,7 +89,7 @@ impl Pane {
     /// remain with the application's focus/surface routing; plain Space remains
     /// the existing preview command.
     pub fn keyboard_navigation(&mut self, ctx: &egui::Context) -> Option<Action> {
-        if self.is_home() || self.has_popup() || !self.listing_owns_keyboard(ctx) {
+        if self.is_page() || self.has_popup() || !self.listing_owns_keyboard(ctx) {
             return None;
         }
         self.clamp_keyboard_state();

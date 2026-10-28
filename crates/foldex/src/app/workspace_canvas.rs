@@ -445,6 +445,16 @@ impl Foldex {
                             selected,
                             self.inspector,
                         )
+                    } else if tab.left.is_this_pc() {
+                        this_pc_ui::pane_ui(
+                            ui,
+                            &self.theme,
+                            &mut tab.left,
+                            &self.sidebar_data,
+                            &mut self.assets,
+                            selected,
+                            self.inspector,
+                        )
                     } else if small {
                         compact_pane(ui, &self.theme, &mut tab.left, body, selected)
                     } else {
@@ -912,6 +922,8 @@ fn draw_strip(
                                 Icon::Home
                             } else if tab.left.is_recycle_bin() {
                                 Icon::Trash
+                            } else if tab.left.is_this_pc() {
+                                Icon::Computer
                             } else {
                                 Icon::Folder
                             },

@@ -811,7 +811,7 @@ impl Pane {
         if self.is_recycle_bin() {
             return self.recycle_selection(command);
         }
-        if self.is_home() {
+        if self.is_page() {
             return self
                 .home_selected
                 .clone()
@@ -1033,7 +1033,7 @@ impl Pane {
             self.recycle_refresh_requested = true;
             return;
         }
-        if self.is_home() {
+        if self.is_page() {
             return;
         }
         self.columns.source = None;
@@ -1076,7 +1076,13 @@ impl Pane {
         }
         if let Some(p) = self.path.parent() {
             self.navigate(p.to_owned(), true);
+        } else if crate::navigation::is_drive_root(&self.path) {
+            self.navigate_this_pc(true);
         }
+    }
+    pub fn can_go_up(&self) -> bool {
+        !self.is_virtual()
+            && (self.path.parent().is_some() || crate::navigation::is_drive_root(&self.path))
     }
     pub fn refilter(&mut self) {
         self.keyboard.cancel_range();
@@ -1301,7 +1307,7 @@ impl Pane {
         if self.is_recycle_bin() {
             return Vec::new();
         }
-        if self.is_home() {
+        if self.is_page() {
             return self.home_selected.iter().cloned().collect();
         }
         self.complete_selected_paths().unwrap_or_default()
@@ -1310,7 +1316,7 @@ impl Pane {
         if self.is_recycle_bin() {
             return None;
         }
-        if self.is_home() {
+        if self.is_page() {
             return self.home_selected.clone();
         }
         let row = self

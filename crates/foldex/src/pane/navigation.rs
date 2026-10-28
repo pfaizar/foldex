@@ -5,6 +5,14 @@ impl Pane {
     pub fn is_home(&self) -> bool {
         matches!(self.navigation.current(), Route::Home)
     }
+    pub fn is_this_pc(&self) -> bool {
+        matches!(self.navigation.current(), Route::ThisPc)
+    }
+    /// Home and This PC draw their own items instead of a folder listing and
+    /// keep their one selected item in `home_selected`.
+    pub fn is_page(&self) -> bool {
+        matches!(self.navigation.current(), Route::Home | Route::ThisPc)
+    }
     pub fn route(&self) -> &Route {
         self.navigation.current()
     }
@@ -13,6 +21,8 @@ impl Pane {
             "Home".into()
         } else if self.is_recycle_bin() {
             "Recycle Bin".into()
+        } else if self.is_this_pc() {
+            "This PC".into()
         } else if matches!(self.route(), Route::Search(_)) {
             format!("Search: {}", path_label(&self.path))
         } else {
@@ -24,6 +34,8 @@ impl Pane {
             "foldex:home".into()
         } else if self.is_recycle_bin() {
             crate::navigation::RECYCLE_BIN_ADDRESS.into()
+        } else if self.is_this_pc() {
+            crate::navigation::THIS_PC_ADDRESS.into()
         } else {
             self.path.to_string_lossy().into_owned()
         }
@@ -32,6 +44,7 @@ impl Pane {
         match route {
             Route::Home => self.navigate_home(remember),
             Route::RecycleBin => self.navigate_recycle_bin(remember),
+            Route::ThisPc => self.navigate_this_pc(remember),
             Route::Folder(path) => self.navigate(path, remember),
             Route::Search(location) => {
                 if let Err(error) = location.validate() {
@@ -56,6 +69,7 @@ impl Pane {
         self.navigation = navigation.normalized(Route::Folder(self.path.clone()));
         match self.navigation.current().clone() {
             Route::Home => self.navigate_home(false),
+            Route::ThisPc => self.navigate_this_pc(false),
             Route::RecycleBin => {
                 let filter = self.filter.clone();
                 let query = self.query.clone();
@@ -164,6 +178,14 @@ impl Pane {
         self.indices = Arc::from([]);
         self.kind_counts = None;
     }
+    /// This PC reuses Home's reset: no listing, worker or search stays active.
+    pub fn navigate_this_pc(&mut self, remember: bool) {
+        if remember {
+            self.navigation.visit(Route::ThisPc);
+        }
+        self.navigate_home(false);
+        self.address = crate::navigation::THIS_PC_ADDRESS.into();
+    }
     /// One usage event per successful user navigation; watcher refreshes don't
     /// inflate frequency. Restored hidden tabs don't count as viewed folders.
     pub fn take_folder_visit(&mut self) -> Option<PathBuf> {
@@ -203,6 +225,23 @@ mod tests {
         assert!(pane.snapshot.is_none());
         assert_eq!(pane.nav_generation, 0);
         assert!(pane.take_folder_visit().is_none());
+    }
+    #[cfg(windows)]
+    #[test]
+    fn up_from_a_drive_root_opens_this_pc_without_a_listing() {
+        let engine = Engine::new(Arc::new(|| {})).unwrap();
+        let mut pane = Pane::dormant(2, &engine, PathBuf::from(r"C:\"));
+        assert!(pane.can_go_up());
+        pane.up();
+        assert!(pane.is_this_pc() && pane.is_page() && pane.is_virtual());
+        assert_eq!(pane.location_text(), crate::navigation::THIS_PC_ADDRESS);
+        assert_eq!(pane.title(), "This PC");
+        assert!(!pane.can_go_up());
+        pane.refresh();
+        pane.prepare_view(&egui::Context::default());
+        assert!(!pane.loading && pane.snapshot.is_none());
+        pane.back();
+        assert_eq!(pane.route(), &Route::Folder(PathBuf::from(r"C:\")));
     }
 }
 

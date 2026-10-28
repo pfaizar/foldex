@@ -247,6 +247,8 @@ impl Foldex {
             self.new_home_tab(None);
         } else if self.pane().is_recycle_bin() {
             self.new_recycle_tab(None);
+        } else if self.pane().is_this_pc() {
+            self.new_tab(crate::navigation::THIS_PC_ADDRESS.into());
         } else {
             self.new_tab(self.pane().path.clone());
         }
@@ -281,6 +283,8 @@ impl Foldex {
             self.new_home_tab(Some(vertical));
         } else if self.pane().is_recycle_bin() {
             self.new_recycle_tab(Some(vertical));
+        } else if self.pane().is_this_pc() {
+            self.split_workspace(crate::navigation::THIS_PC_ADDRESS.into(), vertical);
         } else {
             self.split_workspace(self.pane().path.clone(), vertical);
         }
@@ -1063,7 +1067,13 @@ fn parent_label(row: &Validated) -> String {
         .map(crate::pane::friendly_path)
         .unwrap_or_default()
 }
-fn section_heading(p: &egui::Painter, at: egui::Pos2, width: f32, t: &Theme, value: &str) {
+pub(super) fn section_heading(
+    p: &egui::Painter,
+    at: egui::Pos2,
+    width: f32,
+    t: &Theme,
+    value: &str,
+) {
     let scale = t.metrics().scale;
     p.text(
         at,
@@ -1298,7 +1308,7 @@ fn paint_file(
         paint_image(p, rect, image);
     }
 }
-fn paint_image(p: &egui::Painter, rect: Rect, image: crate::assets::AssetImage) {
+pub(super) fn paint_image(p: &egui::Painter, rect: Rect, image: crate::assets::AssetImage) {
     let draw = |texture, size: egui::Vec2, opacity: f32| {
         let ratio = (rect.width() / size.x.max(1.0)).min(rect.height() / size.y.max(1.0));
         p.image(

@@ -129,7 +129,7 @@ impl Pane {
     }
 
     fn begin_rename_with(&mut self, path: PathBuf, text: Option<String>) {
-        if self.is_recycle_bin() {
+        if self.is_recycle_bin() || self.is_this_pc() {
             return;
         }
         self.slow_click = None;
@@ -342,7 +342,7 @@ impl Pane {
 
     /// A new item was created for this pane: select it and open its editor.
     pub(crate) fn created_for_rename(&mut self, path: PathBuf) {
-        if self.is_home() || self.recursive || path.parent() != Some(self.path.as_path()) {
+        if self.is_page() || self.recursive || path.parent() != Some(self.path.as_path()) {
             return;
         }
         self.pending_selection = path.file_name().map(OsString::from);

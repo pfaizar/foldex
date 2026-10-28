@@ -378,7 +378,7 @@ impl Pane {
             (false, true) => foldex_core::KindFilter::Files,
             (false, false) => foldex_core::KindFilter::None,
         };
-        if !self.is_home() {
+        if !self.is_page() {
             self.refilter();
         }
     }
@@ -836,7 +836,9 @@ impl Pane {
         if transfer {
             ui.memory_mut(|memory| memory.move_focus(egui::FocusDirection::None));
         }
-        let hint = if home {
+        let hint = if self.is_this_pc() {
+            "Filter drives…"
+        } else if home {
             "Filter recent…"
         } else if self.is_recycle_bin() {
             "Filter Recycle Bin…"

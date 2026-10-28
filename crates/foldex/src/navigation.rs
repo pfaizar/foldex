@@ -9,6 +9,7 @@ pub const MAX_NAVIGATION: usize = 64;
 pub enum Route {
     Home,
     RecycleBin,
+    ThisPc,
     Folder(PathBuf),
     Search(SearchLocation),
 }
@@ -148,11 +149,34 @@ pub fn is_recycle_bin_address(text: &Path) -> bool {
     })
 }
 
+pub const THIS_PC_ADDRESS: &str = "foldex:this-pc";
+
+pub fn is_this_pc_address(text: &Path) -> bool {
+    text.to_str().is_some_and(|text| {
+        text.eq_ignore_ascii_case(THIS_PC_ADDRESS) || text.eq_ignore_ascii_case("foldex://this-pc")
+    })
+}
+
+/// A lettered drive root such as `C:\`. Going up from one opens This PC, as
+/// in File Explorer; UNC share roots keep their existing behavior.
+pub fn is_drive_root(path: &Path) -> bool {
+    use std::path::{Component, Prefix};
+    let mut components = path.components();
+    matches!(
+        components.next(),
+        Some(Component::Prefix(prefix))
+            if matches!(prefix.kind(), Prefix::Disk(_) | Prefix::VerbatimDisk(_))
+    ) && matches!(components.next(), Some(Component::RootDir))
+        && components.next().is_none()
+}
+
 pub fn special_route(text: &Path) -> Option<Route> {
     if is_home_address(text) {
         Some(Route::Home)
     } else if is_recycle_bin_address(text) {
         Some(Route::RecycleBin)
+    } else if is_this_pc_address(text) {
+        Some(Route::ThisPc)
     } else {
         None
     }
@@ -175,6 +199,33 @@ mod tests {
             Some(Route::RecycleBin)
         );
         assert!(special_route(Path::new("C:/recycle-bin")).is_none());
+    }
+    #[test]
+    fn this_pc_is_a_serializable_route_and_never_a_folder_address() {
+        let mut nav = Navigation::new(Route::ThisPc);
+        nav.visit(Route::Folder("C:/".into()));
+        assert_eq!(nav.back(), Some(Route::ThisPc));
+        let restored: Navigation =
+            serde_json::from_slice(&serde_json::to_vec(&nav).unwrap()).unwrap();
+        assert_eq!(restored.current(), &Route::ThisPc);
+        assert_eq!(
+            special_route(Path::new("FOLDEX://THIS-PC")),
+            Some(Route::ThisPc)
+        );
+        assert_eq!(
+            special_route(Path::new(THIS_PC_ADDRESS)),
+            Some(Route::ThisPc)
+        );
+        assert!(special_route(Path::new("C:/this-pc")).is_none());
+    }
+    #[cfg(windows)]
+    #[test]
+    fn only_lettered_drive_roots_lead_up_to_this_pc() {
+        assert!(is_drive_root(Path::new("C:\\")));
+        assert!(is_drive_root(Path::new("d:/")));
+        assert!(!is_drive_root(Path::new(r"C:\Users")));
+        assert!(!is_drive_root(Path::new("C:")));
+        assert!(!is_drive_root(Path::new(r"\\server\share\")));
     }
     #[test]
     fn virtual_home_participates_in_back_forward_and_branching() {
