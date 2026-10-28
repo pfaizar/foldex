@@ -433,6 +433,97 @@ impl Foldex {
                         run.finished = true;
                         self.benchmark.as_mut().unwrap().expires = now + Duration::from_secs(1);
                     }
+                    // Inline rename and new items, in Details then Large icons.
+                    6000 if ready => {
+                        // The window may sit behind others; losing OS focus
+                        // would commit the edit like Explorer does.
+                        run.force_focus = true;
+                        crate::keyboard::request_id(
+                            ctx,
+                            crate::keyboard::listing_id(self.pane().id),
+                        );
+                        if let Some(path) = self.pane().path_at(0) {
+                            self.pane_mut().begin_rename(path);
+                        }
+                        run.phase = 6001;
+                    }
+                    6001 if self.pane().rename_has_focus(ctx) => {
+                        check(&mut run, "rename_opens_over_the_item", true);
+                        capture(ctx, &mut run, "fix-rename-details", false);
+                        run.phase = 6002;
+                    }
+                    6002 => {
+                        run.input.push(egui::Event::Text("Quarterly report".into()));
+                        run.phase = 6003;
+                    }
+                    6003 => {
+                        capture(ctx, &mut run, "fix-rename-typed", false);
+                        run.phase = 6004;
+                    }
+                    6004 => {
+                        run.input.push(egui::Event::Text(":".into()));
+                        run.phase = 6005;
+                    }
+                    6005 => {
+                        check(
+                            &mut run,
+                            "forbidden_character_is_refused",
+                            self.pane()
+                                .rename_text()
+                                .is_some_and(|text| !text.contains(':')),
+                        );
+                        capture(ctx, &mut run, "fix-rename-balloon", false);
+                        run.phase = 6006;
+                    }
+                    6006 => {
+                        escape(&mut run);
+                        run.phase = 6007;
+                    }
+                    6007 => {
+                        check(&mut run, "escape_cancels_rename", !self.renaming());
+                        self.pane_mut().set_zoom(0.65);
+                        run.phase = 6008;
+                    }
+                    6008 if ready => {
+                        crate::keyboard::request_id(
+                            ctx,
+                            crate::keyboard::listing_id(self.pane().id),
+                        );
+                        if let Some(path) = self.pane().path_at(0) {
+                            self.pane_mut().begin_rename(path);
+                        }
+                        run.phase = 6009;
+                    }
+                    6009 if self.pane().rename_has_focus(ctx) => {
+                        capture(ctx, &mut run, "fix-rename-icons", false);
+                        run.phase = 6010;
+                    }
+                    6010 => {
+                        escape(&mut run);
+                        run.phase = 6011;
+                    }
+                    6011 => {
+                        self.pane_mut().set_zoom(0.0);
+                        self.execute_command(ctx, crate::commands::Command::NewFolder);
+                        run.phase = 6012;
+                    }
+                    6012 if self.pane().rename_has_focus(ctx) => {
+                        check(
+                            &mut run,
+                            "new_folder_opens_its_name_editor",
+                            self.pane()
+                                .renaming_path()
+                                .is_some_and(|path| path.is_dir()),
+                        );
+                        capture(ctx, &mut run, "fix-rename-new-folder", false);
+                        run.phase = 6013;
+                    }
+                    6013 => {
+                        escape(&mut run);
+                        run.force_focus = false;
+                        run.finished = true;
+                        self.benchmark.as_mut().unwrap().expires = now + Duration::from_secs(1);
+                    }
                     _ => {}
                 }
             }

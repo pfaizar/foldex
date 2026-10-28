@@ -92,6 +92,7 @@ pub(super) fn prepare_ui(
         arg == "--benchmark-launcher"
             || arg == "--benchmark-fixes"
             || arg == "--benchmark-refinement"
+            || arg == "--benchmark-inline-rename"
     }) && !args.iter().any(|arg| arg == "--secondary-monitor")
     {
         return Err("Launcher benchmark requires --secondary-monitor".into());
@@ -194,11 +195,17 @@ pub(super) fn prepare_ui(
                 }),
             fixes: args
                 .iter()
-                .any(|arg| arg == "--benchmark-fixes" || arg == "--benchmark-refinement")
+                .any(|arg| {
+                    arg == "--benchmark-fixes"
+                        || arg == "--benchmark-refinement"
+                        || arg == "--benchmark-inline-rename"
+                })
                 .then(|| FixesUiRun {
                     refinement: args.iter().any(|arg| arg == "--benchmark-refinement"),
                     phase: if args.iter().any(|arg| arg == "--benchmark-refinement") {
                         2000
+                    } else if args.iter().any(|arg| arg == "--benchmark-inline-rename") {
+                        6000
                     } else {
                         0
                     },
