@@ -17,6 +17,7 @@ const VERSION: u32 = 1;
 const MAX_BYTES: usize = crate::persistence::MAX_SESSION_BYTES;
 const TIMEOUT: Duration = Duration::from_secs(30);
 const POLL: Duration = Duration::from_millis(30);
+const TAB_MOVE_FAILED: &str = "Couldn't move the tab to a new window";
 
 #[derive(Clone, Serialize, Deserialize)]
 struct PaneTransfer {
@@ -669,8 +670,8 @@ impl Foldex {
     pub(super) fn move_tab_to_new_window(&mut self, source: u64) {
         let executable = std::env::current_exe();
         match executable.and_then(|executable| self.begin_tab_transfer(source, executable, None)) {
-            Ok(()) => self.toast("Moving tab to a new window…", false),
-            Err(error) => self.toast(format!("Tab could not be moved: {error}"), true),
+            Ok(()) => self.toast("Moving tab to a new window…"),
+            Err(error) => self.toast_error(TAB_MOVE_FAILED, &error.to_string()),
         }
     }
     pub(super) fn begin_tab_transfer(
@@ -804,7 +805,7 @@ impl Foldex {
                             ctx.request_repaint_after(POLL);
                         }
                         Err(error) => {
-                            self.toast(format!("Tab could not be moved: {error}"), true);
+                            self.toast_error(TAB_MOVE_FAILED, &error.to_string());
                             self.window_transfer.completion = Some(Err(error.to_string()));
                         }
                     }
@@ -837,21 +838,21 @@ impl Foldex {
                     match result {
                         Ok(()) => {
                             self.remove_moved_tab(pending.source, ctx);
-                            self.toast("Tab moved to a new window", false);
+                            self.toast("Tab moved to a new window");
                             self.window_transfer.completion = Some(Ok(()));
                         }
                         Err(error) => {
-                            self.toast(format!("Tab could not be moved: {error}"), true);
+                            self.toast_error(TAB_MOVE_FAILED, &error.to_string());
                             self.window_transfer.completion = Some(Err(error.to_string()));
                         }
                     }
                 }
                 Ok(Event::Failed(error)) => {
-                    self.toast(format!("Tab could not be moved: {error}"), true);
+                    self.toast_error(TAB_MOVE_FAILED, &error);
                     self.window_transfer.completion = Some(Err(error));
                 }
                 Err(mpsc::TryRecvError::Disconnected) => {
-                    self.toast("Tab could not be moved: the window worker stopped", true);
+                    self.toast_error(TAB_MOVE_FAILED, "The window worker stopped");
                     self.window_transfer.completion = Some(Err("The window worker stopped".into()));
                 }
                 Err(mpsc::TryRecvError::Empty) => {

@@ -149,7 +149,7 @@ fn offline_error_keeps_cached_rows_and_never_automatically_retries() {
     assert_eq!(data.resources().len(), 1);
     assert!(!data.resources()[0].connected);
     assert!(data.has_error() && data.status().contains("Retry"));
-    assert!(data.detail().contains("unavailable"));
+    assert!(data.detail().contains("network"));
     for _ in 0..100 {
         data.service(true);
     }

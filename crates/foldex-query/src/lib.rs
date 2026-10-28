@@ -30,7 +30,7 @@ impl Conditions {
                 .sum::<usize>()
                 > 16 * 1024
         {
-            return Err("Search conditions exceed their path budget".into());
+            return Err("There are too many excluded folders or they are too long".into());
         }
         if self
             .min_bytes

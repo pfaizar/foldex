@@ -192,7 +192,10 @@ impl Foldex {
             pane.recycle_busy = service.pending || service.loading || service.error.is_some();
             pane.loading = service.loading || pane.snapshot.is_none() && service.error.is_none();
             if let Some(error) = &service.error {
-                pane.error = Some(error.clone());
+                pane.error = Some(crate::friendly::present(
+                    "Couldn't finish that Recycle Bin action",
+                    error,
+                ));
                 pane.loading = false;
             }
             if let Some(model) = service.model.as_ref()

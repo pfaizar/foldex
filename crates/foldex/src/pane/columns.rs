@@ -1623,13 +1623,19 @@ impl Pane {
             text
         };
         let tooltip = if let Some(error) = &self.columns.output.error {
-            error.clone()
+            crate::friendly::present("Couldn't calculate this value", error)
         } else if let Some(stats) =
             stats.filter(|s| matches!(s.state, State::Partial | State::Unavailable))
         {
-            stats.error.clone().unwrap_or_else(|| format!("Incomplete recursive coverage: {} unreadable, {} links, {} offline, {} depth limits, {} entry limits. Shown counts and bytes are lower bounds.",
-                    stats.issues.unreadable, stats.issues.skipped_reparse, stats.issues.skipped_offline,
-                    stats.issues.depth_limited, stats.issues.entry_limited))
+            match stats.error.as_deref() {
+                Some(error) => crate::friendly::present("Couldn't calculate this value", error),
+                None => crate::friendly::with_detail(
+                    "Some items couldn't be read or counted, so this number may be lower than the real one.",
+                    &format!("Incomplete recursive coverage: {} unreadable, {} links, {} offline, {} depth limits, {} entry limits. Shown counts and bytes are lower bounds.",
+                        stats.issues.unreadable, stats.issues.skipped_reparse, stats.issues.skipped_offline,
+                        stats.issues.depth_limited, stats.issues.entry_limited),
+                ),
+            }
         } else if busy {
             "Calculating in the background…".into()
         } else {

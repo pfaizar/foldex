@@ -103,7 +103,7 @@ impl Library {
                 self.busy = true;
                 self.send(Request::List);
             }
-            Err(error) => self.status = Some((error.to_string(), true)),
+            Err(error) => self.status = Some(failed("Couldn't open the theme library", &error.to_string())),
         }
     }
     fn send(&mut self, request: Request) -> bool {
@@ -182,7 +182,7 @@ impl Library {
             }
             Err(error) => {
                 self.preferences_error = Some(error.to_string());
-                self.status = Some((error.to_string(), true));
+                self.status = Some(failed("Couldn't save your appearance settings", &error.to_string()));
             }
         }
     }
@@ -207,7 +207,9 @@ impl Library {
                     self.busy = false;
                     match result {
                         Ok(schemes) => self.schemes = schemes,
-                        Err(error) => self.status = Some((error, true)),
+                        Err(error) => {
+                            self.status = Some(failed("Couldn't read your saved themes", &error))
+                        }
                     }
                 }
                 Reply::Changed(result, imported) => {
@@ -226,7 +228,9 @@ impl Library {
                             selected = Some(Selection { scheme, imported });
                         }
                         Ok(None) => self.status = None,
-                        Err(error) => self.status = Some((error, true)),
+                        Err(error) => {
+                            self.status = Some(failed("Couldn't save that theme", &error))
+                        }
                     }
                 }
                 Reply::Exported(result) => {
@@ -234,7 +238,7 @@ impl Library {
                     self.status = match result {
                         Ok(true) => Some(("Theme exported with both color modes.".into(), false)),
                         Ok(false) => None,
-                        Err(error) => Some((error, true)),
+                        Err(error) => Some(failed("Couldn't export the theme", &error)),
                     };
                 }
                 Reply::Preferences(result) => {
@@ -242,8 +246,10 @@ impl Library {
                     if let Err(error) = result {
                         self.last_preferences = None;
                         self.preferences_error = Some(error.clone());
-                        self.status =
-                            Some((format!("Appearance could not be saved: {error}"), true));
+                        self.status = Some(failed(
+                            "Couldn't save your appearance settings",
+                            &format!("Appearance could not be saved: {error}"),
+                        ));
                     } else {
                         self.preferences_error = None;
                     }
@@ -303,6 +309,10 @@ impl Library {
     }
 }
 
+/// A failure for the Settings popup: plain wording for people, raw text kept for Developer Mode.
+fn failed(what: &str, error: &str) -> (String, bool) {
+    (crate::friendly::present(what, error), true)
+}
 fn same_name(left: &str, right: &str) -> bool {
     left.to_lowercase() == right.to_lowercase()
 }

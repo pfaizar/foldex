@@ -291,7 +291,10 @@ impl GoTo {
                     ..
                 } if generation == self.navigation => {
                     self.loading = false;
-                    self.error = Some(message);
+                    self.error = Some(crate::friendly::present(
+                        "Couldn't open that folder",
+                        &message,
+                    ));
                     self.view_ready = true;
                     if let Some(menu) = &mut self.menu {
                         menu.view_ready = true;

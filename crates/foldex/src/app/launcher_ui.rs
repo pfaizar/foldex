@@ -383,7 +383,7 @@ impl Foldex {
             self.close_launcher(false);
             if self.benchmark.is_none() {
                 self.show_explorer(ctx);
-                self.toast("Windows could not position the launcher", true);
+                self.toast_error("", "Windows could not position the launcher");
             }
             return;
         }

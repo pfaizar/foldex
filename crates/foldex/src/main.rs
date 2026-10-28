@@ -7,6 +7,7 @@ mod commands;
 mod context;
 mod cut_state;
 mod drag_drop;
+mod friendly;
 mod goto;
 mod home_history;
 mod hotkeys;
@@ -50,7 +51,10 @@ fn main() -> eframe::Result {
     // start network checks, or create a browser/GPU runtime.
     if args.iter().any(|arg| arg == "--uninstall-integration") {
         if let Err(error) = integration::uninstall() {
-            installation::show_error(&error);
+            installation::show_error(&friendly::simple(
+                "Couldn't turn off the Explorer integration",
+                &error,
+            ));
             std::process::exit(1);
         }
         return Ok(());
@@ -128,7 +132,7 @@ fn main() -> eframe::Result {
                 .unwrap_or_default()
         });
     let _running_installation = installation::claim(&exe_dir).map_err(|error| {
-        installation::show_error(&error.to_string());
+        installation::show_error(&friendly::simple("Foldex couldn't start", &error.to_string()));
         eframe::Error::AppCreation(Box::new(error))
     })?;
     let state_dir = startup_transfer
@@ -167,7 +171,7 @@ fn main() -> eframe::Result {
         .map_err(|error| eframe::Error::AppCreation(Box::new(error)))?;
     persistence::shared::load(&preferences_path, &mut session_value)
         .map_err(|error| {
-            installation::show_error(&format!("Shared preferences could not be read: {error}\n\nThe original file was preserved at {}. A previous valid version, when available, is stored beside it as foldex-preferences.previous.json.",preferences_path.display()));
+            installation::show_error(&format!("{}\n\nThe original file was preserved at {}. A previous valid version, when available, is stored beside it as foldex-preferences.previous.json.", friendly::simple("Your saved settings couldn't be read", &error.to_string()), preferences_path.display()));
             eframe::Error::AppCreation(Box::new(error))
         })?;
     let session: app::Session = serde_json::from_value(session_value)
@@ -429,7 +433,8 @@ fn main() -> eframe::Result {
         && let Err(error) = updates::finish_handoff()
     {
         installation::show_error(&format!(
-            "{error}\nYour current installation is unchanged. Open Foldex to try again."
+            "{}\nYour current installation is unchanged. Open Foldex to try again.",
+            friendly::simple("Couldn't start the update", &error)
         ));
     }
     result

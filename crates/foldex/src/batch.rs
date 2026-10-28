@@ -318,12 +318,15 @@ impl BatchRename {
                         .color(theme.dim()),
                 );
                 ui.separator();
-                let warning = popup.error.clone().or_else(|| {
-                    popup
-                        .preview
-                        .as_ref()
-                        .and_then(|preview| preview.rows.iter().find_map(|row| row.error.clone()))
-                });
+                let warning = popup
+                    .error
+                    .clone()
+                    .or_else(|| {
+                        popup.preview.as_ref().and_then(|preview| {
+                            preview.rows.iter().find_map(|row| row.error.clone())
+                        })
+                    })
+                    .map(|message| crate::friendly::present("Couldn't rename these items", &message));
                 if let Some(message) = &warning {
                     popup.last_warning.clone_from(message);
                 }
@@ -423,7 +426,10 @@ impl BatchRename {
                                         row.after,
                                         row.error
                                             .as_ref()
-                                            .map(|error| format!(". {error}"))
+                                            .map(|error| format!(
+                                                ". {}",
+                                                crate::friendly::present("Couldn't rename this item", error)
+                                            ))
                                             .unwrap_or_default()
                                     );
                                     result_row(
@@ -510,7 +516,7 @@ impl BatchRename {
                                             Theme::color(theme.danger),
                                             true,
                                         );
-                                        hit.on_hover_text(error);
+                                        hit.on_hover_text(crate::friendly::present("Couldn't rename this item", error));
                                     } else {
                                         hit.on_hover_text(format!(
                                             "{} → {}",
@@ -1286,17 +1292,17 @@ fn make_plan(
                 if let Some(other) = source_keys.insert(key, index) {
                     pending_errors.push((
                         other,
-                        "The selection refers to the same Windows path more than once".into(),
+                        "The same item is selected more than once".into(),
                     ));
-                    row.error = Some("Duplicate source path".into());
+                    row.error = Some("Selected more than once".into());
                 }
                 let identity = &source.fingerprint.identity;
                 if let Some(other) = identities.insert((identity.volume, identity.id), index) {
                     pending_errors.push((
                         other,
-                        "Multiple selected names refer to the same file object".into(),
+                        "Two selected names point to the same file".into(),
                     ));
-                    row.error = Some("Duplicate file identity or hard-link alias".into());
+                    row.error = Some("Same file as another selected item".into());
                 }
                 if let Ok(after) = &after {
                     row.after = after.clone();
@@ -1308,9 +1314,9 @@ fn make_plan(
                     if let Some(other) = target_keys.insert(OrdinalPath::new(&target), index) {
                         pending_errors.push((
                             other,
-                            "Two items would have the same destination name".into(),
+                            "Two items would end up with the same name".into(),
                         ));
-                        row.error = Some("Duplicate destination name".into());
+                        row.error = Some("Same new name as another item".into());
                     }
                     row_to_entry.push(Some(entries.len()));
                     entries.push(Entry {
@@ -1815,10 +1821,10 @@ fn prepare(entries: &[Entry], strict: bool) -> Result<Prepared, String> {
             .insert(OrdinalPath::new(&entry.source.path), index)
             .is_some()
         {
-            return Err("Duplicate source path".into());
+            return Err("The same item is selected more than once".into());
         }
         if !targets.insert(OrdinalPath::new(&entry.source.parent.join(&entry.target))) {
-            return Err("Duplicate target names".into());
+            return Err("Two items would end up with the same name".into());
         }
         handles.push(handle);
     }

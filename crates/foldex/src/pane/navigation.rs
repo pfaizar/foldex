@@ -35,7 +35,7 @@ impl Pane {
             Route::Folder(path) => self.navigate(path, remember),
             Route::Search(location) => {
                 if let Err(error) = location.validate() {
-                    self.error = Some(error);
+                    self.error = Some(crate::friendly::present("Couldn't start that search", &error));
                     return;
                 }
                 self.navigate(location.scope.clone(), false);

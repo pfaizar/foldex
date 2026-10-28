@@ -76,6 +76,18 @@ impl Foldex {
                                 }
                                 let message = op.message();
                                 if !message.is_empty() {
+                                    // The tracker keeps the raw text; people see the plain version.
+                                    let message = match state {
+                                        platform::operations::State::Failed
+                                        | platform::operations::State::Partial
+                                        | platform::operations::State::Cancelled => {
+                                            crate::friendly::present(
+                                                &format!("{} didn't complete", op.label),
+                                                &message,
+                                            )
+                                        }
+                                        _ => crate::friendly::present_notice(&message),
+                                    };
                                     ui.add(egui::Label::new(message).wrap());
                                 }
                             });

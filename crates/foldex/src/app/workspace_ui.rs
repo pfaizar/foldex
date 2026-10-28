@@ -184,7 +184,7 @@ impl Foldex {
         }
         self.session_dirty = true;
         self.save_due = Some(Instant::now());
-        self.toast("View saved for this folder", false);
+        self.toast("View saved for this folder");
     }
     pub(super) fn apply_folder_view(&mut self) {
         if self.pane().is_virtual() {

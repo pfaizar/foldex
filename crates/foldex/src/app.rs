@@ -23,6 +23,8 @@ mod lifecycle_tests;
 mod operations_ui;
 mod options_ui;
 #[cfg(test)]
+mod developer_tests;
+#[cfg(test)]
 mod persistence_tests;
 pub(crate) mod recycle_ui;
 mod searches_ui;
@@ -61,6 +63,8 @@ pub struct Session {
     pub context_pins: Vec<String>,
     pub hotkeys: Option<Vec<crate::hotkeys::Binding>>,
     pub launcher: crate::launcher::Settings,
+    /// Shows technical error details and enables developer-only tools.
+    pub developer_mode: bool,
 }
 impl Default for Session {
     fn default() -> Self {
@@ -81,6 +85,7 @@ impl Default for Session {
             context_pins: vec![],
             hotkeys: None,
             launcher: Default::default(),
+            developer_mode: false,
         }
     }
 }
@@ -264,6 +269,8 @@ impl Foldex {
     ) -> std::io::Result<Self> {
         let mut session = session;
         session.compact_layouts();
+        crate::friendly::set_developer_mode(session.developer_mode);
+        crate::friendly::set_log_path(theme_path.with_file_name("foldex.log"));
         let persistence = crate::persistence::Persistence::new_session(
             Arc::new({
                 let context = cc.egui_ctx.clone();
@@ -614,9 +621,23 @@ impl Foldex {
             &mut tab.left
         }
     }
-    fn toast(&mut self, text: impl Into<String>, error: bool) {
+    /// An informational toast. Empty text shows nothing, so a silent success never
+    /// produces an empty bubble.
+    fn toast(&mut self, text: impl Into<String>) {
+        let text = text.into();
+        if !text.trim().is_empty() {
+            self.show_toast(text, false);
+        }
+    }
+    /// A failure toast. `what` says in plain words what could not be done and `detail`
+    /// is the raw error, which only appears with Developer Mode on.
+    fn toast_error(&mut self, what: &str, detail: &str) {
+        let text = crate::friendly::present(what, detail);
+        self.show_toast(text, true);
+    }
+    fn show_toast(&mut self, text: String, error: bool) {
         self.toast = Some(Toast {
-            text: text.into(),
+            text,
             until: Instant::now() + Duration::from_secs(if error { 8 } else { 4 }),
             error,
             opacity: 0.0,
@@ -624,12 +645,20 @@ impl Foldex {
             suspended_at: None,
         });
     }
+    /// Reveals the Developer Mode error log in Windows Explorer.
+    fn show_error_log(&mut self) {
+        match crate::friendly::log_path().filter(|path| path.is_file()) {
+            Some(path) => self.job(Job::Reveal(path)),
+            None => self.toast("No errors have been logged yet"),
+        }
+    }
     fn job(&mut self, j: Job) {
         if self.pane().is_recycle_bin() && !recycle_ui::job_allowed(&j) {
             return;
         }
+        let what = j.failure_context();
         if let Err(e) = self.platform.try_submit(j) {
-            self.toast(e, true);
+            self.toast_error(what, &e);
         }
     }
     fn remember(&mut self, p: PathBuf) {
@@ -771,13 +800,13 @@ impl Foldex {
                     self.inspector_view = Some(view);
                 }
                 Err(error) => {
-                    self.toast(error.to_string(), true);
+                    self.toast_error("Couldn't open the preview pane", &error.to_string());
                     return;
                 }
             }
         }
         if let Err(error) = self.inspector_view.as_mut().unwrap().open_path(path) {
-            self.toast(error.to_string(), true);
+            self.toast_error("Couldn't preview that item", &error.to_string());
         }
     }
     fn sync_inspector(&mut self) {
@@ -820,7 +849,7 @@ impl Foldex {
                 && let Some(view) = &mut self.inspector_view
                 && let Err(error) = view.refresh()
             {
-                self.toast(error.to_string(), true);
+                self.toast_error("Couldn't refresh the preview", &error.to_string());
             }
         }
     }
@@ -965,7 +994,7 @@ impl Foldex {
                         ) {
                             Ok(batch) => self.batch = Some(batch),
                             Err(e) => {
-                                self.toast(e.to_string(), true);
+                                self.toast_error("Couldn't open Rename", &e.to_string());
                                 return;
                             }
                         }
@@ -982,7 +1011,9 @@ impl Foldex {
                     .join("\n");
                 self.ui_context.copy_text(text);
             }
-            Action::Notify(message) => self.toast(message, true),
+            Action::Notify(message) => {
+                self.toast_error("Couldn't use the selected files", &message)
+            }
             Action::Properties(paths) => self.job(Job::Properties(paths)),
             Action::NewFolder(path) => {
                 self.edit = Some(EditDialog {
@@ -1010,11 +1041,11 @@ impl Foldex {
             }
             Action::ToggleInspector => {
                 if self.pane().is_home() && self.pane().primary_selected_path().is_none() {
-                    self.toast("Select a recent item to inspect it", false);
+                    self.toast("Select a recent item to inspect it");
                     return;
                 }
                 if !crate::pane::inspector_available(&self.ui_context, &self.theme) {
-                    self.toast("Widen the window to show the inspector", false);
+                    self.toast("Widen the window to show the inspector");
                     return;
                 }
                 self.inspector = !self.inspector;
@@ -1030,10 +1061,7 @@ impl Foldex {
                 if crate::bookmarks::toggle(&mut self.bookmarks, p) {
                     self.session_dirty = true;
                 } else {
-                    self.toast(
-                        "Bookmarks are full (32). Remove one before adding another.",
-                        false,
-                    );
+                    self.toast("Bookmarks are full (32). Remove one before adding another.");
                 }
             }
             Action::FolderOptions => self.job(Job::FolderOptions),
@@ -1156,12 +1184,13 @@ impl Foldex {
                 }
                 platform::Event::ExplorerIntegration { id, result } => {
                     if let Err(error) = &result {
-                        self.toast(error.clone(), true);
+                        self.toast_error("Couldn't change the Windows Explorer setting", error);
                     }
                     self.options_popup.finish_integration(id, result);
                 }
                 platform::Event::Done { message, refresh } => {
-                    self.toast(message, false);
+                    // Silent successes (Reveal, Open console, New window…) carry no text.
+                    self.toast(crate::friendly::present_notice(&message));
                     if refresh {
                         for (i, t) in self.tabs.iter_mut().enumerate() {
                             if i == self.active {
@@ -1179,14 +1208,18 @@ impl Foldex {
                         }
                     }
                 }
-                platform::Event::Failed(e) => {
+                platform::Event::Failed { what, detail } => {
                     if !self.explorer_visible {
                         self.show_explorer(ctx);
                     }
-                    self.toast(e, true);
+                    self.toast_error(what, &detail);
                 }
-                platform::Event::ResolveFailed { id, message } => {
+                platform::Event::ResolveFailed { id, path, detail } => {
                     if id == self.resolve_id {
+                        let message = crate::friendly::present(
+                            &format!("Couldn't open {}", path.display()),
+                            &detail,
+                        );
                         for tab in &mut self.tabs {
                             let pane = if tab.left.id == self.resolve_target {
                                 Some(&mut tab.left)
@@ -1201,7 +1234,7 @@ impl Foldex {
                                 p.error = Some(message.clone());
                             }
                         }
-                        self.toast(message, true);
+                        self.show_toast(message, true);
                     }
                 }
                 platform::Event::Metrics {
@@ -1273,17 +1306,25 @@ impl Foldex {
                 }
                 platform::Event::Preview { id, content, .. } => {
                     if id == u64::MAX {
-                        if let PreviewContent::Text(s) = content {
-                            match Theme::read(&s) {
+                        match content {
+                            PreviewContent::Text(s) => match Theme::read(&s) {
                                 Ok(mut t) => {
                                     t.resolve_system(ctx.system_theme());
                                     self.theme = t;
                                     self.options_popup.theme_palette_changed(&mut self.theme);
                                     self.theme.apply(ctx);
-                                    self.toast("Theme reloaded", false);
+                                    self.toast("Theme reloaded");
                                 }
-                                Err(e) => self.toast(format!("Theme: {e}"), true),
+                                Err(e) => self.toast_error(
+                                    "The theme file has a problem and wasn't loaded",
+                                    &format!("Theme: {e}"),
+                                ),
+                            },
+                            // A missing or unreadable theme file used to reload silently.
+                            PreviewContent::Info { message, .. } => {
+                                self.toast_error("Couldn't reload the theme", &message)
                             }
+                            PreviewContent::Image { .. } => {}
                         }
                     }
                 }
@@ -1427,7 +1468,9 @@ impl Foldex {
             self.next_group_tab(false);
             crate::keyboard::request_id(ctx, crate::keyboard::listing_id(self.pane().id));
         }
-        if shortcut(Modifiers::CTRL | Modifiers::ALT, Key::P) {
+        // Performance details are a Developer Mode tool; the shortcut does nothing otherwise.
+        if crate::friendly::developer_mode() && shortcut(Modifiers::CTRL | Modifiers::ALT, Key::P)
+        {
             self.show_stats = !self.show_stats;
         }
         if !crate::keyboard::composing(ctx) {
@@ -1600,8 +1643,16 @@ impl Foldex {
                 }) {
                     self.options_popup
                         .finish_integration(request.id, Err(error.clone()));
-                    self.toast(error, true);
+                    self.toast_error("Couldn't change the Windows Explorer setting", &error);
                 }
+            }
+            match response.developer {
+                Some(options_ui::DeveloperAction::PerformanceDetails) => {
+                    self.show_stats = true;
+                    self.options = false;
+                }
+                Some(options_ui::DeveloperAction::ErrorLog) => self.show_error_log(),
+                None => {}
             }
             apply_theme = response.apply;
             save_theme = response.save;
@@ -3184,7 +3235,7 @@ impl eframe::App for Foldex {
                     .unwrap_or_default();
                 if ctx.input(|input| input.pointer.primary_down()) {
                     if let Err(error) = self.file_drag.start(&paths) {
-                        self.toast(error.to_string(), true);
+                        self.toast_error("Couldn't start dragging the files", &error.to_string());
                     }
                     self.file_drag_release = Some(pointer);
                     ctx.stop_dragging();
@@ -3443,6 +3494,11 @@ impl eframe::App for Foldex {
         if retire_toast {
             self.toast = None;
         }
+        if self.show_stats && !crate::friendly::developer_mode() {
+            // Developer Mode was switched off (here or in another window).
+            self.show_stats = false;
+            foldex_ui::components::close_dialog(&ctx, Id::new("performance-dialog"));
+        }
         if self.show_stats {
             if self.metrics_requested.elapsed() >= Duration::from_secs(1) {
                 self.metrics_requested = Instant::now();
@@ -3613,6 +3669,7 @@ impl Foldex {
             context_pins: self.context.pins(),
             hotkeys: Some(self.hotkeys.bindings().to_vec()),
             launcher: self.launcher.settings.clone(),
+            developer_mode: crate::friendly::developer_mode(),
         }
     }
     fn service_session(&mut self, ctx: &egui::Context) {
@@ -3635,9 +3692,9 @@ impl Foldex {
                 }) {
                     Ok(Some(session)) => self.apply_shared_preferences(session),
                     Ok(None) => {}
-                    Err(error) => self.toast(
-                        format!("Shared preferences could not be refreshed: {error}"),
-                        true,
+                    Err(error) => self.toast_error(
+                        "Your latest settings couldn't be loaded",
+                        &format!("Shared preferences could not be refreshed: {error}"),
                     ),
                 }
             }
@@ -3670,6 +3727,7 @@ impl Foldex {
         self.inspector.hash(&mut hash);
         self.inspector_target_width.to_bits().hash(&mut hash);
         self.launcher.settings.hash(&mut hash);
+        crate::friendly::developer_mode().hash(&mut hash);
         let signature = hash.finish();
         if signature != self.session_signature {
             self.session_signature = signature;
@@ -3688,17 +3746,16 @@ impl Foldex {
                     if closing && !self.explorer_visible {
                         self.show_explorer(ctx);
                     }
-                    self.toast(
-                        format!(
-                            "Workspace could not be saved: {e}{}",
-                            if closing {
-                                ". Close again to exit without saving."
-                            } else {
-                                ""
-                            }
-                        ),
-                        true,
+                    let text = crate::friendly::present_with_note(
+                        "Your workspace couldn't be saved",
+                        &format!("Workspace could not be saved: {e}"),
+                        if closing {
+                            "Close again to exit without saving."
+                        } else {
+                            ""
+                        },
                     );
+                    self.show_toast(text, true);
                     self.session_dirty = true;
                     self.save_due = None;
                 }
@@ -3729,7 +3786,10 @@ impl Foldex {
                 }
                 Err(e) => {
                     let retryable = e.retryable();
-                    self.toast(format!("Workspace could not be queued: {e}"), true);
+                    self.toast_error(
+                        "Your workspace couldn't be saved",
+                        &format!("Workspace could not be queued: {e}"),
+                    );
                     if self.updates.exit_pending {
                         self.cancel_update_exit(ctx, "The workspace could not be queued for saving. Installation was cancelled.");
                         self.save_due = None;
@@ -3746,8 +3806,10 @@ impl Foldex {
             if self.updates.exit_pending
                 && let Some(error) = self.options_popup.theme_preferences_error()
             {
-                let error =
-                    format!("Appearance could not be saved: {error}. Installation was cancelled.");
+                let error = crate::friendly::present(
+                    "Installation was cancelled because your appearance settings couldn't be saved",
+                    error,
+                );
                 self.cancel_update_exit(ctx, &error);
                 return;
             }
@@ -3805,6 +3867,7 @@ impl Foldex {
                 session.sidebar_preferences,
             );
         }
+        crate::friendly::set_developer_mode(session.developer_mode);
         session.home_history.normalize();
         if self.home_history != session.home_history {
             self.home_history = session.home_history;
@@ -3826,13 +3889,13 @@ impl Foldex {
                 .collect::<Vec<_>>()
                 .join(";");
             if let Err(error) = self.launcher.apply_launcher_roots(&roots) {
-                self.toast(error, true);
+                self.toast_error("Couldn't update the launcher search folders", &error);
             }
         }
         if self.launcher.settings.hotkey != settings.hotkey
             && let Err(error) = self.launcher.apply_launcher_shortcut(&settings.hotkey)
         {
-            self.toast(error, true);
+            self.toast_error("Couldn't update the launcher shortcut", &error);
         }
         self.hotkeys
             .set_launcher_shortcut(&self.launcher.settings.hotkey);

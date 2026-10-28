@@ -21,6 +21,7 @@ pub const MAX_RESOURCES: usize = 64;
 const MAX_NAME_UNITS: usize = 512;
 const MAX_REPLY_BYTES: usize = 1024 * 1024;
 const HELPER_ARGUMENT: &str = "--foldex-network-snapshot";
+const NETWORK_FAILED: &str = "Couldn't load your network connections";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Resource {
@@ -302,7 +303,10 @@ impl Data {
             }) {
             Ok(_) => self.action = Some(receiver),
             Err(error) => {
-                self.error = Some(format!("Could not open Windows network controls: {error}"))
+                self.error = Some(crate::friendly::present(
+                    "Couldn't open the Windows network settings",
+                    &error.to_string(),
+                ))
             }
         }
     }
@@ -312,7 +316,7 @@ impl Data {
         }
         self.requested = false;
         if let Err(error) = self.start(discover) {
-            self.error = Some(error);
+            self.error = Some(crate::friendly::present(NETWORK_FAILED, &error));
         }
     }
     fn start(
@@ -360,7 +364,13 @@ impl Data {
                 if !cancelled {
                     match outcome {
                         Ok(snapshot) => {
-                            let snapshot = snapshot.normalize();
+                            let mut snapshot = snapshot.normalize();
+                            snapshot.warning = snapshot.warning.map(|warning| {
+                                crate::friendly::present(
+                                    "Some network connections couldn't be loaded",
+                                    &warning,
+                                )
+                            });
                             if snapshot != self.snapshot {
                                 self.snapshot = snapshot;
                                 self.revision = self.revision.wrapping_add(1);
@@ -368,7 +378,7 @@ impl Data {
                             self.loaded = true;
                             self.error = None;
                         }
-                        Err(error) => self.error = Some(error),
+                        Err(error) => self.error = Some(crate::friendly::present(NETWORK_FAILED, &error)),
                     }
                 }
             }
@@ -385,7 +395,7 @@ impl Data {
                 self.action = None;
                 match outcome {
                     Ok(refresh) => self.requested |= refresh && active,
-                    Err(error) => self.error = Some(error),
+                    Err(error) => self.error = Some(crate::friendly::present(NETWORK_FAILED, &error)),
                 }
             }
         }

@@ -22,6 +22,7 @@ const FIELDS: &[&str] = &[
     "hotkeys",
     "launcher",
     "saved_searches",
+    "developer_mode",
 ];
 
 #[derive(Serialize, Deserialize)]

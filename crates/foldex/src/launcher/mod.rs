@@ -613,7 +613,7 @@ impl Launcher {
                     Some(SearchEvent::Failed { request, message }) if request == file.request => {
                         file.building = false;
                         file.advance = true;
-                        self.status = message;
+                        self.status = crate::friendly::present("Couldn't search your files", &message);
                     }
                     None => break,
                     _ => {}
@@ -638,7 +638,7 @@ impl Launcher {
             match result {
                 Ok(()) => return Some(true),
                 Err(error) => {
-                    self.status = error;
+                    self.status = crate::friendly::present("Couldn't copy that", &error);
                     return Some(false);
                 }
             }

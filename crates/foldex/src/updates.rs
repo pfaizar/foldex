@@ -377,7 +377,10 @@ impl Updates {
                 ui.label(format!("Current version: {}", env!("CARGO_PKG_VERSION")));
                 ui.label(&self.status);
                 if let Some(error) = &self.error {
-                    ui.colored_label(foldex_ui::Theme::color(theme.danger), error);
+                    ui.colored_label(
+                        foldex_ui::Theme::color(theme.danger),
+                        crate::friendly::present("Couldn't complete the update", error),
+                    );
                 }
                 ui.add_space(theme.metrics().gap);
                 let previous = self.settings.clone();

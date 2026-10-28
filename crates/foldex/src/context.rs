@@ -347,7 +347,10 @@ impl ContextMenu {
                 }
                 Err(error) => {
                     if let Some(popup) = &mut self.popup {
-                        popup.error = Some(error.clone());
+                        popup.error = Some(crate::friendly::present(
+                            "Couldn't load more actions",
+                            &error,
+                        ));
                         popup.loading = false;
                     }
                     update.errors.push(error);
@@ -385,7 +388,10 @@ impl ContextMenu {
                     {
                         // A provider/load failure belongs in More actions. It
                         // must not interrupt a perfectly usable core command.
-                        popup.error = Some(message);
+                        popup.error = Some(crate::friendly::present(
+                            "Couldn't load more actions",
+                            &message,
+                        ));
                         popup.loading = false;
                     } else {
                         // A committed command can complete after the popup has
@@ -1120,6 +1126,7 @@ impl Popup {
     }
 
     fn builtin_failed(&mut self, kind: BuiltinKind, error: String) {
+        let error = crate::friendly::present("Couldn't load the Windows menu items", &error);
         if kind == BuiltinKind::New {
             if let Some(row) = self.flat.iter_mut().find(|row| row.id == APP_NEW + 0xf000) {
                 row.label = "Windows templates unavailable".into();

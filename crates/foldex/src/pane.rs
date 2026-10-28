@@ -1310,7 +1310,7 @@ impl Pane {
                     self.loading = false;
                     self.scanning = false;
                     self.finish_search_timer();
-                    self.error = Some(message);
+                    self.error = Some(crate::friendly::present("Couldn't search this folder", &message));
                 }
                 SearchEvent::Selection { selection, result } => {
                     if let Some((id, command, ranges)) = self.pending_action.take() {
@@ -1318,7 +1318,10 @@ impl Pane {
                             match result {
                                 Ok(paths) => self.deferred_action = Some(command.action(paths)),
                                 Err(error) => {
-                                    let message = error.to_string();
+                                    let message = crate::friendly::present(
+                                        "Couldn't use the selected files",
+                                        &error.to_string(),
+                                    );
                                     self.deferred_action = Some(Action::Notify(message.clone()));
                                     self.error = Some(message);
                                 }
@@ -1440,7 +1443,7 @@ impl Pane {
                             }
                             if restored.truncated {
                                 self.error = Some(
-                                    "Selection changed because its restoration budget was reached"
+                                    "Some of your selection couldn't be restored after the change"
                                         .into(),
                                 );
                             }
@@ -1456,7 +1459,10 @@ impl Pane {
                 } if generation == self.nav_generation && !self.recursive => {
                     self.loading = false;
                     self.scanning = false;
-                    self.error = Some(message);
+                    self.error = Some(crate::friendly::present(
+                        "Couldn't open this folder",
+                        &message,
+                    ));
                 }
                 _ => {}
             }
@@ -1558,7 +1564,7 @@ impl Pane {
             self.select_all_pending = false;
             self.invert_pending = false;
             if total > count {
-                self.error = Some("Selection supports up to 4,294,967,296 rows in one view".into());
+                self.error = Some("This view has too many items to select in one go".into());
             }
             self.request_window(self.window_start, false);
         }

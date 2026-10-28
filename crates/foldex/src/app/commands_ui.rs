@@ -135,7 +135,7 @@ impl Foldex {
             return;
         }
         if self.pane().is_home() && folder_only(command) {
-            self.toast("Open a folder to use this command", false);
+            self.toast("Open a folder to use this command");
             return;
         }
         match command {
@@ -270,7 +270,7 @@ impl Foldex {
             Command::SaveFolderView => self.save_folder_view(),
             Command::InspectorDetails => {
                 if !crate::pane::inspector_available(ctx, &self.theme) {
-                    self.toast("Widen the window to show the inspector", false);
+                    self.toast("Widen the window to show the inspector");
                     return;
                 }
                 self.inspector_details = !self.inspector_details;
@@ -388,11 +388,19 @@ impl Foldex {
                 self.active = old.0.min(self.tabs.len() - 1);
                 self.active_pane = old.1;
             }
-            if let Some(message) = update.message.filter(|m| !m.is_empty()) {
-                self.toast(message, false);
-            }
-            for error in update.errors {
-                self.toast(error, true);
+            // One toast per result. Showing each error in turn left only the last one
+            // visible, which was usually a rollback detail rather than the cause.
+            if update.errors.is_empty() {
+                if let Some(message) = update.message {
+                    self.toast(message);
+                }
+            } else {
+                let what = update
+                    .message
+                    .as_deref()
+                    .filter(|message| !message.is_empty())
+                    .unwrap_or("Couldn't rename the selected items");
+                self.toast_error(what, &update.errors.join("\n"));
             }
         }
         self.context.set_history(self.platform.history_state());
@@ -401,8 +409,8 @@ impl Foldex {
             self.pending_focus_exit = Some((backwards, ctx.cumulative_frame_nr()));
             ctx.memory_mut(|memory| memory.move_focus(egui::FocusDirection::None));
         }
-        for error in update.errors {
-            self.toast(error, true);
+        if !update.errors.is_empty() {
+            self.toast_error("Couldn't complete that action", &update.errors.join("\n"));
         }
         if update.invoked {
             self.pane_mut().refresh();
@@ -413,7 +421,7 @@ impl Foldex {
         }
         if let Some(core) = update.core_action {
             if core.origin != 0 && !self.focus_pane(core.origin) {
-                self.toast("The command's panel has closed", true);
+                self.toast_error("", "The command's panel has closed");
                 return;
             }
             use crate::context::CoreVerb;
@@ -437,7 +445,7 @@ impl Foldex {
                     } else if !self.pane().is_home() {
                         self.action(Action::Paste(self.pane().path.clone()));
                     } else {
-                        self.toast("Open a folder before pasting files", false);
+                        self.toast("Open a folder before pasting files");
                     }
                 }
                 CoreVerb::Rename => self.action(Action::RenameMany(core.paths)),

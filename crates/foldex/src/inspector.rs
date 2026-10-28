@@ -914,7 +914,17 @@ impl Inspector {
                 } else if let Some(Data::Info { message, .. } | Data::Binary { message, .. }) =
                     &self.content
                 {
-                    preview.label(egui::RichText::new(message).color(theme.dim()));
+                    let text = match message.strip_prefix("Preview unavailable: ") {
+                        Some(detail) => crate::friendly::present("Preview unavailable", detail),
+                        None if message.starts_with("This location can't be previewed: ") => {
+                            crate::friendly::with_detail(
+                                "This location can't be previewed.",
+                                message,
+                            )
+                        }
+                        None => crate::friendly::present_authored("Preview unavailable", message),
+                    };
+                    preview.label(egui::RichText::new(text).color(theme.dim()));
                 }
             });
         });
@@ -2114,7 +2124,7 @@ fn read_source(path: &Path, canceled: &dyn Fn() -> bool) -> io::Result<Source> {
     if let Err(error) = foldex_fs::capabilities::background_path(path) {
         return Ok(Source::Info {
             info: Some(info),
-            message: error.to_string(),
+            message: format!("This location can't be previewed: {error}"),
         });
     }
     if (!caps.is_dir() && !caps.can_read_content()) || (caps.is_dir() && !caps.can_enumerate()) {
@@ -2192,7 +2202,7 @@ fn read_source(path: &Path, canceled: &dyn Fn() -> bool) -> io::Result<Source> {
         file.take((IMAGE_FILE_BYTES + 1 - bytes.len()) as u64)
             .read_to_end(&mut bytes)?;
         if bytes.len() > IMAGE_FILE_BYTES {
-            return Err(io::Error::other("image exceeds the 16 MiB preview limit"));
+            return Err(io::Error::other("This image is too large to preview"));
         }
         let (original, pixels) = decode_image(&bytes, format.unwrap())?;
         let preview = pixels.size;

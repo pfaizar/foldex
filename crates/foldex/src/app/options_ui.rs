@@ -73,6 +73,18 @@ enum OptionId {
     Hover,
     Danger,
     Reset,
+    DeveloperMode,
+    PerformanceDetails,
+    ErrorLog,
+}
+/// Tools that exist only while Developer Mode is on. Add new ones here.
+fn is_developer_option(option: OptionId) -> bool {
+    matches!(option, OptionId::PerformanceDetails | OptionId::ErrorLog)
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum DeveloperAction {
+    PerformanceDetails,
+    ErrorLog,
 }
 struct Definition {
     id: OptionId,
@@ -315,6 +327,21 @@ const OPTIONS: &[Definition] = &[
         title: "Reset Appearance",
         description: "Restore the default colors, sizing and animation settings.",
     },
+    Definition {
+        id: OptionId::DeveloperMode,
+        title: "Developer Mode",
+        description: "Show technical error details and unlock developer tools.",
+    },
+    Definition {
+        id: OptionId::PerformanceDetails,
+        title: "Developer: Performance Details",
+        description: "Live frame timing, memory and handles. Also Ctrl+Alt+P.",
+    },
+    Definition {
+        id: OptionId::ErrorLog,
+        title: "Developer: Error Log",
+        description: "Show the file where technical error details are recorded.",
+    },
 ];
 
 #[derive(Clone, Copy, PartialEq)]
@@ -350,6 +377,7 @@ pub(super) struct OptionsResponse {
     pub integration: Option<IntegrationRequest>,
     pub sidebar_changed: bool,
     pub updates: bool,
+    pub developer: Option<DeveloperAction>,
 }
 
 #[derive(Clone, Copy)]
@@ -388,6 +416,8 @@ pub(super) struct OptionsPopup {
     integration_target: Option<bool>,
     integration_status: Option<crate::integration::Status>,
     integration_error: Option<String>,
+    developer_action: Option<DeveloperAction>,
+    refilter_pending: bool,
     launcher_options: LauncherOptions,
     appearance: AppearanceOptions,
     sidebar_preferences: crate::sidebar::Preferences,
@@ -434,6 +464,8 @@ impl Default for OptionsPopup {
             integration_target: None,
             integration_status: None,
             integration_error: None,
+            developer_action: None,
+            refilter_pending: false,
             launcher_options: LauncherOptions::default(),
             appearance: AppearanceOptions::default(),
             sidebar_preferences: Default::default(),
@@ -499,7 +531,10 @@ impl OptionsPopup {
                 self.integration_error = None;
             }
             Err(error) => {
-                self.integration_error = Some(error);
+                self.integration_error = Some(crate::friendly::present(
+                    "Couldn't change the Windows Explorer setting",
+                    &error,
+                ));
             }
         }
     }
@@ -532,7 +567,12 @@ impl OptionsPopup {
         self.rows.clear();
         self.cache.clear();
         self.activate = None;
+        self.refilter_pending = false;
+        let developer = crate::friendly::developer_mode();
         for (index, option) in OPTIONS.iter().enumerate() {
+            if is_developer_option(option.id) && !developer {
+                continue;
+            }
             let title = self.matcher.score(option.title);
             let detail = self.matcher.score(option.description);
             if title.is_some() || detail.is_some() {
@@ -640,6 +680,9 @@ impl OptionsPopup {
         let restore_child_focus = self.restore_child_focus.take();
         if !self.active {
             self.open(frame);
+        }
+        if self.refilter_pending {
+            self.refilter();
         }
         if theme.radius > 0 {
             self.last_radius = theme.radius;
@@ -1351,6 +1394,7 @@ impl OptionsPopup {
             ctx.request_repaint();
         }
         result.integration = self.integration_request.take();
+        result.developer = self.developer_action.take();
         result.sidebar_changed = std::mem::take(&mut self.sidebar_changed);
         if result.sidebar_changed {
             ctx.request_repaint();
@@ -1414,6 +1458,46 @@ impl OptionsPopup {
                     if response.clicked() || activate {
                         self.updates_requested = true;
                         self.closing = true;
+                    }
+                    return false;
+                }
+                OptionId::DeveloperMode => {
+                    let mut value = crate::friendly::developer_mode();
+                    let response = foldex_ui::components::checkbox(ui, paint, &mut value, "");
+                    self.control_focus(ui, option, &response);
+                    if activate {
+                        value = !value;
+                    }
+                    if response.changed() || activate {
+                        // The saved session picks the flag up on its next signature check.
+                        crate::friendly::set_developer_mode(value);
+                        self.refilter_pending = true;
+                        self.selected = Some(option);
+                        ui.ctx().request_repaint();
+                    }
+                    return false;
+                }
+                OptionId::PerformanceDetails | OptionId::ErrorLog => {
+                    let response = foldex_ui::components::text_button_at(
+                        ui,
+                        rect,
+                        ui.id().with("developer"),
+                        paint,
+                        if option == OptionId::ErrorLog {
+                            "Show"
+                        } else {
+                            "Open"
+                        },
+                        false,
+                    );
+                    self.control_focus(ui, option, &response);
+                    if response.clicked() || activate {
+                        self.developer_action = Some(if option == OptionId::ErrorLog {
+                            DeveloperAction::ErrorLog
+                        } else {
+                            DeveloperAction::PerformanceDetails
+                        });
+                        self.selected = Some(option);
                     }
                     return false;
                 }
@@ -2066,7 +2150,11 @@ mod tests {
     fn searchable_options_keep_only_working_ids_and_valid_selection() {
         let mut popup = OptionsPopup::default();
         popup.open(0);
-        assert_eq!(popup.rows.len(), OPTIONS.len());
+        let public = OPTIONS
+            .iter()
+            .filter(|option| !is_developer_option(option.id))
+            .count();
+        assert_eq!(popup.rows.len(), public);
         assert_eq!(popup.selected, Some(OptionId::FontSize));
         popup.selected = Some(OptionId::Reset);
         popup.query = "inspector font size".into();
@@ -2084,6 +2172,30 @@ mod tests {
         assert_eq!(popup.selected, None);
         popup.move_selection(1);
         assert_eq!(popup.selected, None);
+    }
+
+    #[test]
+    fn developer_tools_appear_in_settings_only_while_developer_mode_is_on() {
+        crate::friendly::set_developer_mode(false);
+        let mut popup = OptionsPopup::default();
+        popup.open(0);
+        let listed = |popup: &OptionsPopup, id| {
+            popup
+                .rows
+                .iter()
+                .any(|(index, _)| OPTIONS[*index].id == id)
+        };
+        assert!(listed(&popup, OptionId::DeveloperMode));
+        assert!(!listed(&popup, OptionId::PerformanceDetails));
+        assert!(!listed(&popup, OptionId::ErrorLog));
+        popup.query = "developer".into();
+        popup.refilter();
+        assert!(!listed(&popup, OptionId::PerformanceDetails));
+        crate::friendly::set_developer_mode(true);
+        popup.refilter();
+        assert!(listed(&popup, OptionId::PerformanceDetails));
+        assert!(listed(&popup, OptionId::ErrorLog));
+        crate::friendly::set_developer_mode(false);
     }
 
     #[test]

@@ -27,7 +27,7 @@ impl SearchLocation {
             || self.query.text.len() > 1024
         {
             return Err(
-                "Search needs an absolute folder and a filename query within 1024 bytes".into(),
+                "Search needs a full folder path and a shorter search text".into(),
             );
         }
         self.query.conditions.validate()

@@ -1278,7 +1278,10 @@ impl Hotkeys {
     fn start_recording(&mut self, command: Command, replace: Option<usize>) {
         self.cancel_recording();
         if let Err(error) = self.native_capture.start() {
-            self.status = Some(error);
+            self.status = Some(crate::friendly::present(
+                "Couldn't start recording the shortcut",
+                &error,
+            ));
             return;
         }
         let replace = if command == Command::Launcher {

@@ -118,6 +118,41 @@ pub enum Job {
     },
 }
 
+impl Job {
+    /// Plain-language start of the sentence shown when this job fails.
+    pub fn failure_context(&self) -> &'static str {
+        match self {
+            Job::ExplorerIntegration { .. } => "Couldn't change the Windows Explorer setting",
+            Job::Open(_) => "Couldn't open that item",
+            Job::FolderOptions => "Couldn't open Folder Options",
+            Job::Properties(_) => "Couldn't open Properties",
+            Job::Launcher { .. } => "Couldn't open the launcher",
+            Job::Application(_) => "Couldn't start that app",
+            Job::Reveal(_) => "Couldn't show that item in Windows Explorer",
+            Job::Explorer(_) => "Couldn't open Windows Explorer",
+            Job::Console(_) => "Couldn't open the console",
+            Job::NewWindow(_) | Job::NewHomeWindow => "Couldn't open a new window",
+            Job::NewFile { .. } => "Couldn't create the file",
+            Job::NewFolder { .. } => "Couldn't create the folder",
+            Job::Rename { .. } => "Couldn't rename that item",
+            Job::Copy { cut: true, .. } => "Couldn't move the selected items",
+            Job::Copy { cut: false, .. } => "Couldn't copy the selected items",
+            Job::DropFiles { .. } => "Couldn't move or copy the dropped items",
+            Job::Recycle(_) => "Couldn't move the selected items to the Recycle Bin",
+            Job::DeletePermanent(_) => "Couldn't delete the selected items",
+            Job::Undo => "Couldn't undo that",
+            Job::Redo => "Couldn't redo that",
+            Job::WriteClipboard { cut: true, .. } => "Couldn't cut the selected items",
+            Job::WriteClipboard { cut: false, .. } => "Couldn't copy the selected items",
+            Job::ReadClipboard { .. } => "Couldn't paste the items",
+            Job::Resolve { .. } => "Couldn't open that location",
+            Job::Preview { .. } => "Couldn't read that file",
+            Job::Save { .. } => "Couldn't save the file",
+            Job::Metrics { .. } => "Couldn't read the performance details",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum PreviewContent {
     Text(String),
@@ -137,7 +172,11 @@ pub enum Event {
         message: String,
         refresh: bool,
     },
-    Failed(String),
+    /// `what` is the plain-language action; `detail` is the raw error for Developer Mode.
+    Failed {
+        what: &'static str,
+        detail: String,
+    },
     Resolved {
         id: u64,
         path: PathBuf,
@@ -145,7 +184,8 @@ pub enum Event {
     },
     ResolveFailed {
         id: u64,
-        message: String,
+        path: PathBuf,
+        detail: String,
     },
     Preview {
         id: u64,
@@ -367,9 +407,10 @@ impl Platform {
                             command.spawn().map(|_| ())
                         });
                         if let Err(error) = result {
-                            let _ = events.try_send(Event::Failed(format!(
-                                "Cannot open the launcher: {error}"
-                            )));
+                            let _ = events.try_send(Event::Failed {
+                                what: "Couldn't open the launcher",
+                                detail: format!("Cannot open the launcher: {error}"),
+                            });
                             wake();
                         }
                         busy.store(false, Ordering::Release);
@@ -476,7 +517,12 @@ impl Platform {
             .ok()
             .or_else(|| self.resolve.result.try_lock().ok()?.take())
             .or_else(|| self.preview.result.try_lock().ok()?.take())
-            .or_else(|| self.properties.try_recv()?.err().map(Event::Failed))
+            .or_else(|| {
+                self.properties.try_recv()?.err().map(|detail| Event::Failed {
+                    what: "Couldn't open Properties",
+                    detail,
+                })
+            })
     }
 }
 
@@ -571,10 +617,14 @@ fn run_shell_job(job: Job, events: &SyncSender<Event>, stop: &AtomicBool, wake: 
     if stop.load(Ordering::Acquire) {
         return;
     }
+    let what = job.failure_context();
     let event = match job {
         Job::Open(path) => match native::open(&path) {
             Ok(()) => Event::Opened(path),
-            Err(error) => Event::Failed(error.to_string()),
+            Err(error) => Event::Failed {
+                what,
+                detail: error.to_string(),
+            },
         },
         Job::Metrics { id } => match native::metrics() {
             Ok(metrics) => Event::Metrics {
@@ -584,7 +634,10 @@ fn run_shell_job(job: Job, events: &SyncSender<Event>, stop: &AtomicBool, wake: 
                 handles: metrics.handles,
                 cpu_seconds: metrics.cpu_seconds,
             },
-            Err(error) => Event::Failed(format!("Process diagnostics: {error}")),
+            Err(error) => Event::Failed {
+                what,
+                detail: format!("Process diagnostics: {error}"),
+            },
         },
         job => {
             let result = match job {
@@ -618,7 +671,10 @@ fn run_shell_job(job: Job, events: &SyncSender<Event>, stop: &AtomicBool, wake: 
                     message: String::new(),
                     refresh: false,
                 },
-                Err(error) => Event::Failed(error.to_string()),
+                Err(error) => Event::Failed {
+                    what,
+                    detail: error.to_string(),
+                },
             }
         }
     };
@@ -669,6 +725,7 @@ fn operation_worker(
             }
             op.start();
         }
+        let what = job.failure_context();
         let (result, refresh) = match job {
             Job::ExplorerIntegration { .. } | Job::Properties(_) | Job::Launcher { .. } => {
                 unreachable!("Independent on-demand shell work")
@@ -786,7 +843,10 @@ fn operation_worker(
                 if refresh {
                     wake();
                 }
-                Event::Failed(error.to_string())
+                Event::Failed {
+                    what,
+                    detail: error.to_string(),
+                }
             }
         };
         if events.send(event).is_err() {
@@ -821,7 +881,8 @@ fn path_worker(
                 },
                 Err(error) => Event::ResolveFailed {
                     id: request.id,
-                    message: format!("Cannot open {}: {error}", request.path.display()),
+                    path: request.path.clone(),
+                    detail: error.to_string(),
                 },
             }
         } else {
@@ -2097,7 +2158,7 @@ mod tests {
         release.send(()).unwrap();
         holder.join().unwrap().unwrap();
         assert!(
-            matches!(event, Some(Event::Failed(_))),
+            matches!(event, Some(Event::Failed { .. })),
             "Open must complete before the mutation is released: {event:?}"
         );
         println!(
