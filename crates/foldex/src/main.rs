@@ -16,6 +16,7 @@ mod installation;
 mod integration;
 mod keyboard;
 mod launcher;
+mod naming;
 mod native_frame;
 mod native_keys;
 mod navigation;
