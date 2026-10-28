@@ -28,6 +28,7 @@ pub enum StockIcon {
     NetworkDrive,
     OfflineNetworkDrive,
     RecycleBin,
+    Computer,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -65,6 +66,7 @@ impl AssetKey {
             StockIcon::NetworkDrive => "network-drive",
             StockIcon::OfflineNetworkDrive => "network-drive-offline",
             StockIcon::RecycleBin => "recycle-bin",
+            StockIcon::Computer => "computer",
         };
         Self::icon_identity(format!("{PREFIX}stock/{name}"), size)
     }
@@ -175,6 +177,7 @@ pub(crate) fn decode(path: &Path) -> Option<NativeIcon> {
             "network-drive" => StockIcon::NetworkDrive,
             "network-drive-offline" => StockIcon::OfflineNetworkDrive,
             "recycle-bin" => StockIcon::RecycleBin,
+            "computer" => StockIcon::Computer,
             _ => return None,
         }),
         "aumid" if valid_app_id(value) => NativeIcon::AppUserModelId(value.to_owned()),

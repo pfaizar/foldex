@@ -1828,6 +1828,7 @@ fn icon_button_label(glyph: Icon) -> &'static str {
         Icon::Bookmark | Icon::BookmarkFilled => "Bookmark",
         Icon::Clock => "History",
         Icon::Drive => "Drives",
+        Icon::Computer => "This PC",
         Icon::Home => "Home",
         Icon::Copy => "Copy",
         Icon::Cut => "Cut",

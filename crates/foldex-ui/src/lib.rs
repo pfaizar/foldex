@@ -47,6 +47,7 @@ pub enum Icon {
     BookmarkFilled,
     Clock,
     Drive,
+    Computer,
     Home,
     Copy,
     Cut,
@@ -297,6 +298,16 @@ pub fn icon(p: &egui::Painter, center: Pos2, icon: Icon, color: Color32, size: f
             line((0.28, 0.17), (0.72, 0.17));
             line((0.72, 0.17), (0.82, 0.36));
             p.circle_filled(q(0.76, 0.58), 1.0, color);
+        }
+        Icon::Computer => {
+            p.rect_stroke(
+                Rect::from_min_max(q(0.08, 0.14), q(0.92, 0.7)),
+                2,
+                s,
+                StrokeKind::Inside,
+            );
+            line((0.5, 0.7), (0.5, 0.86));
+            line((0.3, 0.86), (0.7, 0.86));
         }
         Icon::Home => {
             line((0.1, 0.45), (0.5, 0.12));
