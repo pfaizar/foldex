@@ -53,7 +53,7 @@ impl Bar {
     pub fn ui(
         &mut self,
         ui: &mut Ui,
-        rect: Rect,
+        full: Rect,
         id: Id,
         t: &Theme,
         items: &[Item],
@@ -62,13 +62,17 @@ impl Bar {
         hint: impl Fn(usize) -> String,
     ) -> Outcome {
         let mut out = Outcome::default();
-        if rect.width() <= 0.0 || items.is_empty() {
+        if full.width() <= 0.0 || items.is_empty() {
             return out;
         }
         let count = items.len().min(48);
         let items = &items[..count];
         let current = current.min(count - 1);
         let m = t.metrics();
+        // The empty space after the path always keeps a clickable strip for
+        // editing it, and doubles as the gap before the toolbar buttons.
+        let reserve = (32.0 * m.scale).min(full.width() * 0.25);
+        let rect = Rect::from_min_max(full.min, pos2(full.right() - reserve, full.bottom()));
         let style = (
             t.font_size.to_bits(),
             ui.ctx().pixels_per_point().to_bits(),
@@ -490,8 +494,9 @@ impl Bar {
             x = target.right();
         }
         let blank = x.max(painted_right).clamp(rect.left(), rect.right());
-        if blank < rect.right() {
-            let empty = Rect::from_min_max(pos2(blank, rect.top()), rect.max);
+        if blank < full.right() {
+            let empty = Rect::from_min_max(pos2(blank, full.top()), full.max);
+            let painter = ui.painter().with_clip_rect(full);
             let hit = components::button_response(ui, empty, id.with("address"))
                 .on_hover_cursor(egui::CursorIcon::Text);
             hit.widget_info(|| {
@@ -731,6 +736,47 @@ mod tests {
             outcome.active_rect,
             Some(Rect::from_min_max(label.min, arrow.max))
         );
+    }
+
+    #[test]
+    fn a_crowded_path_keeps_a_clickable_strip_for_editing_it() {
+        for width in [120.0, 160.0, 400.0] {
+            let ctx = egui::Context::default();
+            let mut bar = Bar::default();
+            let items: Vec<_> = (0..8)
+                .map(|index| Item {
+                    id: Id::new(index),
+                    label: format!("A rather long parent folder name {index}"),
+                })
+                .collect();
+            let rect = Rect::from_min_size(pos2(20.0, 40.0), vec2(width, 28.0));
+            frame(&ctx, &mut bar, &items, rect, 0, None, vec![]);
+            let address = ctx
+                .read_response(Id::new("breadcrumb").with("address"))
+                .unwrap()
+                .rect;
+            assert!(address.width() >= (width * 0.25).min(32.0) - 0.5, "{width}");
+            assert_eq!(address.right(), rect.right());
+            let at = pos2(rect.right() - 3.0, rect.center().y);
+            let press = |pressed| egui::Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            frame(
+                &ctx,
+                &mut bar,
+                &items,
+                rect,
+                1,
+                None,
+                vec![egui::Event::PointerMoved(at)],
+            );
+            frame(&ctx, &mut bar, &items, rect, 2, None, vec![press(true)]);
+            let outcome = frame(&ctx, &mut bar, &items, rect, 3, None, vec![press(false)]);
+            assert!(outcome.address, "{width}");
+        }
     }
 
     #[test]
