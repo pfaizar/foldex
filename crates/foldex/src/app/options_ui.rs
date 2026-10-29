@@ -483,6 +483,14 @@ impl Default for OptionsPopup {
     }
 }
 impl OptionsPopup {
+    /// Opens the accent editor for the offscreen catalog.
+    #[cfg(test)]
+    pub(in crate::app) fn catalog_accent(&mut self, theme: &mut Theme) {
+        if let Some(value) = color_token(theme, OptionId::Accent) {
+            self.color_option = Some(OptionId::Accent);
+            self.color_picker.open(*value);
+        }
+    }
     /// Transfer focus before any covered editor is rendered. In particular,
     /// text delivered with the Options shortcut must reach only this search.
     pub(in crate::app) fn prepare_open(&mut self, ctx: &egui::Context) {

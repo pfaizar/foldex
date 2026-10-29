@@ -33,6 +33,8 @@ mod rename_ui;
 mod searches_ui;
 mod stress;
 mod this_pc_ui;
+#[cfg(test)]
+mod ui_catalog;
 mod update_ui;
 pub(crate) mod window_transfer;
 pub(crate) mod window_transfer_probe;

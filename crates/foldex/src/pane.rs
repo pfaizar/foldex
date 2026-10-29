@@ -727,6 +727,13 @@ impl Pane {
         Some(self.entry_at(row)?.path(self.snapshot.as_ref()?))
     }
 
+    /// Selects a row range for the offscreen catalog.
+    #[cfg(test)]
+    pub fn catalog_select(&mut self, first: u32, last: u32) {
+        self.selected.select(first, last);
+        self.sync_selection();
+    }
+
     pub fn clear_selection(&mut self) {
         self.keyboard.cancel_range();
         self.selected.clear();
