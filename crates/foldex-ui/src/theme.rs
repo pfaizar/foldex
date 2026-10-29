@@ -67,6 +67,40 @@ pub struct Palette {
 impl Palette {
     pub fn graphite() -> Self {
         Self {
+            background: [24, 24, 24],
+            sidebar: [28, 28, 28],
+            chrome: [37, 37, 37],
+            surface: [32, 32, 32],
+            hover: [45, 45, 45],
+            border: [55, 55, 55],
+            text: [232, 232, 232],
+            muted: [146, 146, 146],
+            accent: [236, 236, 236],
+            selection: [58, 58, 58],
+            folder: [240, 198, 92],
+            danger: [240, 108, 108],
+        }
+    }
+    pub fn paper() -> Self {
+        Self {
+            background: [250, 250, 250],
+            sidebar: [243, 243, 243],
+            chrome: [236, 236, 236],
+            surface: [255, 255, 255],
+            hover: [230, 230, 230],
+            border: [220, 220, 220],
+            text: [24, 24, 24],
+            muted: [108, 108, 108],
+            accent: [32, 32, 32],
+            selection: [224, 224, 224],
+            folder: [224, 166, 34],
+            danger: [204, 52, 52],
+        }
+    }
+    /// The cyan Default used before the neutral palette. Kept so untouched
+    /// copies upgrade; docs/themes/Classic.toml restores it as a named scheme.
+    fn classic_graphite() -> Self {
+        Self {
             background: [23, 23, 23],
             sidebar: [29, 29, 29],
             chrome: [35, 35, 35],
@@ -79,6 +113,22 @@ impl Palette {
             selection: [23, 57, 68],
             folder: [255, 205, 79],
             danger: [234, 111, 117],
+        }
+    }
+    fn classic_paper() -> Self {
+        Self {
+            background: [246, 247, 248],
+            sidebar: [237, 240, 242],
+            chrome: [231, 235, 238],
+            surface: [250, 251, 252],
+            hover: [223, 231, 237],
+            border: [207, 214, 220],
+            text: [39, 48, 56],
+            muted: [112, 123, 132],
+            accent: [0, 120, 169],
+            selection: [214, 234, 243],
+            folder: [218, 164, 28],
+            danger: [184, 49, 62],
         }
     }
     fn previous_graphite() -> Self {
@@ -97,20 +147,13 @@ impl Palette {
             danger: [234, 111, 117],
         }
     }
-    pub fn paper() -> Self {
-        Self {
-            background: [246, 247, 248],
-            sidebar: [237, 240, 242],
-            chrome: [231, 235, 238],
-            surface: [250, 251, 252],
-            hover: [223, 231, 237],
-            border: [207, 214, 220],
-            text: [39, 48, 56],
-            muted: [112, 123, 132],
-            accent: [0, 120, 169],
-            selection: [214, 234, 243],
-            folder: [218, 164, 28],
-            danger: [184, 49, 62],
+    /// Exact earlier factory palettes upgrade to the current Default. Any
+    /// edited palette stays user-owned.
+    fn upgrade_factory(&mut self) {
+        if *self == Self::previous_graphite() || *self == Self::classic_graphite() {
+            *self = Self::graphite();
+        } else if *self == Self::classic_paper() {
+            *self = Self::paper();
         }
     }
     pub fn from_theme(theme: &Theme) -> Self {
@@ -329,10 +372,11 @@ impl Theme {
         }
         if paired {
             theme.scheme.validate().map_err(invalid)?;
-            // Update the known factory palette, including when Light is active.
+            // Update the known factory palettes, including the inactive mode.
             // Saved schemes and individually edited palettes retain their colors.
-            if theme.scheme.name == "Default" && theme.scheme.dark == Palette::previous_graphite() {
-                theme.scheme.dark = Palette::graphite();
+            if theme.scheme.name == "Default" {
+                theme.scheme.dark.upgrade_factory();
+                theme.scheme.light.upgrade_factory();
             }
             // Retain the last resolved mode for System until the native input
             // supplies a preference. Explicit modes do not depend on luminance.
@@ -346,11 +390,11 @@ impl Theme {
             // Only an exact previous factory palette is upgraded. A custom
             // palette remains user-owned even when it is named Graphite.
             let mut palette = Palette::from_theme(&theme);
-            if (theme.name.eq_ignore_ascii_case("Graphite")
-                || theme.name.eq_ignore_ascii_case("Default"))
-                && palette == Palette::previous_graphite()
+            if ["Graphite", "Paper", "Default"]
+                .iter()
+                .any(|name| theme.name.eq_ignore_ascii_case(name))
             {
-                palette = Palette::graphite();
+                palette.upgrade_factory();
                 palette.apply(&mut theme);
             }
             theme.resolved_mode = mode_for_background(theme.background);
@@ -584,7 +628,7 @@ mod tests {
     #[test]
     fn previous_default_dark_palette_upgrades_only_backgrounds_in_both_modes() {
         let previous = Palette::previous_graphite();
-        let mut expected_other_colors = Palette::graphite();
+        let mut expected_other_colors = Palette::classic_graphite();
         expected_other_colors.background = previous.background;
         expected_other_colors.sidebar = previous.sidebar;
         expected_other_colors.chrome = previous.chrome;
@@ -610,6 +654,51 @@ mod tests {
         let loaded = Theme::read(&flat).unwrap();
         assert_eq!(loaded.scheme.name, "Default");
         assert_eq!(loaded.scheme.dark, Palette::graphite());
+    }
+
+    #[test]
+    fn classic_default_upgrades_to_the_neutral_palette_in_both_modes() {
+        for mode in [ColorMode::Dark, ColorMode::Light] {
+            let mut theme = Theme::default();
+            theme.scheme.dark = Palette::classic_graphite();
+            theme.scheme.light = Palette::classic_paper();
+            theme.load_active_palette();
+            theme.set_color_mode(mode, None);
+            assert_ne!(theme.scheme, ColorScheme::default());
+            let loaded = Theme::read(&theme.write().unwrap()).unwrap();
+            assert_eq!(loaded.scheme, ColorScheme::default());
+            assert_eq!(
+                loaded.accent,
+                loaded.scheme.palette(loaded.resolved_mode).accent
+            );
+        }
+        for (name, palette) in [
+            ("Graphite", Palette::classic_graphite()),
+            ("Paper", Palette::classic_paper()),
+        ] {
+            let flat = format!(
+                "name = '{name}'
+{}",
+                toml::to_string(&palette).unwrap()
+            );
+            let loaded = Theme::read(&flat).unwrap();
+            assert_eq!(loaded.scheme, ColorScheme::default());
+        }
+        // A saved scheme keeps the classic colors.
+        let mut theme = Theme::default();
+        theme.scheme.name = "Mine".into();
+        theme.scheme.dark = Palette::classic_graphite();
+        theme.load_active_palette();
+        let loaded = Theme::read(&theme.write().unwrap()).unwrap();
+        assert_eq!(loaded.scheme.dark, Palette::classic_graphite());
+    }
+
+    #[test]
+    fn classic_backup_file_restores_the_previous_default() {
+        let scheme = ColorScheme::read(include_str!("../../../docs/themes/Classic.toml")).unwrap();
+        assert_eq!(scheme.name, "Classic");
+        assert_eq!(scheme.dark, Palette::classic_graphite());
+        assert_eq!(scheme.light, Palette::classic_paper());
     }
 
     #[test]

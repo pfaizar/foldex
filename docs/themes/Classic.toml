@@ -1,0 +1,31 @@
+# The cyan Foldex Default used before the neutral palette.
+# Restore it with Options › Load Themes › Import…; it appears as "Classic".
+name = "Classic"
+
+[dark]
+background = [23, 23, 23]
+sidebar = [29, 29, 29]
+chrome = [35, 35, 35]
+surface = [28, 28, 28]
+hover = [45, 51, 53]
+border = [53, 58, 60]
+text = [214, 218, 219]
+muted = [126, 135, 138]
+accent = [23, 161, 204]
+selection = [23, 57, 68]
+folder = [255, 205, 79]
+danger = [234, 111, 117]
+
+[light]
+background = [246, 247, 248]
+sidebar = [237, 240, 242]
+chrome = [231, 235, 238]
+surface = [250, 251, 252]
+hover = [223, 231, 237]
+border = [207, 214, 220]
+text = [39, 48, 56]
+muted = [112, 123, 132]
+accent = [0, 120, 169]
+selection = [214, 234, 243]
+folder = [218, 164, 28]
+danger = [184, 49, 62]

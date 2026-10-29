@@ -1,18 +1,18 @@
 # Every color is sRGB [red, green, blue]. Changes can be loaded with Ctrl+Shift+R.
 # Layout and component tokens below apply throughout the interface.
 name = "Graphite"
-background = [23, 23, 23]
-sidebar = [29, 29, 29]
-chrome = [35, 35, 35]
-surface = [28, 28, 28]
-hover = [45, 51, 53]
-border = [53, 58, 60]
-text = [214, 218, 219]
-muted = [126, 135, 138]
-accent = [23, 161, 204]
-selection = [23, 57, 68]
-folder = [255, 205, 79]
-danger = [234, 111, 117]
+background = [24, 24, 24]
+sidebar = [28, 28, 28]
+chrome = [37, 37, 37]
+surface = [32, 32, 32]
+hover = [45, 45, 45]
+border = [55, 55, 55]
+text = [232, 232, 232]
+muted = [146, 146, 146]
+accent = [236, 236, 236]
+selection = [58, 58, 58]
+folder = [240, 198, 92]
+danger = [240, 108, 108]
 font_size = 12.0
 row_height = 25.0
 sidebar_width = 280.0
