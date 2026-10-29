@@ -58,6 +58,17 @@ impl ViewMode {
             Self::ExtraLargeIcons => "XL Icons",
         }
     }
+    /// The spelled-out name, for menus with room for it.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Details => "Details",
+            Self::List => "List",
+            Self::Columns => "Columns",
+            Self::MediumIcons => "Medium icons",
+            Self::LargeIcons => "Large icons",
+            Self::ExtraLargeIcons => "Extra large icons",
+        }
+    }
     pub const fn icon(self) -> crate::Icon {
         match self {
             Self::Details => crate::Icon::List,

@@ -184,12 +184,18 @@ impl FooterLayout {
         timer: Option<f32>,
         expand_control: bool,
     ) -> Self {
-        let inset = (2.0 * scale).min(footer.width().max(0.0) * 0.02);
+        let height = (24.0 * scale).min(footer.height().max(1.0));
+        // Half a point down clears the top hairline, so the field sits with
+        // equal space above and below. The side gutters match that space.
+        let top = footer.center().y + 0.5 - height * 0.5;
+        let inset = (footer.bottom() - top - height)
+            .max(0.0)
+            .min(footer.width().max(0.0) * 0.02);
         let available = (footer.width() - inset * 2.0).max(1.0);
         let gap = (8.0 * scale).min(available * 0.025);
-        let height = (27.0 * scale).min(footer.height().max(1.0));
-        let top = footer.center().y - height * 0.5;
-        let padding = 3.0 * scale;
+        // The view control keeps the same distance from the edge as from the
+        // bar's bottom: inset plus this padding equals inset plus its 2pt inset.
+        let padding = 2.0 * scale;
         let percent = 42.0 * scale;
         // Reserve Clear's full reveal independently of the status animation.
         // Count changes only move the status island's left edge; its right edge,
@@ -558,12 +564,29 @@ impl Pane {
         );
         self.footer_layout = layout;
         let home_status = home.then_some((counts, selected.0.saturating_add(selected.1)));
-        let radius = t.radius.saturating_add(3);
-        for rect in [layout.search, layout.status] {
-            ui.painter()
-                .rect_filled(rect, radius, Theme::color(t.surface));
-            ui.painter()
-                .rect_stroke(rect, radius, Stroke::new(1.0, t.line()), StrokeKind::Inside);
+        // A hairline makes the footer a bar the controls sit in, rather than
+        // islands floating over the listing. Only the search field is boxed.
+        ui.painter().hline(
+            footer.x_range(),
+            footer.top() + 0.5,
+            Stroke::new(1.0, t.line()),
+        );
+        let radius = t.radius.saturating_add(2);
+        ui.painter()
+            .rect_filled(layout.search, radius, Theme::color(t.surface));
+        ui.painter().rect_stroke(
+            layout.search,
+            radius,
+            Stroke::new(1.0, t.line()),
+            StrokeKind::Inside,
+        );
+        if layout.view.left() - layout.status.left() > 8.0 * scale {
+            let x = layout.view.left() - 2.0 * scale;
+            ui.painter().vline(
+                x,
+                (layout.status.top() + 5.0 * scale)..=(layout.status.bottom() - 5.0 * scale),
+                Stroke::new(1.0, t.line()),
+            );
         }
         if !home && !self.is_recycle_bin() {
             let tools = layout.conditions;
@@ -921,7 +944,7 @@ impl Pane {
         if focus > 0.0 {
             ui.painter().rect_stroke(
                 layout.search,
-                t.radius.saturating_add(3),
+                t.radius.saturating_add(2),
                 Stroke::new(1.0, t.accent().gamma_multiply(focus)),
                 StrokeKind::Inside,
             );
@@ -978,6 +1001,7 @@ impl Pane {
             Stroke::new(1.0, t.line().lerp_to_gamma(t.accent(), hover)),
             StrokeKind::Inside,
         );
+        let mode = ViewMode::from_zoom(self.zoom);
         self.footer_counts.rolling.paint(
             ui.painter(),
             button.id.with("value"),
@@ -989,6 +1013,13 @@ impl Pane {
         );
         foldex_ui::components::focus_ring(ui, rect, button.id, t, button.has_focus());
         self.zoom_anchor = button.rect;
+        if !self.zoom_open {
+            button.on_hover_text(format!(
+                "View: {} · {}%",
+                mode.name(),
+                (self.zoom * 100.0).round() as i32
+            ));
+        }
     }
 
     pub(super) fn zoom_popup(&mut self, ctx: &egui::Context, t: &Theme) {
@@ -1047,7 +1078,7 @@ impl Pane {
         }
         let screen = ctx.content_rect();
         let anchor = self.zoom_anchor;
-        let desired = 240.0 * scale;
+        let desired = 248.0 * scale;
         let available = (anchor.top() - screen.top() - 36.0 - 6.0 * scale).max(m.control);
         let target = if available < desired {
             (((available - 8.0 * scale) / m.control).floor().max(1.0) * m.control + 8.0 * scale)
@@ -1066,7 +1097,7 @@ impl Pane {
             self.zoom_focus.update(ctx, focus_id, self.zoom_open);
             return;
         }
-        let width = (170.0 * scale).min((screen.width() - 12.0 * scale).max(1.0));
+        let width = (204.0 * scale).min((screen.width() - 12.0 * scale).max(1.0));
         let left = (anchor.right() - width).clamp(
             screen.left() + 6.0 * scale,
             (screen.right() - width - 6.0 * scale).max(screen.left() + 6.0 * scale),
@@ -1077,6 +1108,17 @@ impl Pane {
             pos2(left, bottom - self.zoom_height),
             vec2(width, self.zoom_height),
         );
+        // The slider is a wedge: thin where rows are compact, wide where icons
+        // are largest, so its shape says what dragging it does.
+        let track_x = left + width - 26.0 * scale;
+        let track_inset = (22.0 * scale).min(target * 0.30);
+        let track = Rect::from_min_max(
+            pos2(track_x - 7.0 * scale, top + track_inset),
+            pos2(track_x + 7.0 * scale, bottom - track_inset),
+        );
+        let stop_y = |zoom: f32| track.bottom() - zoom * track.height();
+        let current = ViewMode::from_zoom(self.zoom);
+        let scrolling = target < desired - 0.5;
         foldex_ui::components::popup_surface(
             ctx,
             egui::Area::new(Id::new((self.id, "view-popup")))
@@ -1107,10 +1149,10 @@ impl Pane {
                     Stroke::new(1.0, t.line()),
                     StrokeKind::Inside,
                 );
-                if target < desired - 0.5 {
-                    let body = Rect::from_min_size(
-                        pos2(left + 12.0 * scale, top + 4.0 * scale),
-                        vec2(120.0 * scale, (target - 8.0 * scale).max(1.0)),
+                if scrolling {
+                    let body = Rect::from_min_max(
+                        pos2(left + 6.0 * scale, top + 4.0 * scale),
+                        pos2(track.left() - 10.0 * scale, bottom - 4.0 * scale),
                     );
                     ui.scope_builder(UiBuilder::new().max_rect(body), |ui| {
                         ui.set_clip_rect(body.intersect(outer));
@@ -1128,24 +1170,15 @@ impl Pane {
                                     vec2(ui.available_width(), m.control),
                                     Sense::hover(),
                                 );
-                                let selected = (self.zoom - zoom).abs() < 0.001;
+                                let selected = mode == current;
                                 if selected
                                     && (keyboard_change
                                         || ctx.cumulative_frame_nr() <= self.zoom_opened + 2)
                                 {
                                     ui.scroll_to_rect(rect, None);
                                 }
-                                if foldex_ui::components::choice_row(
-                                    ui,
-                                    rect,
-                                    Id::new((self.id, "view-mode", mode as u8)),
-                                    t,
-                                    mode.label(),
-                                    mode.icon(),
-                                    selected,
-                                )
-                                .clicked()
-                                {
+                                let id = Id::new((self.id, "view-mode", mode as u8));
+                                if view_stop(ui, rect, id, t, mode, selected).clicked() {
                                     self.set_zoom(zoom);
                                     crate::keyboard::request_id(ctx, focus_id);
                                 }
@@ -1163,33 +1196,24 @@ impl Pane {
                     });
                 } else {
                     for &(mode, zoom) in ViewMode::stops().iter().rev() {
-                        let y = top + (20.0 + (1.0 - zoom) * 200.0) * scale;
-                        let rect = Rect::from_center_size(
-                            pos2(left + 72.0 * scale, y),
-                            vec2(120.0 * scale, 20.0 * scale),
+                        let y = stop_y(zoom);
+                        let rect = Rect::from_min_max(
+                            pos2(left + 6.0 * scale, y - 10.0 * scale),
+                            pos2(track.left() - 12.0 * scale, y + 10.0 * scale),
                         );
+                        let selected = mode == current;
+                        // A tick ties each name to its place on the wedge.
                         ui.painter().hline(
-                            (rect.left() + 4.0 * scale)..=(rect.right() - 4.0 * scale),
-                            rect.bottom() - 0.5,
-                            Stroke::new(1.0, t.line()),
+                            (rect.right() + 3.0 * scale)..=(track_x - 9.0 * scale),
+                            y,
+                            Stroke::new(1.0, if selected { t.fg() } else { t.line() }),
                         );
-                        if foldex_ui::components::choice_row(
-                            ui,
-                            rect,
-                            Id::new((self.id, "view-mode", mode as u8)),
-                            t,
-                            mode.label(),
-                            mode.icon(),
-                            (self.zoom - zoom).abs() < 0.001,
-                        )
-                        .clicked()
-                        {
+                        let id = Id::new((self.id, "view-mode", mode as u8));
+                        if view_stop(ui, rect, id, t, mode, selected).clicked() {
                             self.set_zoom(zoom);
                             crate::keyboard::request_id(ctx, focus_id);
                         }
-                        if (self.zoom - zoom).abs() < 0.001
-                            && self.zoom_focus.owns_keyboard(ctx, focus_id)
-                        {
+                        if selected && self.zoom_focus.owns_keyboard(ctx, focus_id) {
                             foldex_ui::components::focus_ring(
                                 ui,
                                 rect,
@@ -1199,13 +1223,31 @@ impl Pane {
                             );
                         }
                     }
+                    // The wheel steps through views, then through icon sizes.
+                    let wheel = ui.input(|input| {
+                        let over = input
+                            .pointer
+                            .hover_pos()
+                            .is_some_and(|pos| outer.contains(pos));
+                        input
+                            .events
+                            .iter()
+                            .filter_map(|event| match event {
+                                egui::Event::MouseWheel { delta, .. } if over => Some(delta.y),
+                                _ => None,
+                            })
+                            .sum::<f32>()
+                    });
+                    if wheel != 0.0 {
+                        self.set_zoom(wheel_zoom(self.zoom, wheel > 0.0));
+                        ctx.request_repaint();
+                    }
                 }
-                let track_inset = (20.0 * scale).min(target * 0.30);
-                let track = Rect::from_min_max(
-                    pos2(left + 144.0 * scale, top + track_inset),
-                    pos2(left + 156.0 * scale, bottom - track_inset),
-                );
-                let hit = track.expand2(vec2(5.0, 10.0) * scale).intersect(outer);
+                let hit = Rect::from_min_max(
+                    pos2(track.left() - 6.0 * scale, track.top() - 10.0 * scale),
+                    pos2(outer.right(), track.bottom() + 10.0 * scale),
+                )
+                .intersect(outer);
                 let response = ui.interact(
                     hit,
                     Id::new((self.id, "zoom-slider")),
@@ -1218,7 +1260,9 @@ impl Pane {
                     if !self.zoom_focus.owns_keyboard(ctx, focus_id) {
                         crate::keyboard::request_id(ctx, focus_id);
                     }
-                    self.set_zoom((track.bottom() - point.y) / track.height().max(1.0));
+                    self.set_zoom(snap_zoom(
+                        (track.bottom() - point.y) / track.height().max(1.0),
+                    ));
                     self.zoom_thumb = self.zoom;
                 } else if foldex_ui::motion::popup_gains(ctx, t.duration()).step_normalized(
                     &mut self.zoom_thumb,
@@ -1227,14 +1271,6 @@ impl Pane {
                 ) {
                     ctx.request_repaint();
                 }
-                ui.painter()
-                    .rect_filled(track, 6.0 * scale, Theme::color(t.chrome));
-                ui.painter().rect_stroke(
-                    track,
-                    6.0 * scale,
-                    Stroke::new(1.0, t.line()),
-                    StrokeKind::Inside,
-                );
                 let hover = foldex_ui::animated_state(
                     ui.ctx(),
                     response.id.with("hover"),
@@ -1242,16 +1278,39 @@ impl Pane {
                     t,
                     MotionProfile::Fast,
                 );
-                let y = track.bottom() - self.zoom_thumb * track.height();
-                ui.painter().rect_filled(
-                    Rect::from_min_max(pos2(track.left(), y), track.max),
-                    6.0 * scale,
-                    t.accent(),
+                let painter = ui.painter();
+                let half = |y: f32| {
+                    let size = ((track.bottom() - y) / track.height().max(1.0)).clamp(0.0, 1.0);
+                    (2.0 + 5.0 * size) * scale
+                };
+                let wedge = |from: f32, to: f32, color: Color32| {
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![
+                            pos2(track_x - half(to), to),
+                            pos2(track_x + half(to), to),
+                            pos2(track_x + half(from), from),
+                            pos2(track_x - half(from), from),
+                        ],
+                        color,
+                        Stroke::NONE,
+                    ));
+                    painter.circle_filled(pos2(track_x, from), half(from), color);
+                    painter.circle_filled(pos2(track_x, to), half(to), color);
+                };
+                let y = stop_y(self.zoom_thumb);
+                wedge(track.bottom(), track.top(), Theme::color(t.hover));
+                wedge(track.bottom(), y, t.accent());
+                let radius = (8.0 + hover) * scale;
+                painter.circle_filled(
+                    pos2(track_x, y + scale),
+                    radius + scale,
+                    Color32::from_black_alpha(60),
                 );
-                ui.painter().circle_filled(
-                    pos2(track.center().x, y),
-                    (9.0 + hover) * scale,
-                    t.accent(),
+                painter.circle_filled(pos2(track_x, y), radius, t.accent());
+                painter.circle_filled(
+                    pos2(track_x, y),
+                    radius - 3.0 * scale,
+                    Theme::color(t.surface),
                 );
             },
         );
@@ -1278,6 +1337,103 @@ fn zoom_navigation_key(event: &egui::Event) -> bool {
             && matches!(key, Key::ArrowUp | Key::ArrowDown | Key::ArrowLeft | Key::ArrowRight
                 | Key::Home | Key::End | Key::Escape | Key::Enter | Key::Space | Key::Tab))
             || (*key == Key::Tab && modifiers.matches_exact(egui::Modifiers::SHIFT)))
+}
+
+/// Compact views are discrete; icon sizes are continuous with gentle detents
+/// at each named size.
+fn snap_zoom(raw: f32) -> f32 {
+    let raw = if raw.is_finite() {
+        raw.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let nearest = ViewMode::stops()
+        .iter()
+        .map(|(_, zoom)| *zoom)
+        .min_by(|a, b| (a - raw).abs().total_cmp(&(b - raw).abs()))
+        .unwrap_or(0.0);
+    if raw < ViewMode::MediumIcons.zoom() || (raw - nearest).abs() < 0.025 {
+        nearest
+    } else {
+        raw
+    }
+}
+
+/// One wheel notch: the next view below Medium icons, 5% above it.
+fn wheel_zoom(zoom: f32, up: bool) -> f32 {
+    let icons = ViewMode::MediumIcons.zoom();
+    if (up && zoom < icons) || (!up && zoom <= icons + 0.001) {
+        let stops = ViewMode::stops();
+        let at = stops
+            .iter()
+            .position(|(mode, _)| *mode == ViewMode::from_zoom(zoom))
+            .unwrap_or(0);
+        let next = if up {
+            (at + 1).min(stops.len() - 1)
+        } else {
+            at.saturating_sub(1)
+        };
+        stops[next].1
+    } else {
+        snap_zoom((zoom + if up { 0.05 } else { -0.05 }).max(icons))
+    }
+}
+
+/// A view in the size menu: the current one reads as text, the rest dim.
+fn view_stop(
+    ui: &Ui,
+    rect: Rect,
+    id: Id,
+    t: &Theme,
+    mode: ViewMode,
+    selected: bool,
+) -> egui::Response {
+    let response = ui.interact(rect.intersect(ui.clip_rect()), id, Sense::CLICK);
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Button,
+            ui.is_enabled(),
+            selected,
+            mode.name(),
+        )
+    });
+    let hover = foldex_ui::animated_state(
+        ui.ctx(),
+        id.with("hover"),
+        response.hovered(),
+        t,
+        MotionProfile::Fast,
+    );
+    let emphasis = foldex_ui::animated_state(
+        ui.ctx(),
+        id.with("selected"),
+        selected,
+        t,
+        MotionProfile::Standard,
+    );
+    let scale = t.metrics().scale;
+    ui.painter()
+        .rect_filled(rect, t.radius, Theme::color(t.hover).gamma_multiply(hover));
+    let color = t.dim().lerp_to_gamma(t.fg(), emphasis.max(hover));
+    icon(
+        ui.painter(),
+        pos2(rect.left() + 12.0 * scale, rect.center().y),
+        mode.icon(),
+        color,
+        t.metrics().icon,
+    );
+    foldex_ui::components::elided_label(
+        ui.painter(),
+        Rect::from_min_max(
+            pos2(rect.left() + 26.0 * scale, rect.top()),
+            rect.max - vec2(4.0 * scale, 0.0),
+        ),
+        t,
+        mode.name(),
+        color,
+        false,
+    );
+    response
 }
 
 fn selected_counts(ranges: impl IntoIterator<Item = (u32, u32)>, folders: usize) -> (usize, usize) {
@@ -1391,7 +1547,11 @@ fn kind_button(
             label,
             t.font(),
             color,
-            RollingOptions::from_theme(t),
+            // Item counts update in place; only timers and values roll.
+            RollingOptions {
+                duration: 0.0,
+                ..RollingOptions::from_theme(t)
+            },
             fitted,
         );
     }
