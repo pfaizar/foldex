@@ -600,8 +600,6 @@ impl Pane {
                         });
                         let Some((s, idx, e)) = loaded else {
                             let rect = grid.rect_for(row).translate(origin);
-                            pressed_on_item |= press_position
-                                .is_some_and(|point| rect.intersect(body).contains(point));
                             let response = ui.interact(
                                 rect,
                                 Id::new((self.id, "pending-row", row)),
@@ -686,8 +684,6 @@ impl Pane {
                         // Existing identities still animate reflow and reordering.
                         let placement = self.listing_motion.place(motion_id, target, false);
                         let rect = placement.rect.translate(origin);
-                        pressed_on_item |= press_position
-                            .is_some_and(|point| rect.intersect(body).contains(point));
                         if !recycle_bin && e.is_dir {
                             crate::drag_drop::target(ui, rect.intersect(body), e.path(s));
                         }
@@ -702,14 +698,6 @@ impl Pane {
                                         })
                                 })
                         });
-                        if !recycle_bin
-                            && (response.drag_started_by(egui::PointerButton::Primary)
-                                || batched_drag)
-                        {
-                            dragged_row = Some(row);
-                            self.marquee = None;
-                            self.listing_clicks.clear();
-                        }
                         if response.clicked()
                             || response.secondary_clicked()
                             || response.middle_clicked()
@@ -936,6 +924,29 @@ impl Pane {
                         }
                         let name_hit =
                             Rect::from_min_size(text_position, gal.size()).intersect(name_clip);
+                        // Like Explorer, only a selected item's icon and name
+                        // carry it. Anything else, including an unselected item
+                        // and the content's edges, starts a selection
+                        // rectangle, so a full folder can still be drag-selected.
+                        let handle = if grid.mode.is_grid() {
+                            rect
+                        } else {
+                            icon_rect.union(name_hit)
+                        }
+                        .intersect(body.shrink2(vec2(MARQUEE_EDGE * metrics.scale, 0.0)));
+                        let on_handle =
+                            |point: Option<Pos2>| point.is_some_and(|point| handle.contains(point));
+                        let carried = !recycle_bin && selected;
+                        pressed_on_item |= carried && on_handle(press_position);
+                        if carried
+                            && self.marquee.is_none()
+                            && (response.drag_started_by(egui::PointerButton::Primary)
+                                && on_handle(ui.input(|input| input.pointer.press_origin()))
+                                || batched_drag && on_handle(press_position))
+                        {
+                            dragged_row = Some(row);
+                            self.listing_clicks.clear();
+                        }
                         if rename_row == Some(row) {
                             // The editor replaces the label; it is drawn above the rows.
                             rename_anchor = Some(rename_anchor_for(
@@ -1412,6 +1423,10 @@ impl Pane {
     }
 }
 
+/// The strip along each side of the listing that always starts a selection
+/// rectangle, even beside a selected item.
+const MARQUEE_EDGE: f32 = 8.0;
+
 fn item_parts(
     grid: GridMetrics,
     target: Rect,
@@ -1677,7 +1692,7 @@ mod tests {
             (actions, count)
         }
 
-        fn item_point(&self, pane: &Pane, row: usize) -> Pos2 {
+        fn item_rect(&self, pane: &Pane, row: usize) -> Rect {
             let snapshot = pane.snapshot.as_ref().unwrap();
             let entry = pane.entry_at(row).unwrap();
             let identity = Id::new((
@@ -1690,7 +1705,25 @@ mod tests {
                 .read_response(identity.with("hit"))
                 .expect("the item must have a painted hit target")
                 .rect
-                .center()
+        }
+
+        fn item_point(&self, pane: &Pane, row: usize) -> Pos2 {
+            self.item_rect(pane, row).center()
+        }
+
+        /// A point on the item's icon, the part that carries a selected item.
+        fn handle_point(&self, pane: &Pane, row: usize) -> Pos2 {
+            let rect = self.item_rect(pane, row);
+            let (grid, name_bounds) = pane.last_grid.unwrap();
+            if grid.mode.is_grid() {
+                return rect.center();
+            }
+            let left = if grid.mode == ViewMode::Details {
+                name_bounds[0]
+            } else {
+                0.0
+            };
+            pos2(rect.left() + left + 13.0, rect.center().y)
         }
 
         fn click(&mut self, pane: &mut Pane, point: Pos2) -> (Vec<Action>, u8) {
@@ -1710,65 +1743,109 @@ mod tests {
         }
     }
 
+    fn drag_fixture(id: u64, engine: &Engine, zoom: f32) -> (Pane, ClickHarness) {
+        let mut pane = Pane::dormant(id, engine, std::env::temp_dir().join("foldex-drag-fixture"));
+        pane.accept(Arc::new(Snapshot::from_entries(
+            pane.path.clone(),
+            vec![
+                foldex_core::Entry::from_name("folder", true, 0, 0),
+                foldex_core::Entry::from_name("a.txt", false, 0, 0),
+                foldex_core::Entry::from_name("b.txt", false, 0, 0),
+            ],
+        )));
+        pane.loading = false;
+        pane.zoom = zoom;
+        let mut input = ClickHarness::new(true);
+        input.draw(&mut pane, vec![]);
+        (pane, input)
+    }
+
+    fn press_and_drag(pane: &mut Pane, input: &mut ClickHarness, point: Pos2) -> Vec<Action> {
+        input.draw(
+            pane,
+            vec![
+                egui::Event::PointerMoved(point),
+                egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        input
+            .draw(
+                pane,
+                vec![egui::Event::PointerMoved(point + vec2(35.0, 12.0))],
+            )
+            .0
+    }
+
+    fn dragged_files(actions: Vec<Action>) -> Option<Vec<PathBuf>> {
+        actions.into_iter().find_map(|action| match action {
+            Action::DragFiles(paths) => Some(paths),
+            _ => None,
+        })
+    }
+
     #[test]
-    fn file_drags_preserve_the_selection_and_do_not_start_marquee_selection() {
+    fn dragging_a_selected_item_moves_the_selection_without_a_marquee() {
         let engine = Engine::new(Arc::new(|| {})).unwrap();
         for zoom in [0.0, 1.0] {
-            for selected in [false, true] {
-                let mut pane = Pane::dormant(
-                    948,
-                    &engine,
-                    std::env::temp_dir().join("foldex-drag-fixture"),
-                );
-                pane.accept(Arc::new(Snapshot::from_entries(
-                    pane.path.clone(),
-                    vec![
-                        foldex_core::Entry::from_name("folder", true, 0, 0),
-                        foldex_core::Entry::from_name("a.txt", false, 0, 0),
-                        foldex_core::Entry::from_name("b.txt", false, 0, 0),
-                    ],
-                )));
-                pane.loading = false;
-                pane.zoom = zoom;
-                let mut input = ClickHarness::new(true);
-                input.draw(&mut pane, vec![]);
-                if selected {
-                    pane.selected.select(1, 2);
+            let (mut pane, mut input) = drag_fixture(948, &engine, zoom);
+            pane.selected.select(1, 2);
+            pane.sync_selection();
+            let point = input.handle_point(&pane, 1);
+            let actions = press_and_drag(&mut pane, &mut input, point);
+            assert!(pane.marquee.is_none(), "{zoom}");
+            let paths = dragged_files(actions).expect("a selected item must start a file drag");
+            assert_eq!(paths.len(), 2);
+            assert!(paths.iter().any(|path| path.ends_with("a.txt")));
+            assert_eq!(pane.selected.len(), 2);
+        }
+    }
+
+    #[test]
+    fn dragging_from_an_unselected_item_draws_a_selection_rectangle() {
+        let engine = Engine::new(Arc::new(|| {})).unwrap();
+        for zoom in [0.0, 1.0] {
+            for selected in [None, Some(2)] {
+                let (mut pane, mut input) = drag_fixture(951, &engine, zoom);
+                if let Some(row) = selected {
+                    pane.selected.insert(row);
                     pane.sync_selection();
                 }
-                let point = input.item_point(&pane, 1);
-                input.draw(
-                    &mut pane,
-                    vec![
-                        egui::Event::PointerMoved(point),
-                        egui::Event::PointerButton {
-                            pos: point,
-                            button: egui::PointerButton::Primary,
-                            pressed: true,
-                            modifiers: egui::Modifiers::NONE,
-                        },
-                    ],
+                let point = input.handle_point(&pane, 1);
+                let actions = press_and_drag(&mut pane, &mut input, point);
+                assert!(dragged_files(actions).is_none(), "{zoom} {selected:?}");
+                assert!(pane.marquee.as_ref().is_some_and(|drag| drag.active));
+                assert!(
+                    pane.selected.contains(&1),
+                    "the rectangle selects its start item"
                 );
                 assert!(
-                    pane.marquee.is_none(),
-                    "an item press must not arm a selection rectangle"
+                    !pane.selected.contains(&2),
+                    "a plain rectangle replaces the selection"
                 );
-                let (actions, _) = input.draw(
-                    &mut pane,
-                    vec![egui::Event::PointerMoved(point + vec2(35.0, 12.0))],
-                );
-                assert!(pane.marquee.is_none());
-                let paths = actions
-                    .into_iter()
-                    .find_map(|action| match action {
-                        Action::DragFiles(paths) => Some(paths),
-                        _ => None,
-                    })
-                    .expect("dragging an item must produce a native file drag");
-                assert_eq!(paths.len(), if selected { 2 } else { 1 });
-                assert!(paths.iter().any(|path| path.ends_with("a.txt")));
-                assert_eq!(pane.selected.len(), if selected { 2 } else { 1 });
             }
+        }
+    }
+
+    #[test]
+    fn a_selected_item_outside_its_icon_and_name_starts_a_selection_rectangle() {
+        let engine = Engine::new(Arc::new(|| {})).unwrap();
+        // Details: another column of the row, then the listing's left edge.
+        for at in [
+            |rect: Rect| pos2(rect.right() - 20.0, rect.center().y),
+            |rect: Rect| pos2(rect.left() + 2.0, rect.center().y),
+        ] {
+            let (mut pane, mut input) = drag_fixture(952, &engine, 0.0);
+            pane.selected.select(0, 2);
+            pane.sync_selection();
+            let point = at(input.item_rect(&pane, 1));
+            let actions = press_and_drag(&mut pane, &mut input, point);
+            assert!(dragged_files(actions).is_none());
+            assert!(pane.marquee.as_ref().is_some_and(|drag| drag.active));
         }
     }
 
@@ -1787,7 +1864,9 @@ mod tests {
         pane.loading = false;
         let mut input = ClickHarness::new(true);
         input.draw(&mut pane, vec![]);
-        let press = input.item_point(&pane, 0);
+        pane.selected.insert(0);
+        pane.sync_selection();
+        let press = input.handle_point(&pane, 0);
         let release = pos2(600.0, 300.0);
         let button = |pos, pressed| egui::Event::PointerButton {
             pos,
