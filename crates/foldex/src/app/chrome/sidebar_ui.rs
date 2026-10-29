@@ -1217,6 +1217,9 @@ impl Foldex {
                                 self.assets.is_cut_key(item.cut_key.as_ref()),
                             ));
                             let label_row = Rect::from_min_size(r.min, vec2(r.width(), row_height));
+                            if item.place == Some(PlaceKind::RecycleBin) {
+                                crate::recycle_bin::state::watch(ui.ctx());
+                            }
                             let key = item
                                 .place
                                 .map(|kind| kind.icon_key(physical_size))

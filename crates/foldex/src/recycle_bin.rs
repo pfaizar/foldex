@@ -1,6 +1,7 @@
 //! The Recycle Bin is a shell namespace, never a directory. Native identities
 //! remain opaque PIDLs in this model; ordinal keys below are presentation only.
 //! A single lazy worker owns enumeration, model preparation, filtering and verbs.
+pub(crate) mod state;
 use crate::{navigation::RECYCLE_BIN_ADDRESS, pane::columns::Column};
 use foldex_core::{Entry, Query, Snapshot};
 use foldex_shell::recycle::Item;
@@ -484,6 +485,7 @@ impl Service {
             self.loading = false;
             match result {
                 Ok(model) => {
+                    state::observe(model.is_empty());
                     self.model = Some(model);
                     self.error = self.operation_error.clone();
                 }

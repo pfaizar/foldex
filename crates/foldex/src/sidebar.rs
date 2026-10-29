@@ -133,23 +133,29 @@ impl PlaceKind {
         }
     }
     pub fn icon_key(self, size: u16) -> foldex_assets::AssetKey {
-        if self == Self::RecycleBin {
-            return foldex_assets::AssetKey::stock_icon(foldex_assets::StockIcon::RecycleBin, size);
-        }
-        if self == Self::ThisPc {
-            return foldex_assets::AssetKey::stock_icon(foldex_assets::StockIcon::Computer, size);
+        use foldex_assets::StockIcon;
+        let stock = match self {
+            Self::RecycleBin if crate::recycle_bin::state::holds_items() => {
+                Some(StockIcon::RecycleBinFull)
+            }
+            Self::RecycleBin => Some(StockIcon::RecycleBin),
+            Self::ThisPc => Some(StockIcon::Computer),
+            Self::User => Some(StockIcon::User),
+            _ => None,
+        };
+        if let Some(stock) = stock {
+            return foldex_assets::AssetKey::stock_icon(stock, size);
         }
         use foldex_assets::KnownFolderIcon as Native;
         foldex_assets::AssetKey::known_folder_icon(
             match self {
-                Self::User => Native::Profile,
                 Self::Desktop => Native::Desktop,
                 Self::Downloads => Native::Downloads,
                 Self::Documents => Native::Documents,
                 Self::Pictures => Native::Pictures,
                 Self::Music => Native::Music,
                 Self::Videos => Native::Videos,
-                Self::ThisPc | Self::RecycleBin => unreachable!(),
+                Self::User | Self::ThisPc | Self::RecycleBin => unreachable!(),
             },
             size,
         )

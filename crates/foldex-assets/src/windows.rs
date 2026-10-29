@@ -357,7 +357,9 @@ fn stock_icon(source: StockIcon, size: u16) -> Result<RawPixels, String> {
         StockIcon::NetworkDrive => SIID_DRIVENET,
         StockIcon::OfflineNetworkDrive => SIID_DRIVENETDISABLED,
         StockIcon::RecycleBin => SIID_RECYCLER,
+        StockIcon::RecycleBinFull => SIID_RECYCLERFULL,
         StockIcon::Computer => SIID_DESKTOPPC,
+        StockIcon::User => SIID_USERS,
     };
     let mut info = SHSTOCKICONINFO {
         cbSize: mem::size_of::<SHSTOCKICONINFO>() as u32,
