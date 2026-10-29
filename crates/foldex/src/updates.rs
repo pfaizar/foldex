@@ -42,7 +42,9 @@ pub struct Updates {
     downloading: bool,
     loaded: bool,
     error: Option<String>,
-    status: String,
+    checking: bool,
+    verifying: bool,
+    up_to_date: bool,
     next_check: Instant,
     last_attempt: Option<Instant>,
     notified_version: Option<String>,
@@ -52,7 +54,89 @@ pub struct Updates {
     cancelled: Arc<AtomicBool>,
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy)]
+pub enum CatalogPhase {
+    Unavailable,
+    Checking,
+    Current,
+    Available { managed: bool },
+    Downloading,
+    Error,
+    Installing,
+    Notification,
+}
+
 impl Updates {
+    /// Presentation states for the offscreen catalog. The worker stays absent,
+    /// so no state here can reach the network or the installer.
+    #[cfg(test)]
+    pub fn catalog(&mut self, phase: CatalogPhase) {
+        let version = "0.2.0";
+        let name = format!("Foldex-{version}-windows-x64-setup.exe");
+        let release = serde_json::json!([{
+            "tag_name": format!("v{version}"),
+            "draft": false,
+            "prerelease": false,
+            "assets": [{
+                "name": name,
+                "browser_download_url": format!(
+                    "{}/releases/download/v{version}/{name}",
+                    foldex_update::REPOSITORY
+                ),
+                "size": 18_400_000,
+                "state": "uploaded",
+                "digest": format!("sha256:{}", "ab".repeat(32)),
+            }],
+        }]);
+        let update = foldex_update::select_update(
+            &serde_json::to_vec(&release).unwrap(),
+            env!("CARGO_PKG_VERSION"),
+            false,
+        )
+        .unwrap();
+        self.open = true;
+        self.loaded = true;
+        self.busy = false;
+        self.managed = true;
+        self.error = None;
+        self.available = None;
+        self.downloading = false;
+        self.exit_pending = false;
+        self.checking = false;
+        self.up_to_date = false;
+        match phase {
+            CatalogPhase::Unavailable => self.loaded = false,
+            CatalogPhase::Checking => {
+                self.busy = true;
+                self.checking = true;
+            }
+            CatalogPhase::Current => self.up_to_date = true,
+            CatalogPhase::Available { managed } => {
+                self.managed = managed;
+                self.available = update;
+            }
+            CatalogPhase::Downloading => {
+                self.available = update;
+                self.busy = true;
+                self.downloading = true;
+                self.progress.store(7_200_000, Ordering::Relaxed);
+            }
+            CatalogPhase::Error => {
+                self.error = Some("Couldn't reach GitHub. Check your connection and try again. (timed out after 10 s)".into());
+            }
+            CatalogPhase::Installing => {
+                self.available = update;
+                self.begin_exit();
+            }
+            CatalogPhase::Notification => {
+                self.open = false;
+                self.available = update;
+                self.notify = true;
+            }
+        }
+    }
+
     pub fn new(
         state_dir: PathBuf,
         managed: bool,
@@ -73,12 +157,9 @@ impl Updates {
             downloading: false,
             loaded: false,
             error: None,
-            status: if enabled {
-                "Loading update preferences…"
-            } else {
-                "Update checks are unavailable in this window."
-            }
-            .into(),
+            checking: false,
+            verifying: false,
+            up_to_date: false,
             next_check: Instant::now() + Duration::from_secs(15),
             last_attempt: None,
             notified_version: None,
@@ -132,7 +213,7 @@ impl Updates {
         service
     }
 
-    fn submit(&mut self, command: Command, status: &str) -> bool {
+    fn submit(&mut self, command: Command) -> bool {
         if self.busy || self.exit_pending {
             return false;
         }
@@ -142,7 +223,6 @@ impl Updates {
             .is_some_and(|commands| commands.try_send(command).is_ok())
         {
             self.busy = true;
-            self.status = status.into();
             self.error = None;
             true
         } else {
@@ -160,10 +240,8 @@ impl Updates {
             return;
         }
         self.next_check = Instant::now() + CHECK_INTERVAL;
-        if self.submit(
-            Command::Check(self.settings.include_prereleases),
-            "Checking for updates…",
-        ) {
+        if self.submit(Command::Check(self.settings.include_prereleases)) {
+            self.checking = true;
             self.last_attempt = Some(Instant::now());
             self.prepared = false;
         }
@@ -173,7 +251,7 @@ impl Updates {
         if let Some(update) = self.available.clone() {
             self.cancelled.store(false, Ordering::Release);
             self.progress.store(0, Ordering::Relaxed);
-            self.downloading = self.submit(Command::Download(update), "Downloading update…");
+            self.downloading = self.submit(Command::Download(update));
         }
     }
 
@@ -185,6 +263,8 @@ impl Updates {
                     self.commands = None;
                     self.events = None;
                     self.busy = false;
+                    self.checking = false;
+                    self.verifying = false;
                     self.loaded = false;
                     self.error =
                         Some("The update worker stopped. Restart Foldex and try again.".into());
@@ -198,15 +278,10 @@ impl Updates {
                 Event::Loaded(result) => {
                     self.loaded = true;
                     match result {
-                        Ok(settings) => {
-                            self.settings = settings;
-                            self.status = "Ready to check for updates.".into();
-                        }
+                        Ok(settings) => self.settings = settings,
                         Err(error) => {
                             // A broken preferences file must not silently enable network activity.
                             self.settings.check_automatically = false;
-                            self.status =
-                                "Automatic checks are off. You can still check manually.".into();
                             self.error =
                                 Some(format!("Could not load update preferences: {error}"));
                         }
@@ -218,10 +293,8 @@ impl Updates {
                             self.settings = previous;
                         }
                         self.error = Some(format!("Could not save update preferences: {error}"));
-                        self.status = "Update preferences were not changed.".into();
                     } else {
                         self.settings_before_save = None;
-                        self.status = "Update preferences saved.".into();
                         if self.available.is_some()
                             && self.settings.download_automatically
                             && self.managed
@@ -232,6 +305,7 @@ impl Updates {
                     }
                 }
                 Event::Checked(result) => {
+                    self.checking = false;
                     self.next_check = Instant::now() + CHECK_INTERVAL;
                     match result {
                         Ok(update) => {
@@ -243,16 +317,14 @@ impl Updates {
                             }) {
                                 self.ready = None;
                             }
-                            self.status = if let Some(update) = &self.available {
+                            if let Some(update) = &self.available {
                                 let version = update.version();
                                 if self.notified_version.as_ref() != Some(&version) {
                                     self.notify = true;
-                                    self.notified_version = Some(version.clone());
+                                    self.notified_version = Some(version);
                                 }
-                                format!("Foldex {version} is available.")
-                            } else {
-                                "You're up to date.".into()
-                            };
+                            }
+                            self.up_to_date = self.available.is_none();
                             if self.available.is_some()
                                 && self.settings.download_automatically
                                 && self.managed
@@ -270,22 +342,23 @@ impl Updates {
                         Ok(downloaded) => {
                             self.ready = Some(downloaded);
                             self.notify = true;
-                            self.status =
-                                "Update downloaded and verified. Ready to install.".into();
                         }
                         Err(error) => self.error = Some(error),
                     }
                 }
-                Event::Prepared(result) => match result {
-                    Ok(downloaded) => {
-                        self.ready = Some(downloaded);
-                        self.prepared = true;
+                Event::Prepared(result) => {
+                    self.verifying = false;
+                    match result {
+                        Ok(downloaded) => {
+                            self.ready = Some(downloaded);
+                            self.prepared = true;
+                        }
+                        Err(error) => {
+                            self.error = Some(error);
+                            self.open = true;
+                        }
                     }
-                    Err(error) => {
-                        self.error = Some(error);
-                        self.open = true;
-                    }
-                },
+                }
             }
         }
         if self.loaded && self.settings.check_automatically && !self.exit_pending && !self.prepared
@@ -322,206 +395,411 @@ impl Updates {
     pub fn begin_exit(&mut self) {
         self.exit_pending = true;
         self.open = true;
-        self.status = "Saving your workspace before installing…".into();
     }
 
+    fn phase(&self) -> Phase {
+        if self.exit_pending {
+            Phase::Installing
+        } else if self.downloading {
+            Phase::Downloading
+        } else if self.verifying {
+            Phase::Verifying
+        } else if self.ready.is_some() {
+            Phase::Ready
+        } else if self.available.is_some() {
+            Phase::Available
+        } else if self.checking {
+            Phase::Checking
+        } else if self.busy && !self.loaded {
+            Phase::Loading
+        } else if !self.loaded {
+            Phase::Unavailable
+        } else if self.up_to_date {
+            Phase::Current
+        } else {
+            Phase::Idle
+        }
+    }
+
+    /// A small card in the window corner; it never takes focus from the files.
     pub fn notification(&mut self, ctx: &egui::Context, theme: &foldex_ui::Theme) {
+        use foldex_ui::dialog::{Kind, Text, button_at, button_width, text};
         if !self.notify || self.open || self.exit_pending {
             return;
         }
         let Some(update) = &self.available else {
             return;
         };
-        let mut visible = true;
-        egui::Window::new("Foldex update available")
-            .id(egui::Id::new("update-notification"))
-            .anchor(egui::Align2::RIGHT_BOTTOM, [-18.0, -18.0])
-            .resizable(false)
-            .collapsible(false)
-            .open(&mut visible)
+        let t = theme;
+        let s = t.metrics().scale;
+        let id = egui::Id::new("update-notification");
+        let width = 300.0 * s;
+        let screen = ctx.content_rect();
+        let body = format!(
+            "Foldex {} is {}.",
+            update.version(),
+            if self.ready.is_some() {
+                "ready to install"
+            } else {
+                "available"
+            }
+        );
+        let height = ctx
+            .memory(|memory| memory.area_rect(id))
+            .map_or(120.0 * s, |rect| rect.height());
+        let origin = screen.right_bottom() - egui::vec2(width + 18.0 * s, height + 18.0 * s);
+        let mut view = false;
+        let mut dismiss = false;
+        egui::Area::new(id)
+            .order(egui::Order::Foreground)
+            .fixed_pos(origin)
             .show(ctx, |ui| {
-                ui.label(format!(
-                    "Foldex {} {}",
-                    update.version(),
-                    if self.ready.is_some() {
-                        "is ready to install."
-                    } else {
-                        "is available."
-                    }
-                ));
-                if foldex_ui::components::text_button(ui, theme, "View update", true).clicked() {
-                    self.open = true;
-                }
+                let pad = 16.0 * s;
+                let frame = egui::Frame::NONE
+                    .fill(foldex_ui::Theme::color(t.surface))
+                    .stroke(egui::Stroke::new(1.0, t.line()))
+                    .corner_radius(t.radius.saturating_add(3))
+                    .inner_margin(egui::Margin::same(pad as i8))
+                    .shadow(egui::epaint::Shadow {
+                        offset: [0, 8],
+                        blur: 24,
+                        spread: 0,
+                        color: egui::Color32::from_black_alpha(
+                            if t.resolved_mode == foldex_ui::ResolvedMode::Dark {
+                                100
+                            } else {
+                                32
+                            },
+                        ),
+                    });
+                frame.show(ui, |ui| {
+                    ui.set_width(width - 2.0 * pad);
+                    ui.spacing_mut().item_spacing.y = 4.0 * s;
+                    text(ui, t, Text::Heading, "Update available");
+                    text(ui, t, Text::Secondary, &body);
+                    ui.add_space(10.0 * s);
+                    let (row, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), t.metrics().control),
+                        egui::Sense::hover(),
+                    );
+                    let view_width = button_width(ui, t, "View update");
+                    let later_width = button_width(ui, t, "Later");
+                    let view_rect = egui::Rect::from_min_max(
+                        egui::pos2(row.right() - view_width, row.top()),
+                        row.max,
+                    );
+                    let later_rect = egui::Rect::from_min_max(
+                        egui::pos2(view_rect.left() - 8.0 * s - later_width, row.top()),
+                        egui::pos2(view_rect.left() - 8.0 * s, row.bottom()),
+                    );
+                    dismiss = button_at(ui, later_rect, id.with("later"), t, "Later", Kind::Ghost)
+                        .clicked();
+                    view = button_at(
+                        ui,
+                        view_rect,
+                        id.with("view"),
+                        t,
+                        "View update",
+                        Kind::Primary,
+                    )
+                    .clicked();
+                });
             });
-        self.notify = visible;
+        if view {
+            self.open = true;
+        }
+        if view || dismiss {
+            self.notify = false;
+        }
     }
 
     /// Installation needs an explicit action. The app then verifies idle state
     /// again, saves preferences, exits its tray, and starts Setup.
     pub fn ui(&mut self, ctx: &egui::Context, theme: &foldex_ui::Theme, can_install: bool) {
+        use foldex_ui::dialog::{
+            Action, Dialog, Footer, Glyph, Kind, Size, Text, Tone, callout, checkbox, glyph, inset,
+            progress, section, spinner, text, text_at, text_colored,
+        };
         if !self.open {
             return;
         }
-        let mut open = true;
-        let mut cancel = false;
-        let width =
-            (520.0 * theme.metrics().scale).min((ctx.content_rect().width() - 24.0).max(240.0));
-        foldex_ui::components::dialog(
-            ctx,
-            egui::Id::new("updates-dialog"),
-            theme,
-            "Application Updates",
-            width,
-            &mut open,
-            |ui| {
-                ui.label(format!("Current version: {}", env!("CARGO_PKG_VERSION")));
-                ui.label(&self.status);
-                if let Some(error) = &self.error {
-                    ui.colored_label(
-                        foldex_ui::Theme::color(theme.danger),
-                        crate::friendly::present("Couldn't complete the update", error),
-                    );
-                }
-                ui.add_space(theme.metrics().gap);
-                let previous = self.settings.clone();
-                ui.add_enabled_ui(self.loaded && !self.busy && !self.exit_pending, |ui| {
-                    foldex_ui::components::checkbox(
-                        ui,
-                        theme,
-                        &mut self.settings.check_automatically,
-                        "Check automatically (every 6 hours)",
-                    );
-                    ui.add_enabled_ui(self.managed, |ui| {
-                        foldex_ui::components::checkbox(
-                            ui,
-                            theme,
-                            &mut self.settings.download_automatically,
-                            "Download updates automatically",
-                        );
-                    });
-                    foldex_ui::components::checkbox(
-                        ui,
-                        theme,
-                        &mut self.settings.include_prereleases,
-                        "Include prerelease versions",
-                    );
-                });
-                if previous != self.settings {
-                    if previous.include_prereleases != self.settings.include_prereleases {
-                        self.ready = None;
-                        self.available = None;
-                        self.prepared = false;
-                        self.next_check = Instant::now();
-                    }
-                    if self.submit(
-                        Command::Save(self.settings.clone()),
-                        "Saving update preferences…",
-                    ) {
-                        self.settings_before_save = Some(previous);
+        let t = theme;
+        let s = t.metrics().scale;
+        let id = egui::Id::new("updates-dialog");
+        let phase = self.phase();
+        let version = self
+            .available
+            .as_ref()
+            .map(Update::version)
+            .unwrap_or_default();
+        let current = env!("CARGO_PKG_VERSION");
+        let cooling_down = self
+            .last_attempt
+            .is_some_and(|last| last.elapsed() < MANUAL_COOLDOWN);
+        let can_check = self.loaded && !self.busy && !cooling_down && !self.exit_pending;
+        let (headline, detail) = match phase {
+            Phase::Unavailable => (
+                "Updates aren't available here".to_owned(),
+                "This window can't check for new versions.".to_owned(),
+            ),
+            Phase::Loading => ("Loading update preferences…".to_owned(), String::new()),
+            Phase::Checking => ("Checking for updates…".to_owned(), String::new()),
+            Phase::Idle => (
+                "Check for a new version".to_owned(),
+                "Foldex looks for updates on GitHub.".to_owned(),
+            ),
+            Phase::Current => (
+                "You're up to date".to_owned(),
+                format!("Foldex {current} is the latest version."),
+            ),
+            Phase::Available if self.managed => (
+                format!("Foldex {version} is available"),
+                format!(
+                    "{} download. Foldex restarts to install it.",
+                    self.available
+                        .as_ref()
+                        .map_or_else(String::new, |update| foldex_ui::format_size(update.size()))
+                ),
+            ),
+            Phase::Available => (
+                format!("Foldex {version} is available"),
+                "This is a portable copy. Download the installer to update.".to_owned(),
+            ),
+            Phase::Downloading => (format!("Downloading Foldex {version}…"), String::new()),
+            Phase::Verifying => ("Verifying the update…".to_owned(), String::new()),
+            Phase::Ready => (
+                format!("Foldex {version} is ready to install"),
+                "Foldex closes, installs the update and opens again.".to_owned(),
+            ),
+            Phase::Installing => (
+                "Saving your workspace…".to_owned(),
+                "Foldex closes and installs the update next.".to_owned(),
+            ),
+        };
+        let mut actions = Vec::new();
+        let check_label = if phase == Phase::Current {
+            "Check again"
+        } else {
+            "Check for updates"
+        };
+        match phase {
+            Phase::Unavailable | Phase::Loading | Phase::Checking => {}
+            Phase::Idle | Phase::Current => actions.push(
+                Action::new(
+                    id.with("check"),
+                    check_label,
+                    if phase == Phase::Idle || self.error.is_some() {
+                        Kind::Primary
                     } else {
-                        self.settings = previous;
-                    }
-                }
-                if !self.managed {
-                    ui.label("Portable copy: in-app install is unavailable.");
-                }
-                if self.downloading {
-                    let total = self.available.as_ref().map_or(1, Update::size);
-                    let fraction = self.progress.load(Ordering::Relaxed) as f32 / total as f32;
-                    ui.add(egui::ProgressBar::new(fraction).show_percentage());
-                    if foldex_ui::components::text_button(ui, theme, "Cancel download", false)
-                        .clicked()
-                    {
-                        self.cancelled.store(true, Ordering::Release);
-                    }
-                }
-                ui.horizontal_wrapped(|ui| {
-                    let cooling_down = self
-                        .last_attempt
-                        .is_some_and(|last| last.elapsed() < MANUAL_COOLDOWN);
-                    ui.add_enabled_ui(
-                        self.loaded && !self.busy && !cooling_down && !self.exit_pending,
-                        |ui| {
-                            if foldex_ui::components::text_button(
-                                ui,
-                                theme,
-                                "Check for updates",
-                                false,
-                            )
-                            .clicked()
-                            {
-                                self.check();
-                            }
-                        },
+                        Kind::Secondary
+                    },
+                )
+                .enabled(can_check),
+            ),
+            Phase::Available | Phase::Ready | Phase::Verifying => {
+                actions.push(Action::new(id.with("notes"), "Release notes", Kind::Ghost));
+                let label = match (phase, self.managed) {
+                    (Phase::Available, true) => "Download update",
+                    (Phase::Available, false) => "Download installer",
+                    _ => "Install and restart",
+                };
+                actions.push(
+                    Action::new(id.with("primary"), label, Kind::Primary)
+                        .enabled(!self.busy && (phase == Phase::Available || can_install)),
+                );
+            }
+            Phase::Downloading => actions.push(Action::new(
+                id.with("cancel-download"),
+                "Cancel download",
+                Kind::Secondary,
+            )),
+            Phase::Installing => actions.push(Action::new(
+                id.with("cancel-install"),
+                "Cancel installation",
+                Kind::Secondary,
+            )),
+        }
+        let subtitle = format!("Foldex {current}");
+        let mut open = true;
+        let previous = self.settings.clone();
+        let shown = Dialog::new(id, "Updates", Size::Medium.width(t))
+            .subtitle(&subtitle)
+            .footer(Footer::new(actions))
+            .show(ctx, t, &mut open, |ui| {
+                ui.spacing_mut().item_spacing.y = 6.0 * s;
+                // An error replaces the idle prompt rather than stacking under it.
+                let status = !(phase == Phase::Idle && self.error.is_some());
+                if status {
+                    let size = 18.0 * s;
+                    let (row, _) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), 24.0 * s),
+                        egui::Sense::hover(),
                     );
-                    if let Some(update) = self.available.clone() {
-                        if foldex_ui::components::text_button(ui, theme, "Release notes", false)
-                            .clicked()
-                        {
-                            ctx.open_url(egui::OpenUrl::new_tab(update.release_url()));
+                    let center = egui::pos2(row.left() + size * 0.5, row.center().y);
+                    match phase {
+                        Phase::Loading
+                        | Phase::Checking
+                        | Phase::Downloading
+                        | Phase::Verifying
+                        | Phase::Installing => spinner(ui, center, size, t.accent()),
+                        Phase::Available | Phase::Ready => {
+                            glyph(ui, center, size, Glyph::Info, t.accent())
                         }
-                        if self.managed {
-                            ui.add_enabled_ui(!self.busy && !self.exit_pending, |ui| {
-                                if self.ready.is_some() {
-                                    ui.add_enabled_ui(can_install, |ui| {
-                                        if foldex_ui::components::text_button(
-                                            ui,
-                                            theme,
-                                            "Install and restart",
-                                            true,
-                                        )
-                                        .clicked()
-                                        {
-                                            if let Some(downloaded) = self.ready.take() {
-                                                self.submit(
-                                                    Command::Prepare(
-                                                        downloaded,
-                                                        self.settings.include_prereleases,
-                                                    ),
-                                                    "Verifying update before installation…",
-                                                );
-                                            }
-                                        }
-                                    });
-                                } else if foldex_ui::components::text_button(
-                                    ui,
-                                    theme,
-                                    "Download update",
-                                    true,
-                                )
-                                .clicked()
-                                {
-                                    self.download();
-                                }
-                            });
-                        } else if foldex_ui::components::text_button(
+                        Phase::Current => glyph(ui, center, size, Glyph::Done, t.dim()),
+                        Phase::Idle | Phase::Unavailable => {
+                            glyph(ui, center, size, Glyph::Info, t.dim())
+                        }
+                    }
+                    let indent = size + 12.0 * s;
+                    text_at(
+                        ui,
+                        egui::Rect::from_min_max(
+                            egui::pos2(row.left() + indent, row.top()),
+                            row.max,
+                        ),
+                        t,
+                        Text::Heading,
+                        &headline,
+                        t.fg(),
+                        egui::Align2::LEFT_CENTER,
+                    );
+                    inset(ui, indent, |ui| {
+                        ui.spacing_mut().item_spacing.y = 6.0 * s;
+                        if !detail.is_empty() {
+                            text(ui, t, Text::Secondary, &detail);
+                        }
+                        if phase == Phase::Downloading {
+                            let total = self.available.as_ref().map_or(1, Update::size).max(1);
+                            let done = self.progress.load(Ordering::Relaxed).min(total);
+                            ui.add_space(4.0 * s);
+                            progress(ui, t, Some(done as f32 / total as f32));
+                            text_colored(
+                                ui,
+                                t,
+                                Text::Caption,
+                                &format!(
+                                    "{} of {}",
+                                    foldex_ui::format_size(done),
+                                    foldex_ui::format_size(total)
+                                ),
+                                t.dim(),
+                            );
+                        }
+                    });
+                }
+                if let Some(error) = &self.error {
+                    if status {
+                        ui.add_space(6.0 * s);
+                    }
+                    callout(
+                        ui,
+                        t,
+                        Tone::Danger,
+                        &crate::friendly::present("Couldn't complete the update", error),
+                    );
+                }
+                if phase == Phase::Ready && !can_install {
+                    ui.add_space(6.0 * s);
+                    callout(
+                        ui,
+                        t,
+                        Tone::Neutral,
+                        "Finish file operations and close open dialogs to install.",
+                    );
+                }
+                if phase == Phase::Unavailable {
+                    return;
+                }
+                section(ui, t, "Preferences");
+                ui.add_enabled_ui(self.loaded && !self.busy && !self.exit_pending, |ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    checkbox(
+                        ui,
+                        t,
+                        &mut self.settings.check_automatically,
+                        "Check automatically every 6 hours",
+                    );
+                    if self.managed {
+                        checkbox(
                             ui,
-                            theme,
-                            "Download installer",
-                            true,
-                        )
-                        .clicked()
-                        {
+                            t,
+                            &mut self.settings.download_automatically,
+                            "Download updates in the background",
+                        );
+                    }
+                    checkbox(
+                        ui,
+                        t,
+                        &mut self.settings.include_prereleases,
+                        "Include preview releases",
+                    );
+                });
+            });
+        if previous != self.settings {
+            if previous.include_prereleases != self.settings.include_prereleases {
+                self.ready = None;
+                self.available = None;
+                self.prepared = false;
+                self.up_to_date = false;
+                self.next_check = Instant::now();
+            }
+            if self.submit(Command::Save(self.settings.clone())) {
+                self.settings_before_save = Some(previous);
+            } else {
+                self.settings = previous;
+            }
+        }
+        let mut cancel = false;
+        if let Some(index) = shown.clicked {
+            let action = shown.actions[index].id;
+            if action == id.with("check") {
+                self.check();
+            } else if action == id.with("notes") {
+                if let Some(update) = &self.available {
+                    ctx.open_url(egui::OpenUrl::new_tab(update.release_url()));
+                }
+            } else if action == id.with("primary") {
+                match (phase, self.managed) {
+                    (Phase::Available, true) => self.download(),
+                    (Phase::Available, false) => {
+                        if let Some(update) = &self.available {
                             ctx.open_url(egui::OpenUrl::new_tab(update.release_url()));
                         }
                     }
-                });
-                if !can_install && self.ready.is_some() {
-                    ui.label("Finish file operations first.");
+                    _ => {
+                        if let Some(downloaded) = self.ready.take() {
+                            self.verifying = self.submit(Command::Prepare(
+                                downloaded,
+                                self.settings.include_prereleases,
+                            ));
+                        }
+                    }
                 }
-                if let Some(remaining) = cooling_down_for(self.last_attempt) {
-                    ctx.request_repaint_after(remaining);
-                }
-                if self.exit_pending
-                    && foldex_ui::components::text_button(ui, theme, "Cancel installation", false)
-                        .clicked()
-                {
-                    cancel = true;
-                }
-            },
-        );
+            } else if action == id.with("cancel-download") {
+                self.cancelled.store(true, Ordering::Release);
+            } else if action == id.with("cancel-install") {
+                cancel = true;
+            }
+        }
+        if let Some(remaining) = cooling_down_for(self.last_attempt) {
+            ctx.request_repaint_after(remaining);
+        }
         self.open = open && !cancel;
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Phase {
+    Unavailable,
+    Loading,
+    Checking,
+    Idle,
+    Current,
+    Available,
+    Downloading,
+    Verifying,
+    Ready,
+    Installing,
 }
 
 fn cooling_down_for(last: Option<Instant>) -> Option<Duration> {

@@ -28,24 +28,27 @@ impl Foldex {
             }
         }
         let t = &self.theme;
-        let scale = t.metrics().scale;
         let id = Id::new("rename-extension-confirm");
         let mut open = true;
-        foldex_ui::components::dialog(ctx, id, t, "Rename", 420.0 * scale, &mut open, |ui| {
-            ui.label(
-                "If you change a file name extension, the file might become unusable. \
-                 Are you sure you want to change it?",
-            );
-            ui.add_space(8.0 * scale);
-            ui.horizontal_wrapped(|ui| {
-                if foldex_ui::components::text_button(ui, t, "Yes", true).clicked() {
-                    answer = Some(Answer::Yes);
-                }
-                if foldex_ui::components::text_button(ui, t, "No", false).clicked() {
-                    answer = Some(Answer::No);
-                }
+        use foldex_ui::dialog::{Action, Dialog, Footer, Kind, Size, Text};
+        let shown = Dialog::new(id, "Change the file extension?", Size::Small.width(t))
+            .footer(Footer::new(vec![
+                Action::new(id.with("no"), "Keep editing", Kind::Secondary),
+                Action::new(id.with("yes"), "Change extension", Kind::Primary),
+            ]))
+            .show(ctx, t, &mut open, |ui| {
+                foldex_ui::dialog::text(
+                    ui,
+                    t,
+                    Text::Secondary,
+                    "Apps may no longer recognize the file, and it might become unusable.",
+                );
             });
-        });
+        match shown.clicked {
+            Some(0) => answer = Some(Answer::No),
+            Some(_) => answer = Some(Answer::Yes),
+            None => {}
+        }
         if !open && answer.is_none() {
             answer = Some(Answer::No);
         }

@@ -74,6 +74,11 @@ impl Foldex {
         self.job(job);
     }
 
+    #[cfg(test)]
+    pub(super) fn catalog_delete_area(&self) -> Option<Id> {
+        self.deletion.pending.as_ref().map(|pending| pending.id)
+    }
+
     pub(super) fn delete_confirmation_ui(&mut self, ctx: &egui::Context) {
         let Some(pending) = &mut self.deletion.pending else {
             return;
@@ -94,61 +99,44 @@ impl Foldex {
         }
         let mut open = true;
         let t = &self.theme;
-        let scale = t.metrics().scale;
         let id = pending.id;
         let cancel_id = id.with("cancel");
         let confirm_id = id.with("confirm");
-        foldex_ui::components::dialog_interactive(
-            ctx,
-            id,
-            t,
-            "Delete permanently",
-            460.0 * scale,
-            &mut open,
-            pending.decision.is_none(),
-            |ui| {
-                ui.label(format!(
-                    "Permanently delete {} item{}?",
-                    pending.paths.len(),
-                    if pending.paths.len() == 1 { "" } else { "s" }
-                ));
-                ui.add_space(4.0 * scale);
-                for (index, path) in pending.paths.iter().take(4).enumerate() {
-                    let (rect, _) = ui.allocate_exact_size(
-                        vec2(ui.available_width(), t.font_size + 7.0 * scale),
-                        Sense::hover(),
-                    );
-                    foldex_ui::components::elided_label(
-                        ui.painter(),
-                        rect,
-                        t,
-                        &path_label(path),
-                        t.dim(),
-                        false,
-                    );
-                    ui.interact(rect, id.with(("path", index)), Sense::hover())
-                        .on_hover_text(path.to_string_lossy());
-                }
-                if pending.paths.len() > 4 {
-                    ui.label(
-                        egui::RichText::new(format!("and {} more", pending.paths.len() - 4))
-                            .color(t.dim()),
-                    );
-                }
-                ui.add_space(8.0 * scale);
-                ui.horizontal_wrapped(|ui| {
-                    if delete_button(ui, t, cancel_id, "Cancel").clicked() {
-                        pending.decision = Some(Decision::Cancel);
-                    }
-                    if delete_button(ui, t, confirm_id, "Delete permanently").clicked()
-                        && pending.decision.is_none()
-                        && !composing
-                    {
-                        pending.decision = Some(Decision::Confirm);
-                    }
-                });
-            },
-        );
+        let count = pending.paths.len();
+        let title = if count == 1 {
+            "Permanently delete this item?".to_owned()
+        } else {
+            format!("Permanently delete {count} items?")
+        };
+        use foldex_ui::dialog::{Action, Dialog, Footer, Kind, Size, Text};
+        let shown = Dialog::new(id, &title, Size::Small.width(t))
+            .interactive(pending.decision.is_none())
+            .footer(Footer::new(vec![
+                Action::new(cancel_id, "Cancel", Kind::Secondary),
+                Action::new(confirm_id, "Delete", Kind::Danger),
+            ]))
+            .show(ctx, t, &mut open, |ui| {
+                foldex_ui::dialog::text(
+                    ui,
+                    t,
+                    Text::Secondary,
+                    "They're removed right away and can't be restored from the Recycle Bin.",
+                );
+                let names: Vec<_> = pending
+                    .paths
+                    .iter()
+                    .take(4)
+                    .map(|path| (path_label(path), path.to_string_lossy().into_owned()))
+                    .collect();
+                foldex_ui::dialog::item_list(ui, t, id.with("items"), &names, count);
+            });
+        match shown.clicked {
+            Some(0) => pending.decision = Some(Decision::Cancel),
+            Some(_) if pending.decision.is_none() && !composing => {
+                pending.decision = Some(Decision::Confirm);
+            }
+            _ => {}
+        }
         if pending.focus_cancel
             && pending.decision.is_none()
             && ctx
@@ -168,20 +156,6 @@ impl Foldex {
             }
         }
     }
-}
-
-fn delete_button(ui: &mut Ui, t: &Theme, id: Id, label: &str) -> egui::Response {
-    let m = t.metrics();
-    let width = (ui
-        .painter()
-        .layout_no_wrap(label.to_owned(), t.font(), t.fg())
-        .size()
-        .x
-        + 16.0 * m.scale)
-        .max(m.control)
-        .min(ui.max_rect().width().max(m.control));
-    let (_, rect) = ui.allocate_space(vec2(width, m.control));
-    foldex_ui::components::text_button_at(ui, rect, id, t, label, false)
 }
 
 #[cfg(test)]

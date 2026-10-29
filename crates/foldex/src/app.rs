@@ -6,7 +6,7 @@ use egui::{
     Align2, Id, Key, Modifiers, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, pos2, vec2,
 };
 use foldex_core::Engine;
-use foldex_ui::{Icon, Theme, icon, icon_button};
+use foldex_ui::{Icon, Theme, icon};
 mod appearance;
 mod chrome;
 mod commands_ui;
@@ -3482,74 +3482,103 @@ impl eframe::App for Foldex {
             );
             let mut stats_open = true;
             let mut report_to_save = None;
-            foldex_ui::components::dialog(
-                &ctx,
-                Id::new("performance-dialog"),
-                &self.theme,
+            let mut samples: Vec<_> = self.frames.iter().copied().collect();
+            samples.sort_by(f64::total_cmp);
+            let p95 = samples
+                .get((samples.len() as f64 * 0.95) as usize)
+                .copied()
+                .unwrap_or_default();
+            let id = Id::new("performance-dialog");
+            let shown = foldex_ui::dialog::Dialog::new(
+                id,
                 "Performance",
-                420.0 * scale,
-                &mut stats_open,
-                |ui| {
-                    ui.label(format!(
-                        "Launch to first UI callback: {:.1} ms",
-                        self.first_frame.unwrap_or_default()
-                    ));
-                    let mut samples: Vec<_> = self.frames.iter().copied().collect();
-                    samples.sort_by(f64::total_cmp);
-                    let p95 = samples
-                        .get((samples.len() as f64 * 0.95) as usize)
-                        .copied()
-                        .unwrap_or_default();
-                    ui.label(format!(
-                        "UI update p95: {p95:.3} ms ({} frames)",
-                        samples.len()
-                    ));
-                    ui.label(format!(
-                        "Directory: {:.2} ms · query: {:.3} ms",
-                        self.pane().load_time.as_secs_f64() * 1000.0,
-                        self.pane().query_time.as_secs_f64() * 1000.0
-                    ));
-                    ui.label(format!(
-                        "Model: {}",
-                        self.pane()
-                            .snapshot
-                            .as_ref()
-                            .map(|s| foldex_ui::format_size(s.managed_bytes as u64))
-                            .unwrap_or_default()
-                    ));
-                    ui.label("Ctrl+Alt+P to hide. UI timing excludes GPU presentation.");
-                    ui.label(egui::RichText::new(&self.adapter_info).small());
-                    ui.label(format!("UI frames: {}", self.frame_count));
-                    ui.label(format!(
-                        "Previous renderer CPU: {:.3} ms",
-                        self.renderer_cpu_ms
-                    ));
-                    if let Some(s) = self.process_samples.last() {
-                        ui.separator();
-                        ui.label(format!(
-                            "Private: {} · working set: {}",
-                            foldex_ui::format_size(s.private_bytes),
-                            foldex_ui::format_size(s.working_set_bytes)
-                        ));
-                        ui.label(format!(
-                            "Handles: {} · managed model: {}",
-                            s.handles,
-                            foldex_ui::format_size(self.engine.managed_bytes() as u64)
-                        ));
-                    }
-                    if foldex_ui::components::text_button(
+                foldex_ui::dialog::Size::Small.width(&self.theme),
+            )
+            .subtitle(&self.adapter_info)
+            .footer(
+                foldex_ui::dialog::Footer::new(vec![foldex_ui::dialog::Action::new(
+                    id.with("save"),
+                    "Save report",
+                    foldex_ui::dialog::Kind::Secondary,
+                )])
+                .status("Ctrl+Alt+P hides this", foldex_ui::dialog::Tone::Neutral),
+            )
+            .show(&ctx, &self.theme, &mut stats_open, |ui| {
+                use foldex_ui::dialog::{property, section};
+                let t = &self.theme;
+                let ms = |value: f64, digits: usize| format!("{value:.digits$} ms");
+                section(ui, t, "Timing");
+                property(
+                    ui,
+                    t,
+                    "Launch to first frame",
+                    &ms(self.first_frame.unwrap_or_default(), 1),
+                );
+                property(
+                    ui,
+                    t,
+                    &format!("UI update p95 ({} frames)", samples.len()),
+                    &ms(p95, 3),
+                );
+                property(ui, t, "Previous renderer CPU", &ms(self.renderer_cpu_ms, 3));
+                property(
+                    ui,
+                    t,
+                    "Directory load",
+                    &ms(self.pane().load_time.as_secs_f64() * 1000.0, 2),
+                );
+                property(
+                    ui,
+                    t,
+                    "Query",
+                    &ms(self.pane().query_time.as_secs_f64() * 1000.0, 3),
+                );
+                property(ui, t, "UI frames", &self.frame_count.to_string());
+                section(ui, t, "Memory");
+                property(
+                    ui,
+                    t,
+                    "Directory model",
+                    &self
+                        .pane()
+                        .snapshot
+                        .as_ref()
+                        .map(|s| foldex_ui::format_size(s.managed_bytes as u64))
+                        .unwrap_or_default(),
+                );
+                property(
+                    ui,
+                    t,
+                    "Managed model",
+                    &foldex_ui::format_size(self.engine.managed_bytes() as u64),
+                );
+                if let Some(s) = self.process_samples.last() {
+                    property(
                         ui,
-                        &self.theme,
-                        "Save performance report",
-                        false,
-                    )
-                    .clicked()
-                    {
-                        let report = serde_json::json!({"renderer":if cfg!(feature="renderer-glow"){"glow"}else{"wgpu-dx12"},"adapter":self.adapter_info,"ui_frame_count":self.frame_count,"renderer_cpu_ms":self.renderer_cpu_ms,"repaint_causes":format!("{:?}",ctx.repaint_causes()),"launch_to_first_ui_ms":self.first_frame,"ui_samples_ms":samples,"process_samples":self.process_samples,"model_bytes":self.engine.managed_bytes(),"presentation_measured":false});
-                        report_to_save = serde_json::to_vec_pretty(&report).ok();
-                    }
-                },
-            );
+                        t,
+                        "Private bytes",
+                        &foldex_ui::format_size(s.private_bytes),
+                    );
+                    property(
+                        ui,
+                        t,
+                        "Working set",
+                        &foldex_ui::format_size(s.working_set_bytes),
+                    );
+                    property(ui, t, "Handles", &s.handles.to_string());
+                }
+                ui.add_space(8.0 * scale);
+                foldex_ui::dialog::text(
+                    ui,
+                    t,
+                    foldex_ui::dialog::Text::Caption,
+                    "UI timing excludes GPU presentation.",
+                );
+            });
+            if shown.clicked == Some(0) {
+                let report = serde_json::json!({"renderer":if cfg!(feature="renderer-glow"){"glow"}else{"wgpu-dx12"},"adapter":self.adapter_info,"ui_frame_count":self.frame_count,"renderer_cpu_ms":self.renderer_cpu_ms,"repaint_causes":format!("{:?}",ctx.repaint_causes()),"launch_to_first_ui_ms":self.first_frame,"ui_samples_ms":samples,"process_samples":self.process_samples,"model_bytes":self.engine.managed_bytes(),"presentation_measured":false});
+                report_to_save = serde_json::to_vec_pretty(&report).ok();
+            }
             self.show_stats = stats_open;
             if let Some(bytes) = report_to_save {
                 self.job(Job::Save {

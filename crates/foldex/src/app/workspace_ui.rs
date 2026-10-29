@@ -198,32 +198,47 @@ impl Foldex {
         }
     }
     pub(super) fn workspace_dialogs(&mut self, ctx: &egui::Context) {
+        use foldex_ui::dialog::{Action, Dialog, Footer, Form, Kind, Size, Tone};
         let mut save = false;
         let mut cancel = false;
         if let Some(name) = &mut self.save_layout_name {
             let mut open = true;
-            foldex_ui::components::dialog(
-                ctx,
-                Id::new("save-layout"),
-                &self.theme,
-                "Save layout",
-                400.0 * self.theme.metrics().scale,
-                &mut open,
-                |ui| {
-                    let (field, _) = ui.allocate_exact_size(
-                        vec2(ui.available_width(), self.theme.metrics().control),
-                        Sense::hover(),
-                    );
-                    let r = foldex_ui::components::input_box(
-                        ui,
-                        field,
-                        Id::new("layout-name"),
-                        &self.theme,
-                        name,
-                        "Layout name",
-                        64,
+            let t = &self.theme;
+            let id = Id::new("save-layout");
+            let trimmed = name.trim().to_owned();
+            let replaces = self.saved_layouts.iter().any(|saved| saved.name == trimmed);
+            let notice = format!(
+                "A layout named \u{201c}{trimmed}\u{201d} already exists. Saving replaces it."
+            );
+            let shown = Dialog::new(id, "Save layout", Size::Small.width(t))
+                .subtitle("Keeps your open tabs, panes and their folders.")
+                .footer(Footer::new(vec![
+                    Action::new(id.with("cancel"), "Cancel", Kind::Secondary),
+                    Action::new(
+                        id.with("save"),
+                        if replaces { "Replace" } else { "Save" },
+                        Kind::Primary,
                     )
-                    .response;
+                    .enabled(!trimmed.is_empty()),
+                ]))
+                .show(ctx, t, &mut open, |ui| {
+                    let form = Form::new(ui, t, &["Name"]);
+                    let r = form.row(ui, t, "Name", |ui| {
+                        let (field, _) = ui.allocate_exact_size(
+                            vec2(ui.available_width(), t.metrics().control),
+                            Sense::hover(),
+                        );
+                        foldex_ui::components::input_box(
+                            ui,
+                            field,
+                            Id::new("layout-name"),
+                            t,
+                            name,
+                            "Layout name",
+                            64,
+                        )
+                        .response
+                    });
                     let initial = ctx
                         .data(|data| data.get_temp::<bool>(Id::new("save-layout-initial-focus")))
                         .unwrap_or(true);
@@ -235,26 +250,17 @@ impl Foldex {
                             });
                         }
                     }
-                    ui.horizontal_wrapped(|ui| {
-                        save = foldex_ui::components::text_button_enabled(
-                            ui,
-                            &self.theme,
-                            "Save layout",
-                            true,
-                            !name.trim().is_empty(),
-                        )
-                        .clicked()
-                            || r.has_focus()
-                                && !name.trim().is_empty()
-                                && ui.input(|i| i.key_pressed(Key::Enter));
-                        if foldex_ui::components::text_button(ui, &self.theme, "Cancel", false)
-                            .clicked()
-                        {
-                            ui.close();
-                        }
-                    });
-                },
-            );
+                    if replaces {
+                        foldex_ui::dialog::callout(ui, t, Tone::Neutral, &notice);
+                    }
+                    r.has_focus()
+                        && !name.trim().is_empty()
+                        && ui.input(|i| i.key_pressed(Key::Enter))
+                });
+            save = shown.inner || shown.clicked == Some(1);
+            if shown.clicked == Some(0) {
+                foldex_ui::components::close_dialog(ctx, id);
+            }
             cancel |= !open;
         }
         if save {
@@ -286,56 +292,73 @@ impl Foldex {
         }
         let mut load = None;
         let mut remove = None;
+        let mut save_current = false;
         let mut open = self.load_layout_open;
         if open {
-            foldex_ui::components::dialog(
-                ctx,
-                Id::new("saved-layouts"),
-                &self.theme,
-                "Saved layouts",
-                400.0 * self.theme.metrics().scale,
-                &mut open,
-                |ui| {
-                    if self.saved_layouts.is_empty() {
-                        ui.label("No saved layouts");
+            let t = &self.theme;
+            let id = Id::new("saved-layouts");
+            let empty = self.saved_layouts.is_empty();
+            let mut dialog = Dialog::new(id, "Saved layouts", Size::Medium.width(t));
+            if !empty {
+                dialog = dialog
+                    .subtitle("Open a layout to restore its tabs and panes.")
+                    .footer(Footer::new(vec![Action::new(
+                        id.with("save-current"),
+                        "Save current layout…",
+                        Kind::Secondary,
+                    )]));
+            }
+            let shown = dialog.show(ctx, t, &mut open, |ui| {
+                if empty {
+                    return foldex_ui::dialog::empty_state(
+                        ui,
+                        t,
+                        Icon::Split,
+                        "No saved layouts yet",
+                        "Save your open tabs and panes as a layout to bring them back in one step.",
+                        Some((id.with("save-first"), "Save current layout…")),
+                    )
+                    .is_some_and(|response| response.clicked());
+                }
+                ui.spacing_mut().item_spacing.y = 2.0 * t.metrics().scale;
+                for (i, layout) in self.saved_layouts.iter().enumerate() {
+                    let tabs = layout.state.tabs.len();
+                    let panes = layout
+                        .state
+                        .tabs
+                        .iter()
+                        .map(|tab| 1 + usize::from(tab.right.is_some()))
+                        .sum::<usize>();
+                    let detail = match (tabs, panes > tabs) {
+                        (1, false) => "1 tab".to_owned(),
+                        (1, true) => "1 tab · split".to_owned(),
+                        (n, false) => format!("{n} tabs"),
+                        (n, true) => format!("{n} tabs · {panes} panes"),
+                    };
+                    let (row, trash) = foldex_ui::dialog::list_row(
+                        ui,
+                        t,
+                        id.with(("layout", i)),
+                        Icon::Split,
+                        &layout.name,
+                        &detail,
+                        Some((Icon::Trash, "Remove saved layout")),
+                    );
+                    if row.clicked() {
+                        load = Some(i);
                     }
-                    for (i, layout) in self.saved_layouts.iter().enumerate() {
-                        ui.horizontal(|ui| {
-                            let width = (ui.available_width()
-                                - self.theme.metrics().control
-                                - self.theme.metrics().gap)
-                                .max(1.0);
-                            let (id, rect) =
-                                ui.allocate_space(vec2(width, self.theme.metrics().control));
-                            if foldex_ui::components::text_button_at(
-                                ui,
-                                rect,
-                                id,
-                                &self.theme,
-                                &layout.name,
-                                false,
-                            )
-                            .clicked()
-                            {
-                                load = Some(i);
-                            }
-                            if icon_button(
-                                ui,
-                                &self.theme,
-                                Icon::Trash,
-                                "Remove saved layout",
-                                false,
-                            )
-                            .clicked()
-                            {
-                                remove = Some(i);
-                            }
-                        });
+                    if trash.is_some_and(|trash| trash.clicked()) {
+                        remove = Some(i);
                     }
-                },
-            );
+                }
+                false
+            });
+            save_current = shown.inner || shown.clicked == Some(0);
         }
-        self.load_layout_open = open;
+        self.load_layout_open = open && !save_current;
+        if save_current {
+            self.save_layout_name = Some(String::new());
+        }
         if let Some(i) = load {
             let state = self.saved_layouts[i].state.clone();
             self.restore_workspace(state);

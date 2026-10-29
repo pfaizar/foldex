@@ -2,7 +2,6 @@
 //! No filesystem work runs in a frame. Apply/recovery share the file history.
 
 use crate::commands::{result_row, result_surface, take_key};
-use egui::RichText;
 use foldex_ui::Theme;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -90,6 +89,17 @@ impl BatchRename {
         self.popup.is_some()
     }
 
+    #[cfg(test)]
+    pub fn catalog_template(&mut self, template: &str) {
+        if let Some(popup) = &mut self.popup {
+            popup.request.rules.template = template.into();
+            self.sequence = self.sequence.wrapping_add(1).max(1);
+            popup.request.generation = self.sequence;
+            popup.loading = true;
+            self.pending = Some(popup.request.clone());
+        }
+    }
+
     pub fn close(&mut self) {
         self.popup = None;
         self.pending = None;
@@ -161,38 +171,64 @@ impl BatchRename {
             self.release_focus(ctx);
             return update;
         };
+        use foldex_ui::dialog::{
+            Action as Button, Dialog, Footer, Form, Glyph, Kind, ROW_GAP, SECTION_GAP, Size, Text,
+            Tone, callout, checkbox, chip, field, field_sized, glyph, half, inline_label, text_at,
+        };
         let working = self.worker.working();
         let mut open = true;
         let mut changed = false;
         let mut apply = false;
         let mut undo = false;
         let mut reload = false;
-        let m = theme.metrics();
+        let t = theme;
+        let m = t.metrics();
+        let s = m.scale;
+        let id = egui::Id::new("batch-rename");
         let interactive = !popup.case_menu.open;
-        foldex_ui::components::dialog_interactive(
-            ctx,
-            egui::Id::new("batch-rename"),
-            theme,
-            "Rename files",
-            760.0 * m.scale,
-            &mut open,
-            interactive,
-            |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(
-                        RichText::new(format!("{} selected items", popup.request.paths.len()))
-                            .color(theme.dim()),
-                    );
-                    reload = foldex_ui::components::text_button_enabled(
-                        ui,
-                        theme,
-                        "Reload preview",
-                        false,
-                        !working && !popup.applied,
-                    )
-                    .clicked();
-                });
-                ui.add_enabled_ui(!working && !popup.applied, |ui| {
+        let editable = !working && !popup.applied;
+        let count = popup.request.paths.len();
+        let subtitle = match count {
+            1 => "1 item selected".to_owned(),
+            n => format!("{n} items selected"),
+        };
+        let current = popup
+            .preview
+            .as_ref()
+            .filter(|preview| preview.generation == popup.request.generation);
+        let changes = current.map_or(0, |preview| preview.changes);
+        let can_undo = popup.applied && !working && self.worker.can_undo();
+        let undo_label = self.worker.shared.history.state().undo_label();
+        let label = match changes {
+            0 => "Rename".to_owned(),
+            1 => "Rename 1 item".to_owned(),
+            n => format!("Rename {n} items"),
+        };
+        let mut actions = Vec::new();
+        if can_undo {
+            actions.push(Button::new(id.with("undo"), &undo_label, Kind::Ghost));
+        }
+        if popup.applied {
+            actions.push(Button::new(id.with("done"), "Done", Kind::Primary));
+        } else {
+            actions.push(Button::new(id.with("cancel"), "Cancel", Kind::Secondary));
+            actions.push(
+                Button::new(id.with("apply"), &label, Kind::Primary)
+                    .enabled(popup.can_apply(working)),
+            );
+        }
+        let mut footer = Footer::new(actions);
+        if working {
+            footer = footer.status("Renaming…", Tone::Neutral);
+        }
+        let shown = Dialog::new(id, "Rename files", Size::Large.width(t))
+            .subtitle(&subtitle)
+            .interactive(interactive)
+            .footer(footer)
+            .show(ctx, t, &mut open, |ui| {
+                ui.spacing_mut().item_spacing.y = ROW_GAP * s;
+                let form = Form::new(ui, t, &["Name", "Prefix", "Find", "Case", "Numbering"]);
+                ui.add_enabled_ui(editable, |ui| {
                     let template_id = egui::Id::new("batch-name-template");
                     if popup.focus_template
                         && foldex_ui::components::can_focus(ui)
@@ -200,14 +236,16 @@ impl BatchRename {
                     {
                         ui.memory_mut(|memory| memory.request_focus(template_id));
                     }
-                    let output = foldex_ui::components::form_input(
-                        ui,
-                        egui::Id::new("batch-name-template"),
-                        theme,
-                        "Name template",
-                        &mut popup.request.rules.template,
-                        1024,
-                    );
+                    let output = form.row(ui, t, "Name", |ui| {
+                        field(
+                            ui,
+                            t,
+                            template_id,
+                            &mut popup.request.rules.template,
+                            "{stem}",
+                            1024,
+                        )
+                    });
                     if popup.focus_template && foldex_ui::components::can_focus(ui) {
                         popup.focus_template = ui.is_sizing_pass() || !output.response.has_focus();
                     }
@@ -215,65 +253,77 @@ impl BatchRename {
                     if let Some(range) = output.cursor_range {
                         popup.caret = range.primary.index.into();
                     }
-                    ui.horizontal_wrapped(|ui| {
-                        for (name, token) in [
-                            ("Original name", "{stem}"),
-                            ("Incremental ID", "{id}"),
-                            ("Current date", "{date}"),
-                            ("Created", "{created}"),
-                            ("Modified", "{modified}"),
-                        ] {
-                            if foldex_ui::components::text_button(ui, theme, name, false).clicked()
-                            {
-                                insert_at_character(
-                                    &mut popup.request.rules.template,
-                                    &mut popup.caret,
-                                    token,
-                                );
-                                let mut state =
-                                    egui::text_edit::TextEditState::load(ctx, template_id)
-                                        .unwrap_or_default();
-                                state
-                                    .cursor
-                                    .set_char_range(Some(egui::text::CCursorRange::one(
-                                        egui::text::CCursor::new(popup.caret),
-                                    )));
-                                state.store(ctx, template_id);
-                                popup.focus_template = true;
-                                changed = true;
+                    form.indent(ui, |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = egui::vec2(6.0 * s, 6.0 * s);
+                            for (name, token) in [
+                                ("Original name", "{stem}"),
+                                ("Number", "{id}"),
+                                ("Today's date", "{date}"),
+                                ("Created", "{created}"),
+                                ("Modified", "{modified}"),
+                            ] {
+                                if chip(ui, id.with(("token", token)), t, name)
+                                    .on_hover_text(format!("Insert {token}"))
+                                    .clicked()
+                                {
+                                    insert_at_character(
+                                        &mut popup.request.rules.template,
+                                        &mut popup.caret,
+                                        token,
+                                    );
+                                    let mut state =
+                                        egui::text_edit::TextEditState::load(ctx, template_id)
+                                            .unwrap_or_default();
+                                    state.cursor.set_char_range(Some(
+                                        egui::text::CCursorRange::one(egui::text::CCursor::new(
+                                            popup.caret,
+                                        )),
+                                    ));
+                                    state.store(ctx, template_id);
+                                    popup.focus_template = true;
+                                    changed = true;
+                                }
                             }
-                        }
+                        });
                     });
-                    for (label, value) in [
-                        ("Prefix", &mut popup.request.rules.prefix),
-                        ("Suffix", &mut popup.request.rules.suffix),
-                        ("Find", &mut popup.request.rules.find),
-                        ("Replace", &mut popup.request.rules.replace),
+                    let rules = &mut popup.request.rules;
+                    for (first, second, [left, right]) in [
+                        ("Prefix", "Suffix", [&mut rules.prefix, &mut rules.suffix]),
+                        (
+                            "Find",
+                            "Replace with",
+                            [&mut rules.find, &mut rules.replace],
+                        ),
                     ] {
-                        changed |= foldex_ui::components::form_input(
-                            ui,
-                            egui::Id::new(("batch-rule", label)),
-                            theme,
-                            label,
-                            value,
-                            1024,
-                        )
-                        .response
-                        .changed();
+                        changed |= form.row(ui, t, first, |ui| {
+                            let width = half(ui, t);
+                            let a = field_sized(
+                                ui,
+                                t,
+                                egui::Id::new(("batch-rule", first)),
+                                left,
+                                "",
+                                1024,
+                                width,
+                            );
+                            inline_label(ui, t, second);
+                            let key = if second == "Replace with" {
+                                "Replace"
+                            } else {
+                                second
+                            };
+                            let b =
+                                field(ui, t, egui::Id::new(("batch-rule", key)), right, "", 1024);
+                            a.response.changed() || b.response.changed()
+                        });
                     }
-                    ui.horizontal_wrapped(|ui| {
-                        changed |= foldex_ui::components::checkbox(
-                            ui,
-                            theme,
-                            &mut popup.request.rules.keep_extension,
-                            "Keep file extension",
-                        )
-                        .changed();
+                    form.row(ui, t, "Case", |ui| {
                         let case = foldex_ui::components::select_button(
                             ui,
-                            theme,
+                            t,
                             popup.request.rules.case.label(),
-                            145.0 * m.scale,
+                            half(ui, t),
                             popup.case_menu.open,
                         );
                         popup.case_anchor = case.rect;
@@ -286,17 +336,28 @@ impl BatchRename {
                             popup.case_menu.toggle(ctx);
                             popup.case_menu.select(popup.request.rules.case as usize);
                         }
+                        ui.add_space(8.0 * s);
+                        changed |= checkbox(
+                            ui,
+                            t,
+                            &mut popup.request.rules.keep_extension,
+                            "Keep file extensions",
+                        )
+                        .changed();
+                    });
+                    form.row(ui, t, "Numbering", |ui| {
+                        ui.spacing_mut().item_spacing.x = 16.0 * s;
                         changed |= foldex_ui::components::integer_field(
                             ui,
-                            theme,
-                            "ID start",
+                            t,
+                            "Start",
                             &mut popup.request.rules.start,
                             0..=u64::MAX,
                         )
                         .changed();
                         changed |= foldex_ui::components::integer_field(
                             ui,
-                            theme,
+                            t,
                             "Step",
                             &mut popup.request.rules.step,
                             1..=1_000_000,
@@ -304,7 +365,7 @@ impl BatchRename {
                         .changed();
                         changed |= foldex_ui::components::integer_field(
                             ui,
-                            theme,
+                            t,
                             "Digits",
                             &mut popup.request.rules.padding,
                             1..=20,
@@ -312,12 +373,6 @@ impl BatchRename {
                         .changed();
                     });
                 });
-                ui.label(
-                    RichText::new("{stem} {name} {ext} {id} {date} {created} {modified}")
-                        .small()
-                        .color(theme.dim()),
-                );
-                ui.separator();
                 let warning = popup
                     .error
                     .clone()
@@ -326,235 +381,297 @@ impl BatchRename {
                             preview.rows.iter().find_map(|row| row.error.clone())
                         })
                     })
-                    .map(|message| crate::friendly::present("Couldn't rename these items", &message));
+                    .map(|message| {
+                        crate::friendly::present("Couldn't rename these items", &message)
+                    });
                 if let Some(message) = &warning {
                     popup.last_warning.clone_from(message);
                 }
+                // The preview header carries its own counts and refresh, so the
+                // footer stays for actions only.
+                ui.add_space((SECTION_GAP - ROW_GAP) * s);
+                let (header, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), m.control),
+                    egui::Sense::hover(),
+                );
+                text_at(
+                    ui,
+                    header,
+                    t,
+                    Text::Section,
+                    "Preview",
+                    Text::Section.color(t),
+                    egui::Align2::LEFT_CENTER,
+                );
+                let refresh = egui::Rect::from_min_max(
+                    egui::pos2(header.right() - m.control, header.top()),
+                    header.max,
+                );
+                let mut refresh_ui = ui.new_child(
+                    egui::UiBuilder::new()
+                        .id_salt(id.with("refresh-scope"))
+                        .max_rect(refresh),
+                );
+                if !editable {
+                    refresh_ui.disable();
+                }
+                reload = foldex_ui::components::icon_button_at(
+                    &refresh_ui,
+                    refresh,
+                    id.with("refresh"),
+                    t,
+                    foldex_ui::Icon::Refresh,
+                    false,
+                )
+                .on_hover_text("Reload the selected items")
+                .clicked();
+                let summary = if popup.loading {
+                    "Updating…".to_owned()
+                } else if let Some(preview) = &popup.preview {
+                    match (preview.changes, preview.conflicts) {
+                        (0, 0) => "No changes".to_owned(),
+                        (changes, 0) => format!("{changes} will change"),
+                        (changes, conflicts) => {
+                            format!("{changes} will change · {conflicts} conflicts")
+                        }
+                    }
+                } else {
+                    String::new()
+                };
+                let conflicted = popup.preview.as_ref().is_some_and(|p| p.conflicts > 0);
+                text_at(
+                    ui,
+                    egui::Rect::from_min_max(
+                        header.min,
+                        egui::pos2(refresh.left() - 4.0 * s, header.bottom()),
+                    ),
+                    t,
+                    Text::Caption,
+                    &summary,
+                    if conflicted && !popup.loading {
+                        Theme::color(t.danger)
+                    } else {
+                        t.dim()
+                    },
+                    egui::Align2::RIGHT_CENTER,
+                );
                 foldex_ui::components::reveal(
                     ui,
                     egui::Id::new("batch-validation-message"),
-                    theme,
+                    t,
                     warning.is_some(),
                     |ui| {
-                        ui.add(
-                            egui::Label::new(
-                                RichText::new(&popup.last_warning)
-                                    .color(Theme::color(theme.danger)),
-                            )
-                            .wrap(),
-                        );
+                        callout(ui, t, Tone::Danger, &popup.last_warning);
+                        ui.add_space(2.0 * s);
                     },
                 );
-                if popup.loading {
-                    ui.label(RichText::new("Updating preview…").color(theme.dim()));
-                }
                 if let Some(preview) = &popup.preview {
-                    let row_height = theme.file_row_height();
+                    let row_height = t.file_row_height();
                     let preview_id = egui::Id::new("batch-preview-focus");
                     popup.preview_cursor = popup
                         .preview_cursor
                         .min(preview.rows.len().saturating_sub(1));
+                    let visible = (ctx.content_rect().height() * 0.3).clamp(80.0 * s, 240.0 * s);
                     // The preview is one read-only composite; arrows inspect rows
                     // without changing any rename rule or submitting an operation.
-                    let page = ((ctx.content_rect().height() * 0.3)
-                        .clamp(80.0 * m.scale, 320.0 * m.scale)
-                        / row_height)
-                        .floor()
-                        .max(1.0) as usize;
+                    let page = (visible / row_height).floor().max(1.0) as usize;
                     popup.preview_input(ctx, page);
                     let preview = popup.preview.as_ref().unwrap();
-                    let column_width = (ui.available_width() - m.gap) * 0.45;
-                    let (header, _) = ui.allocate_exact_size(
-                        egui::vec2(ui.available_width(), m.control),
-                        egui::Sense::hover(),
-                    );
-                    foldex_ui::components::elided_label(
-                        ui.painter(),
-                        egui::Rect::from_min_size(header.min, egui::vec2(column_width, m.control)),
-                        theme,
-                        "Current name",
-                        theme.dim(),
-                        false,
-                    );
-                    foldex_ui::components::elided_label(
-                        ui.painter(),
-                        egui::Rect::from_min_max(
-                            header.min + egui::vec2(column_width + m.gap, 0.0),
-                            header.max,
-                        ),
-                        theme,
-                        "New name",
-                        theme.dim(),
-                        false,
-                    );
-                    ui.scope(|ui| {
-                        ui.spacing_mut().item_spacing.y = 0.0;
-                        egui::ScrollArea::vertical()
-                            .id_salt("batch-preview")
-                            .max_height(
-                                (ctx.content_rect().height() * 0.3)
-                                    .clamp(80.0 * m.scale, 320.0 * m.scale),
-                            )
-                            .auto_shrink([false, true])
-                            .show_rows(ui, row_height, preview.rows.len(), |ui, range| {
-                                let viewport = ui.clip_rect();
-                                result_surface(ui, viewport, preview_id, "Rename preview");
-                                if popup.reveal_preview && !preview.rows.is_empty() {
-                                    foldex_ui::components::reveal_menu_row(
-                                        ui,
-                                        theme,
-                                        popup.preview_cursor,
-                                        range.start,
-                                        row_height,
-                                    );
-                                    popup.reveal_preview = false;
-                                }
-                                for index in range {
-                                    let row = &preview.rows[index];
-                                    let (rect, _) = ui.allocate_exact_size(
-                                        egui::vec2(ui.available_width(), row_height),
-                                        egui::Sense::hover(),
-                                    );
-                                    let hit = ui.interact(
-                                        rect.intersect(viewport),
-                                        preview_id.with(index),
-                                        egui::Sense::CLICK,
-                                    );
-                                    let label = format!(
-                                        "{} → {}{}",
-                                        row.before,
-                                        row.after,
-                                        row.error
-                                            .as_ref()
-                                            .map(|error| format!(
-                                                ". {}",
-                                                crate::friendly::present("Couldn't rename this item", error)
-                                            ))
-                                            .unwrap_or_default()
-                                    );
-                                    result_row(
-                                        ui,
-                                        &hit,
-                                        preview_id,
-                                        preview_id,
-                                        &label,
-                                        popup.preview_cursor == index,
-                                        true,
-                                    );
-                                    if hit.clicked() {
-                                        popup.preview_cursor = index;
-                                        ui.memory_mut(|memory| memory.request_focus(preview_id));
+                    let pad = 10.0 * s;
+                    egui::Frame::NONE
+                        .fill(Theme::color(t.background))
+                        .stroke(egui::Stroke::new(1.0, t.line()))
+                        .corner_radius(t.radius)
+                        .inner_margin(egui::Margin::same((4.0 * s) as i8))
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            let width = ui.available_width();
+                            let arrow = 28.0 * s;
+                            let column = (width - arrow) * 0.5;
+                            let (head, _) = ui.allocate_exact_size(
+                                egui::vec2(width, 26.0 * s),
+                                egui::Sense::hover(),
+                            );
+                            for (x, label) in [(0.0, "Current name"), (column + arrow, "New name")]
+                            {
+                                text_at(
+                                    ui,
+                                    egui::Rect::from_min_size(
+                                        head.min + egui::vec2(x + pad, 0.0),
+                                        egui::vec2(column - pad, head.height()),
+                                    ),
+                                    t,
+                                    Text::Caption,
+                                    label,
+                                    t.dim(),
+                                    egui::Align2::LEFT_CENTER,
+                                );
+                            }
+                            egui::ScrollArea::vertical()
+                                .id_salt("batch-preview")
+                                .max_height(visible)
+                                .auto_shrink([false, true])
+                                .show_rows(ui, row_height, preview.rows.len(), |ui, range| {
+                                    let viewport = ui.clip_rect();
+                                    result_surface(ui, viewport, preview_id, "Rename preview");
+                                    if popup.reveal_preview && !preview.rows.is_empty() {
+                                        foldex_ui::components::reveal_menu_row(
+                                            ui,
+                                            t,
+                                            popup.preview_cursor,
+                                            range.start,
+                                            row_height,
+                                        );
+                                        popup.reveal_preview = false;
                                     }
-                                    let hover = foldex_ui::animated_state(
-                                        ui.ctx(),
-                                        egui::Id::new(("batch-preview-hover", index)),
-                                        hit.hovered(),
-                                        theme,
-                                        foldex_ui::motion::MotionProfile::Fast,
-                                    );
-                                    ui.painter().rect_filled(
-                                        rect,
-                                        theme.radius,
-                                        Theme::color(theme.hover).gamma_multiply(hover),
-                                    );
-                                    foldex_ui::components::focus_ring(
-                                        ui,
-                                        rect,
-                                        preview_id.with((index, "cursor")),
-                                        theme,
-                                        popup.preview_cursor == index
-                                            && ui.memory(|memory| memory.has_focus(preview_id)),
-                                    );
-                                    let before = egui::Rect::from_min_size(
-                                        rect.min,
-                                        egui::vec2(column_width, row_height),
-                                    );
-                                    let after = egui::Rect::from_min_max(
-                                        rect.min + egui::vec2(column_width + m.gap, 0.0),
-                                        rect.max
-                                            - egui::vec2(
-                                                if row.error.is_some() {
-                                                    75.0 * m.scale
-                                                } else {
-                                                    0.0
-                                                },
-                                                0.0,
-                                            ),
-                                    );
-                                    foldex_ui::components::elided_label(
-                                        ui.painter(),
-                                        before,
-                                        theme,
-                                        &row.before,
-                                        theme.fg(),
-                                        false,
-                                    );
-                                    let color = if row.error.is_some() {
-                                        Theme::color(theme.danger)
-                                    } else if row.changed {
-                                        theme.accent()
-                                    } else {
-                                        theme.dim()
-                                    };
-                                    foldex_ui::components::elided_label(
-                                        ui.painter(),
-                                        after,
-                                        theme,
-                                        &row.after,
-                                        color,
-                                        false,
-                                    );
-                                    if let Some(error) = &row.error {
-                                        foldex_ui::components::elided_label(
-                                            ui.painter(),
-                                            egui::Rect::from_min_max(
-                                                egui::pos2(after.right() + m.gap, rect.top()),
-                                                rect.max,
-                                            ),
-                                            theme,
-                                            "Conflict",
-                                            Theme::color(theme.danger),
+                                    for index in range {
+                                        let row = &preview.rows[index];
+                                        let (rect, _) = ui.allocate_exact_size(
+                                            egui::vec2(ui.available_width(), row_height),
+                                            egui::Sense::hover(),
+                                        );
+                                        let hit = ui.interact(
+                                            rect.intersect(viewport),
+                                            preview_id.with(index),
+                                            egui::Sense::CLICK,
+                                        );
+                                        let problem = row.error.as_ref().map(|error| {
+                                            crate::friendly::present(
+                                                "Couldn't rename this item",
+                                                error,
+                                            )
+                                        });
+                                        let label = format!(
+                                            "{} → {}{}",
+                                            row.before,
+                                            row.after,
+                                            problem
+                                                .as_ref()
+                                                .map(|problem| format!(". {problem}"))
+                                                .unwrap_or_default()
+                                        );
+                                        result_row(
+                                            ui,
+                                            &hit,
+                                            preview_id,
+                                            preview_id,
+                                            &label,
+                                            popup.preview_cursor == index,
                                             true,
                                         );
-                                        hit.on_hover_text(crate::friendly::present("Couldn't rename this item", error));
-                                    } else {
-                                        hit.on_hover_text(format!(
-                                            "{} → {}",
-                                            row.before, row.after
-                                        ));
+                                        if hit.clicked() {
+                                            popup.preview_cursor = index;
+                                            ui.memory_mut(|memory| {
+                                                memory.request_focus(preview_id)
+                                            });
+                                        }
+                                        let hover = foldex_ui::animated_state(
+                                            ui.ctx(),
+                                            egui::Id::new(("batch-preview-hover", index)),
+                                            hit.hovered(),
+                                            t,
+                                            foldex_ui::motion::MotionProfile::Fast,
+                                        );
+                                        ui.painter().rect_filled(
+                                            rect,
+                                            t.radius,
+                                            Theme::color(t.hover).gamma_multiply(hover),
+                                        );
+                                        foldex_ui::components::focus_ring(
+                                            ui,
+                                            rect,
+                                            preview_id.with((index, "cursor")),
+                                            t,
+                                            popup.preview_cursor == index
+                                                && ui.memory(|memory| memory.has_focus(preview_id)),
+                                        );
+                                        let before = egui::Rect::from_min_size(
+                                            rect.min + egui::vec2(pad, 0.0),
+                                            egui::vec2(column - pad, row_height),
+                                        );
+                                        let after = egui::Rect::from_min_max(
+                                            rect.min + egui::vec2(column + arrow, 0.0),
+                                            rect.max - egui::vec2(pad, 0.0),
+                                        );
+                                        text_at(
+                                            ui,
+                                            before,
+                                            t,
+                                            Text::Body,
+                                            &row.before,
+                                            if row.changed { t.fg() } else { t.dim() },
+                                            egui::Align2::LEFT_CENTER,
+                                        );
+                                        text_at(
+                                            ui,
+                                            egui::Rect::from_center_size(
+                                                egui::pos2(
+                                                    rect.left() + column + arrow * 0.5,
+                                                    rect.center().y,
+                                                ),
+                                                egui::vec2(arrow, row_height),
+                                            ),
+                                            t,
+                                            Text::Secondary,
+                                            "→",
+                                            t.dim(),
+                                            egui::Align2::CENTER_CENTER,
+                                        );
+                                        let after = if row.error.is_some() {
+                                            let size = 14.0 * s;
+                                            glyph(
+                                                ui,
+                                                egui::pos2(
+                                                    after.right() - size * 0.5,
+                                                    after.center().y,
+                                                ),
+                                                size,
+                                                Glyph::Error,
+                                                Theme::color(t.danger),
+                                            );
+                                            egui::Rect::from_min_max(
+                                                after.min,
+                                                egui::pos2(
+                                                    after.right() - size - 8.0 * s,
+                                                    after.bottom(),
+                                                ),
+                                            )
+                                        } else {
+                                            after
+                                        };
+                                        text_at(
+                                            ui,
+                                            after,
+                                            t,
+                                            Text::Body,
+                                            &row.after,
+                                            if row.error.is_some() {
+                                                Theme::color(t.danger)
+                                            } else if row.changed {
+                                                t.fg()
+                                            } else {
+                                                t.dim()
+                                            },
+                                            egui::Align2::LEFT_CENTER,
+                                        );
+                                        hit.on_hover_text(problem.unwrap_or_else(|| {
+                                            format!("{} → {}", row.before, row.after)
+                                        }));
                                     }
-                                }
-                            });
-                    });
-                    ui.separator();
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(format!(
-                            "{} changes · {} conflicts",
-                            preview.changes, preview.conflicts
-                        ));
-                        if working {
-                            ui.label(RichText::new("Applying changes…").color(theme.dim()));
-                        }
-                        apply = foldex_ui::components::text_button_enabled(
-                            ui,
-                            theme,
-                            "Apply rename",
-                            true,
-                            popup.can_apply(working),
-                        )
-                        .clicked();
-                        undo = foldex_ui::components::text_button_enabled(
-                            ui,
-                            theme,
-                            &self.worker.shared.history.state().undo_label(),
-                            false,
-                            !working && self.worker.can_undo(),
-                        )
-                        .clicked();
-                    });
+                                });
+                        });
                 }
-            },
-        );
+            });
+        if let Some(index) = shown.clicked {
+            let action = shown.actions[index].id;
+            if action == id.with("apply") {
+                apply = true;
+            } else if action == id.with("undo") {
+                undo = true;
+            } else {
+                foldex_ui::components::close_dialog(ctx, id);
+            }
+        }
         let cases = [NameCase::Original, NameCase::Lower, NameCase::Upper];
         let items = std::array::from_fn::<_, 3, _>(|i| foldex_ui::components::MenuItem {
             id: i as u32,
@@ -1290,18 +1407,13 @@ fn make_plan(
                 };
                 let key = OrdinalPath::new(&source.path);
                 if let Some(other) = source_keys.insert(key, index) {
-                    pending_errors.push((
-                        other,
-                        "The same item is selected more than once".into(),
-                    ));
+                    pending_errors.push((other, "The same item is selected more than once".into()));
                     row.error = Some("Selected more than once".into());
                 }
                 let identity = &source.fingerprint.identity;
                 if let Some(other) = identities.insert((identity.volume, identity.id), index) {
-                    pending_errors.push((
-                        other,
-                        "Two selected names point to the same file".into(),
-                    ));
+                    pending_errors
+                        .push((other, "Two selected names point to the same file".into()));
                     row.error = Some("Same file as another selected item".into());
                 }
                 if let Ok(after) = &after {
@@ -1312,10 +1424,8 @@ fn make_plan(
                         .saturating_add(source.path.as_os_str().len().saturating_mul(2))
                         .saturating_add(target.as_os_str().len().saturating_mul(2));
                     if let Some(other) = target_keys.insert(OrdinalPath::new(&target), index) {
-                        pending_errors.push((
-                            other,
-                            "Two items would end up with the same name".into(),
-                        ));
+                        pending_errors
+                            .push((other, "Two items would end up with the same name".into()));
                         row.error = Some("Same new name as another item".into());
                     }
                     row_to_entry.push(Some(entries.len()));

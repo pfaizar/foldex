@@ -288,6 +288,10 @@ impl Foldex {
             }
         }
     }
+    #[cfg(test)]
+    pub(super) fn catalog_recycle_area(&self) -> Option<Id> {
+        self.recycle.confirmation.as_ref().map(|pending| pending.id)
+    }
     pub(super) fn recycle_dialog_ui(&mut self, ctx: &egui::Context) {
         self.recycle_context_ui(ctx);
         let Some(pending) = &mut self.recycle.confirmation else {
@@ -307,53 +311,45 @@ impl Foldex {
         }
         let mut open = true;
         let empty = pending.operation == Operation::Empty;
-        let title = if empty {
-            "Empty Recycle Bin"
+        let count = pending.target.count();
+        let items = if count == 1 {
+            "1 item".to_owned()
         } else {
-            "Restore all items"
+            format!("{count} items")
         };
-        let label = if empty { "Empty Bin" } else { "Restore All" };
+        let (title, description, label, kind) = if empty {
+            (
+                "Empty the Recycle Bin?",
+                format!("{items} will be permanently deleted. This can't be undone."),
+                "Empty Recycle Bin",
+                foldex_ui::dialog::Kind::Danger,
+            )
+        } else {
+            (
+                "Restore all items?",
+                format!("{items} will return to their original locations."),
+                "Restore all",
+                foldex_ui::dialog::Kind::Primary,
+            )
+        };
         let id = pending.id;
         let cancel = id.with("cancel");
         let confirm = id.with("confirm");
-        foldex_ui::components::dialog_interactive(
-            ctx,
-            id,
-            &self.theme,
-            title,
-            460.0 * self.theme.metrics().scale,
-            &mut open,
-            pending.decision.is_none(),
-            |ui| {
-                ui.label(format!(
-                    "{} {} item{}{}",
-                    if empty {
-                        "Permanently delete"
-                    } else {
-                        "Restore"
-                    },
-                    pending.target.count(),
-                    if pending.target.count() == 1 { "" } else { "s" },
-                    if empty {
-                        " from the Recycle Bin?"
-                    } else {
-                        " to their original locations?"
-                    }
-                ));
-                ui.add_space(8.0 * self.theme.metrics().scale);
-                ui.horizontal_wrapped(|ui| {
-                    if confirm_button(ui, &self.theme, cancel, "Cancel").clicked() {
-                        pending.decision = Some(false);
-                    }
-                    if confirm_button(ui, &self.theme, confirm, label).clicked()
-                        && pending.decision.is_none()
-                        && !composing
-                    {
-                        pending.decision = Some(true);
-                    }
-                });
-            },
-        );
+        use foldex_ui::dialog::{Action, Dialog, Footer, Kind, Size, Text};
+        let shown = Dialog::new(id, title, Size::Small.width(&self.theme))
+            .interactive(pending.decision.is_none())
+            .footer(Footer::new(vec![
+                Action::new(cancel, "Cancel", Kind::Secondary),
+                Action::new(confirm, label, kind),
+            ]))
+            .show(ctx, &self.theme, &mut open, |ui| {
+                foldex_ui::dialog::text(ui, &self.theme, Text::Secondary, &description);
+            });
+        match shown.clicked {
+            Some(0) => pending.decision = Some(false),
+            Some(_) if pending.decision.is_none() && !composing => pending.decision = Some(true),
+            _ => {}
+        }
         if pending.focus_cancel
             && pending.decision.is_none()
             && ctx
@@ -493,18 +489,6 @@ impl Foldex {
         ctx.data_mut(|data| data.insert_temp(Id::new("benchmark-probe-layout"), true));
         ctx.request_repaint();
     }
-}
-
-fn confirm_button(ui: &mut Ui, t: &Theme, id: Id, label: &str) -> egui::Response {
-    let width = (ui
-        .painter()
-        .layout_no_wrap(label.to_owned(), t.font(), t.fg())
-        .size()
-        .x
-        + 16.0 * t.metrics().scale)
-        .max(t.metrics().control);
-    let (_, rect) = ui.allocate_space(vec2(width, t.metrics().control));
-    foldex_ui::components::text_button_at(ui, rect, id, t, label, false)
 }
 
 #[derive(Clone)]

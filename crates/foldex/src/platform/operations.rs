@@ -39,8 +39,12 @@ impl State {
 }
 pub struct Operation {
     pub id: u64,
+    /// The verb: Copy, Move, Recycle…
     pub label: &'static str,
-    pub description: String,
+    /// What it acts on: a name, or a count of items.
+    pub subject: String,
+    /// Where it goes, phrased to follow the subject ("to D:\Backups").
+    pub target: String,
     state: AtomicU8,
     pub cancel: AtomicBool,
     changed: AtomicBool,
@@ -153,21 +157,28 @@ pub struct Operations {
 }
 impl Operations {
     pub fn track(&self, job: &Job, wake: Wake) -> Result<Option<Arc<Operation>>, String> {
-        let (label, description) = match job {
-            Job::NewFile { parent, name, .. } => {
-                ("New file", parent.join(name).display().to_string())
+        let file_name = |path: &std::path::Path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string())
+        };
+        let items = |paths: &[std::path::PathBuf]| match paths {
+            [path] => file_name(path),
+            _ => format!("{} items", paths.len()),
+        };
+        let (label, subject, target) = match job {
+            Job::NewFile { parent, name, .. } | Job::NewFolder { parent, name, .. } => {
+                ("Create", name.clone(), format!("in {}", parent.display()))
             }
-            Job::NewFolder { parent, name, .. } => {
-                ("New folder", parent.join(name).display().to_string())
-            }
-            Job::Rename { path, name, .. } => ("Rename", format!("{} → {name}", path.display())),
+            Job::Rename { path, name, .. } => ("Rename", file_name(path), format!("to {name}")),
             Job::Copy {
                 sources,
                 destination,
                 cut,
             } => (
                 if *cut { "Move" } else { "Copy" },
-                format!("{} items → {}", sources.len(), destination.display()),
+                items(sources),
+                format!("to {}", destination.display()),
             ),
             Job::DropFiles {
                 sources,
@@ -175,16 +186,18 @@ impl Operations {
                 ..
             } => (
                 "Transfer",
-                format!("{} items → {}", sources.len(), destination.display()),
+                items(sources),
+                format!("to {}", destination.display()),
             ),
-            Job::Recycle(paths) => ("Recycle", format!("{} selected items", paths.len())),
-            Job::DeletePermanent(paths) => (
-                "Permanent delete",
-                format!("{} selected items", paths.len()),
+            Job::Recycle(paths) => ("Recycle", items(paths), String::new()),
+            Job::DeletePermanent(paths) => ("Delete", items(paths), String::new()),
+            Job::ReadClipboard { destination } => (
+                "Paste",
+                "clipboard items".into(),
+                format!("to {}", destination.display()),
             ),
-            Job::ReadClipboard { destination } => ("Paste", destination.display().to_string()),
-            Job::Undo => ("Undo", String::new()),
-            Job::Redo => ("Redo", String::new()),
+            Job::Undo => ("Undo", "the last change".into(), String::new()),
+            Job::Redo => ("Redo", "the last undone change".into(), String::new()),
             _ => return Ok(None),
         };
         let mut records = self
@@ -200,7 +213,8 @@ impl Operations {
         let operation = Arc::new(Operation {
             id: self.next.fetch_add(1, Ordering::Relaxed).wrapping_add(1),
             label,
-            description: bounded(&description, 1024),
+            subject: bounded(&subject, 512),
+            target: bounded(&target, 1024),
             state: AtomicU8::new(State::Queued as u8),
             cancel: AtomicBool::new(false),
             changed: AtomicBool::new(false),

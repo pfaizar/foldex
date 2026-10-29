@@ -128,7 +128,6 @@ impl Foldex {
             return;
         }
         let mut open = true;
-        let mut customize = false;
         let t = &self.theme;
         let scale = t.metrics().scale;
         let binding = |command| {
@@ -207,119 +206,121 @@ impl Foldex {
                 ],
             ),
         ];
-        foldex_ui::components::dialog(
-            ctx,
-            Id::new("keyboard-navigation-help"),
-            t,
-            "Keyboard Navigation",
-            570.0 * scale,
-            &mut open,
-            |ui| {
-                let scroll_id = Id::new("keyboard-guide-focus");
-                let mut scroll_state = ctx
-                    .data(|data| data.get_temp::<(f32, f32, f32)>(scroll_id))
-                    .unwrap_or_default();
-                let mut requested_scroll = false;
-                if ctx.memory(|memory| memory.has_focus(scroll_id)) {
-                    for (key, delta) in [
-                        (Key::ArrowUp, -24.0 * scale),
-                        (Key::ArrowDown, 24.0 * scale),
-                        (Key::PageUp, -scroll_state.2.max(24.0 * scale)),
-                        (Key::PageDown, scroll_state.2.max(24.0 * scale)),
-                    ] {
-                        if foldex_ui::components::consume_key(ctx, Modifiers::NONE, key) {
-                            scroll_state.0 = (scroll_state.0 + delta).clamp(0.0, scroll_state.1);
-                            requested_scroll = true;
-                        }
+        let id = Id::new("keyboard-navigation-help");
+        let shown = foldex_ui::dialog::Dialog::new(
+            id,
+            "Keyboard navigation",
+            foldex_ui::dialog::Size::Medium.width(t),
+        )
+        .footer(foldex_ui::dialog::Footer::new(vec![
+            foldex_ui::dialog::Action::new(
+                id.with("customize"),
+                "Customize shortcuts…",
+                foldex_ui::dialog::Kind::Secondary,
+            ),
+        ]))
+        .show(ctx, t, &mut open, |ui| {
+            let scroll_id = Id::new("keyboard-guide-focus");
+            let mut scroll_state = ctx
+                .data(|data| data.get_temp::<(f32, f32, f32)>(scroll_id))
+                .unwrap_or_default();
+            let mut requested_scroll = false;
+            if ctx.memory(|memory| memory.has_focus(scroll_id)) {
+                for (key, delta) in [
+                    (Key::ArrowUp, -24.0 * scale),
+                    (Key::ArrowDown, 24.0 * scale),
+                    (Key::PageUp, -scroll_state.2.max(24.0 * scale)),
+                    (Key::PageDown, scroll_state.2.max(24.0 * scale)),
+                ] {
+                    if foldex_ui::components::consume_key(ctx, Modifiers::NONE, key) {
+                        scroll_state.0 = (scroll_state.0 + delta).clamp(0.0, scroll_state.1);
+                        requested_scroll = true;
                     }
-                    for (key, offset) in [(Key::Home, 0.0), (Key::End, scroll_state.1)] {
-                        if foldex_ui::components::consume_key(ctx, Modifiers::NONE, key) {
-                            scroll_state.0 = offset;
-                            requested_scroll = true;
-                        }
-                    }
-                    ctx.memory_mut(|memory| {
-                        memory.set_focus_lock_filter(
-                            scroll_id,
-                            egui::EventFilter {
-                                tab: false,
-                                horizontal_arrows: true,
-                                vertical_arrows: true,
-                                escape: true,
-                            },
-                        )
-                    });
                 }
-                let mut scroll = egui::ScrollArea::vertical()
-                    .id_salt("keyboard-help-scroll")
-                    .max_height((ctx.content_rect().height() * 0.62).max(100.0))
-                    .auto_shrink([false, true]);
-                if requested_scroll {
-                    scroll = scroll.vertical_scroll_offset(scroll_state.0);
-                }
-                let body = scroll.show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    for (section, rows) in &sections {
-                        ui.add_space(8.0 * scale);
-                        ui.label(egui::RichText::new(*section).strong());
-                        for (keys, label) in rows {
-                            let height = (t.font_size + 10.0 * scale).max(24.0 * scale);
-                            let (rect, _) = ui.allocate_exact_size(
-                                vec2(ui.available_width(), height),
-                                Sense::hover(),
-                            );
-                            let key_width = (226.0 * scale).min(rect.width() * 0.48);
-                            let key_rect = Rect::from_min_size(rect.min, vec2(key_width, height));
-                            foldex_ui::components::popup_hints(
-                                ui.painter(),
-                                key_rect.translate(vec2(-14.0 * scale, 0.0)),
-                                t,
-                                &[foldex_ui::components::PopupHint::new(keys, "")],
-                                &[foldex_ui::components::PopupHint::new(keys, "")],
-                            );
-                            foldex_ui::components::elided_label(
-                                ui.painter(),
-                                Rect::from_min_max(
-                                    pos2(rect.left() + key_width, rect.top()),
-                                    rect.max,
-                                ),
-                                t,
-                                label,
-                                t.fg(),
-                                false,
-                            );
-                        }
+                for (key, offset) in [(Key::Home, 0.0), (Key::End, scroll_state.1)] {
+                    if foldex_ui::components::consume_key(ctx, Modifiers::NONE, key) {
+                        scroll_state.0 = offset;
+                        requested_scroll = true;
                     }
-                });
-                let focus = foldex_ui::components::PopupFocus::surface(
-                    ui,
-                    body.inner_rect,
-                    scroll_id,
-                    "Keyboard shortcuts; use arrow and Page keys to scroll",
-                );
-                foldex_ui::components::focus_ring(
-                    ui,
-                    body.inner_rect.expand(4.0 * scale),
-                    scroll_id,
-                    t,
-                    focus.has_focus(),
-                );
-                ctx.data_mut(|data| {
-                    data.insert_temp(
+                }
+                ctx.memory_mut(|memory| {
+                    memory.set_focus_lock_filter(
                         scroll_id,
-                        (
-                            body.state.offset.y,
-                            (body.content_size.y - body.inner_rect.height()).max(0.0),
-                            body.inner_rect.height(),
-                        ),
+                        egui::EventFilter {
+                            tab: false,
+                            horizontal_arrows: true,
+                            vertical_arrows: true,
+                            escape: true,
+                        },
                     )
                 });
-                ui.add_space(10.0 * scale);
-                customize =
-                    foldex_ui::components::text_button(ui, t, "Customize shortcuts…", false)
-                        .clicked();
-            },
-        );
+            }
+            let mut scroll = egui::ScrollArea::vertical()
+                .id_salt("keyboard-help-scroll")
+                .max_height((ctx.content_rect().height() * 0.62).max(100.0))
+                .auto_shrink([false, true]);
+            if requested_scroll {
+                scroll = scroll.vertical_scroll_offset(scroll_state.0);
+            }
+            let body = scroll.show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                for (index, (section, rows)) in sections.iter().enumerate() {
+                    if index > 0 {
+                        ui.add_space(16.0 * scale);
+                    }
+                    foldex_ui::dialog::text(ui, t, foldex_ui::dialog::Text::Section, section);
+                    ui.add_space(4.0 * scale);
+                    for (keys, label) in rows {
+                        let height = (t.font_size + 10.0 * scale).max(24.0 * scale);
+                        let (rect, _) = ui.allocate_exact_size(
+                            vec2(ui.available_width(), height),
+                            Sense::hover(),
+                        );
+                        let key_width = (226.0 * scale).min(rect.width() * 0.48);
+                        let key_rect = Rect::from_min_size(rect.min, vec2(key_width, height));
+                        foldex_ui::components::popup_hints(
+                            ui.painter(),
+                            key_rect.translate(vec2(-14.0 * scale, 0.0)),
+                            t,
+                            &[foldex_ui::components::PopupHint::new(keys, "")],
+                            &[foldex_ui::components::PopupHint::new(keys, "")],
+                        );
+                        foldex_ui::components::elided_label(
+                            ui.painter(),
+                            Rect::from_min_max(pos2(rect.left() + key_width, rect.top()), rect.max),
+                            t,
+                            label,
+                            t.fg(),
+                            false,
+                        );
+                    }
+                }
+            });
+            let focus = foldex_ui::components::PopupFocus::surface(
+                ui,
+                body.inner_rect,
+                scroll_id,
+                "Keyboard shortcuts; use arrow and Page keys to scroll",
+            );
+            foldex_ui::components::focus_ring(
+                ui,
+                body.inner_rect.expand(4.0 * scale),
+                scroll_id,
+                t,
+                focus.has_focus(),
+            );
+            ctx.data_mut(|data| {
+                data.insert_temp(
+                    scroll_id,
+                    (
+                        body.state.offset.y,
+                        (body.content_size.y - body.inner_rect.height()).max(0.0),
+                        body.inner_rect.height(),
+                    ),
+                )
+            });
+        });
+        let customize = shown.clicked == Some(0);
         self.keyboard_help = open && !customize;
         if customize {
             self.execute_command(ctx, Command::Hotkeys);

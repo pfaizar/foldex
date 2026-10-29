@@ -377,6 +377,40 @@ impl Default for Hotkeys {
     }
 }
 impl Hotkeys {
+    /// Catalog states without the native keyboard capture.
+    #[cfg(test)]
+    pub(crate) fn catalog_confirmation(&mut self, reset_all: bool) {
+        let index = self
+            .bindings
+            .iter()
+            .position(|binding| binding.command == Command::Copy)
+            .unwrap_or(0);
+        self.editor_confirmation = Some(EditorConfirmation {
+            action: if reset_all {
+                EditorConfirmationAction::ResetAll
+            } else {
+                EditorConfirmationAction::Remove {
+                    index,
+                    binding: self.bindings[index].clone(),
+                }
+            },
+            return_to: Id::new("hotkey-commands-focus"),
+            focus_cancel: true,
+            accepted: false,
+        });
+    }
+    #[cfg(test)]
+    pub(crate) fn catalog_recording(&mut self, strokes: &[&str]) {
+        self.recording = Some(Recording {
+            command: Command::NewFolder,
+            replace: None,
+            strokes: strokes
+                .iter()
+                .filter_map(|text| KeyStroke::parse(text))
+                .collect(),
+        });
+        self.recording_focus_capture = true;
+    }
     /// Load a saved custom map and add only the new, unclaimed keyboard
     /// defaults. Explicit user assignments (including sequence prefixes) win.
     /// Use this at session load; `from_bindings` remains an exact constructor.
@@ -2463,7 +2497,6 @@ impl Hotkeys {
         let Some(mut confirmation) = self.editor_confirmation.take() else {
             return false;
         };
-        let m = theme.metrics();
         let (title, description, accept_label) = match &confirmation.action {
             EditorConfirmationAction::Remove { binding, .. } => {
                 let command = COMMANDS
@@ -2471,78 +2504,56 @@ impl Hotkeys {
                     .find(|entry| entry.command == binding.command)
                     .map_or("this command", |entry| entry.title);
                 (
-                    "Remove shortcut",
-                    format!("Remove {} from {}?", binding.label(), command),
+                    "Remove this shortcut?",
+                    format!("{} will no longer run {}.", binding.label(), command),
                     "Remove",
                 )
             }
             EditorConfirmationAction::ResetAll => (
-                "Reset all hotkeys",
-                "Restore every command's default shortcuts? Your custom bindings will be replaced."
+                "Reset all shortcuts?",
+                "Every command goes back to its default shortcuts. Your changes are removed."
                     .into(),
-                "Reset All",
+                "Reset all",
             ),
         };
         let mut open = true;
         let mut accept = false;
-        components::dialog(
-            ctx,
+        use foldex_ui::dialog::{Action, Dialog, Footer, Kind, Size, Text};
+        let shown = Dialog::new(
             Id::new("hotkey-confirmation"),
-            theme,
             title,
-            390.0 * m.scale,
-            &mut open,
-            |ui| {
-                ui.add(egui::Label::new(&description).wrap());
-                ui.horizontal_wrapped(|ui| {
-                    let cancel_width = ui
-                        .painter()
-                        .layout_no_wrap("Cancel".into(), theme.font(), theme.fg())
-                        .size()
-                        .x
-                        + 16.0 * m.scale;
-                    let rect = ui
-                        .allocate_exact_size(vec2(cancel_width, m.control), Sense::hover())
-                        .0;
-                    let cancel = components::text_button_at(
-                        ui,
-                        rect,
-                        Id::new("hotkey-confirmation-cancel"),
-                        theme,
-                        "Cancel",
-                        false,
-                    );
-                    if confirmation.focus_cancel && components::can_focus(ui) {
-                        cancel.request_focus();
-                        confirmation.focus_cancel = ui.is_sizing_pass() || !cancel.has_focus();
-                    }
-                    if cancel.clicked() {
-                        ui.close();
-                    }
-                    let accept_width = ui
-                        .painter()
-                        .layout_no_wrap(accept_label.into(), theme.font(), theme.fg())
-                        .size()
-                        .x
-                        + 16.0 * m.scale;
-                    let rect = ui
-                        .allocate_exact_size(vec2(accept_width, m.control), Sense::hover())
-                        .0;
-                    let button = components::text_button_at(
-                        ui,
-                        rect,
-                        Id::new("hotkey-confirmation-accept"),
-                        theme,
-                        accept_label,
-                        true,
-                    );
-                    if button.clicked() && !confirmation.accepted {
-                        accept = true;
-                        ui.close();
-                    }
-                });
-            },
-        );
+            Size::Small.width(theme),
+        )
+        .footer(Footer::new(vec![
+            Action::new(
+                Id::new("hotkey-confirmation-cancel"),
+                "Cancel",
+                Kind::Secondary,
+            ),
+            Action::new(
+                Id::new("hotkey-confirmation-accept"),
+                accept_label,
+                Kind::Danger,
+            ),
+        ]))
+        .show(ctx, theme, &mut open, |ui| {
+            foldex_ui::dialog::text(ui, theme, Text::Secondary, &description);
+            components::can_focus(ui)
+        });
+        if let Some(cancel) = shown.actions.first() {
+            if confirmation.focus_cancel && shown.inner {
+                cancel.request_focus();
+                confirmation.focus_cancel = !cancel.has_focus();
+            }
+        }
+        match shown.clicked {
+            Some(0) => components::close_dialog(ctx, Id::new("hotkey-confirmation")),
+            Some(_) if !confirmation.accepted => {
+                accept = true;
+                components::close_dialog(ctx, Id::new("hotkey-confirmation"));
+            }
+            _ => {}
+        }
         let mut changed = false;
         if accept {
             confirmation.accepted = true;
@@ -2574,6 +2585,7 @@ impl Hotkeys {
     }
 
     fn editor_overlays(&mut self, ctx: &egui::Context, theme: &Theme) -> bool {
+        use foldex_ui::dialog;
         let m = theme.metrics();
         let mut changed = self.editor_confirmation_ui(ctx, theme);
         if self.recording.is_some() {
@@ -2593,150 +2605,167 @@ impl Hotkeys {
                 .find(|entry| entry.command == recording.command)
                 .map_or("Command", |entry| entry.title);
             let mut recording_open = true;
-            foldex_ui::components::dialog(
-                ctx,
-                egui::Id::new("hotkey-recording"),
-                theme,
-                "Assign shortcut",
-                370.0 * m.scale,
-                &mut recording_open,
-                |ui| {
-                    if self.recording_cancel {
-                        ui.close();
-                    }
-                    ui.label(egui::RichText::new(title).strong());
-                    let capture_id = egui::Id::new("hotkey-recording-capture");
-                    let (capture_rect, _) = ui.allocate_exact_size(
-                        egui::vec2(ui.available_width(), m.control),
-                        egui::Sense::hover(),
-                    );
-                    let capture = foldex_ui::components::PopupFocus::surface(
-                        ui,
-                        capture_rect,
-                        capture_id,
-                        "Record a shortcut",
-                    )
-                    .interact(Sense::click());
-                    if capture.clicked() {
-                        capture.request_focus();
-                        self.recording_review_focus = false;
-                    }
-                    if self.recording_focus_capture && foldex_ui::components::can_focus(ui) {
-                        capture.request_focus();
-                        self.recording_focus_capture = ui.is_sizing_pass() || !capture.has_focus();
-                    }
-                    ui.painter().rect_filled(
-                        capture_rect,
-                        theme.radius,
-                        foldex_ui::Theme::color(theme.chrome),
-                    );
-                    let captured_label = candidate.label();
-                    let held = held_modifiers_label(self.recording_held);
-                    let preview = if captured_label.is_empty() {
-                        held
-                    } else if held.is_empty() {
-                        captured_label
-                    } else {
-                        format!("{captured_label}  ·  {held}")
-                    };
-                    foldex_ui::components::elided_label(
-                        ui.painter(),
-                        capture_rect.shrink2(egui::vec2(8.0 * m.scale, 0.0)),
-                        theme,
-                        if preview.is_empty() {
-                            "Press a key combination…"
-                        } else {
-                            &preview
-                        },
-                        theme.fg(),
-                        false,
-                    );
-                    foldex_ui::components::focus_ring(
-                        ui,
-                        capture_rect,
-                        capture_id,
-                        theme,
-                        capture.has_focus(),
-                    );
-                    ui.label(if recording.strokes.is_empty() {
-                        "Hold any modifiers and press a key."
-                    } else if recording.command == Command::Launcher {
-                        "This combination opens the launcher system-wide."
-                    } else {
-                        "Keep pressing combinations to extend the sequence, then assign it."
-                    });
-                    if recording.command == Command::Launcher
-                        && !recording.strokes.is_empty()
-                        && launcher_shortcut(&candidate).is_none()
-                    {
-                        ui.label(
-                            egui::RichText::new("Include Ctrl, Alt, Shift or Win with one key.")
-                                .color(Theme::color(theme.danger)),
-                        );
-                    }
-                    if let Some(status) = &self.status {
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(status).color(Theme::color(theme.danger)),
-                            )
-                            .wrap(),
-                        );
-                    }
-                    for &index in &conflicts {
-                        let binding = &self.bindings[index];
-                        let name = COMMANDS
-                            .iter()
-                            .find(|entry| entry.command == binding.command)
-                            .map_or("Command", |entry| entry.title);
-                        ui.label(
-                            egui::RichText::new(format!("{}: {}", name, self.labels[index]))
-                                .color(ui.visuals().warn_fg_color),
-                        );
-                    }
-                    ui.horizontal_wrapped(|ui| {
-                        self.recording_review_focus = false;
-                        let ready = !recording.strokes.is_empty()
-                            && (recording.command != Command::Launcher
-                                || launcher_shortcut(&candidate).is_some());
-                        let assign_button = foldex_ui::components::text_button_enabled(
-                            ui,
-                            theme,
-                            "Assign",
-                            true,
-                            ready && conflicts.is_empty(),
-                        );
-                        self.recording_review_focus |= assign_button.has_focus();
-                        if assign_button.clicked() {
-                            assign = Some(false);
-                        }
-                        if !conflicts.is_empty() {
-                            let replace_button = foldex_ui::components::text_button_enabled(
-                                ui,
-                                theme,
-                                "Replace conflicts",
-                                false,
-                                ready,
-                            );
-                            self.recording_review_focus |= replace_button.has_focus();
-                            if replace_button.clicked() {
-                                assign = Some(true);
-                            }
-                        }
-                        let clear_button =
-                            foldex_ui::components::text_button(ui, theme, "Clear", false);
-                        self.recording_review_focus |= clear_button.has_focus();
-                        if clear_button.clicked() {
-                            clear = true;
-                        }
-                        let cancel_button =
-                            foldex_ui::components::text_button(ui, theme, "Cancel", false);
-                        self.recording_review_focus |= cancel_button.has_focus();
-                        if cancel_button.clicked() {
+            let id = egui::Id::new("hotkey-recording");
+            let ready = !recording.strokes.is_empty()
+                && (recording.command != Command::Launcher
+                    || launcher_shortcut(&candidate).is_some());
+            let replace = !conflicts.is_empty();
+            let mut actions = Vec::new();
+            if !recording.strokes.is_empty() {
+                actions.push(dialog::Action::new(
+                    id.with("clear"),
+                    "Clear",
+                    dialog::Kind::Ghost,
+                ));
+            }
+            actions.push(dialog::Action::new(
+                id.with("cancel"),
+                "Cancel",
+                dialog::Kind::Secondary,
+            ));
+            actions.push(
+                dialog::Action::new(
+                    id.with("assign"),
+                    if replace { "Replace" } else { "Assign" },
+                    dialog::Kind::Primary,
+                )
+                .enabled(ready),
+            );
+            let footer = dialog::Footer::new(actions);
+            let shown =
+                dialog::Dialog::new(id, "Assign shortcut", dialog::Size::Small.width(theme))
+                    .subtitle(title)
+                    .footer(footer)
+                    .show(ctx, theme, &mut recording_open, |ui| {
+                        if self.recording_cancel {
                             ui.close();
                         }
+                        ui.spacing_mut().item_spacing.y = 6.0 * m.scale;
+                        let capture_id = egui::Id::new("hotkey-recording-capture");
+                        let (capture_rect, _) = ui.allocate_exact_size(
+                            egui::vec2(ui.available_width(), m.control + 16.0 * m.scale),
+                            egui::Sense::hover(),
+                        );
+                        let capture = foldex_ui::components::PopupFocus::surface(
+                            ui,
+                            capture_rect,
+                            capture_id,
+                            "Record a shortcut",
+                        )
+                        .interact(Sense::click());
+                        if capture.clicked() {
+                            capture.request_focus();
+                            self.recording_review_focus = false;
+                        }
+                        if self.recording_focus_capture && foldex_ui::components::can_focus(ui) {
+                            capture.request_focus();
+                            self.recording_focus_capture =
+                                ui.is_sizing_pass() || !capture.has_focus();
+                        }
+                        ui.painter().rect_filled(
+                            capture_rect,
+                            theme.radius,
+                            foldex_ui::Theme::color(theme.background),
+                        );
+                        ui.painter().rect_stroke(
+                            capture_rect,
+                            theme.radius,
+                            egui::Stroke::new(
+                                1.0,
+                                if capture.has_focus() {
+                                    theme.accent()
+                                } else {
+                                    theme.line()
+                                },
+                            ),
+                            egui::StrokeKind::Inside,
+                        );
+                        let captured_label = candidate.label();
+                        let held = held_modifiers_label(self.recording_held);
+                        let preview = if captured_label.is_empty() {
+                            held
+                        } else if held.is_empty() {
+                            captured_label
+                        } else {
+                            format!("{captured_label}  ·  {held}")
+                        };
+                        let (text, style, color) = if preview.is_empty() {
+                            ("Press a key combination…", dialog::Text::Body, theme.dim())
+                        } else {
+                            (preview.as_str(), dialog::Text::Heading, theme.fg())
+                        };
+                        dialog::text_at(
+                            ui,
+                            capture_rect.shrink2(egui::vec2(12.0 * m.scale, 0.0)),
+                            theme,
+                            style,
+                            text,
+                            color,
+                            egui::Align2::CENTER_CENTER,
+                        );
+                        dialog::text(
+                            ui,
+                            theme,
+                            dialog::Text::Caption,
+                            if recording.strokes.is_empty() {
+                                "Hold any modifiers and press a key."
+                            } else if recording.command == Command::Launcher {
+                                "This combination opens the launcher from anywhere in Windows."
+                            } else {
+                                "Press another combination to make a sequence."
+                            },
+                        );
+                        if recording.command == Command::Launcher
+                            && !recording.strokes.is_empty()
+                            && launcher_shortcut(&candidate).is_none()
+                        {
+                            ui.add_space(4.0 * m.scale);
+                            dialog::callout(
+                                ui,
+                                theme,
+                                dialog::Tone::Danger,
+                                "Include Ctrl, Alt, Shift or Win with one key.",
+                            );
+                        }
+                        if let Some(status) = &self.status {
+                            ui.add_space(4.0 * m.scale);
+                            dialog::callout(ui, theme, dialog::Tone::Danger, status);
+                        }
+                        if replace {
+                            let used = conflicts
+                                .iter()
+                                .map(|&index| {
+                                    let binding = &self.bindings[index];
+                                    let name = COMMANDS
+                                        .iter()
+                                        .find(|entry| entry.command == binding.command)
+                                        .map_or("Command", |entry| entry.title);
+                                    format!("{name} ({})", self.labels[index])
+                                })
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            ui.add_space(4.0 * m.scale);
+                            dialog::callout(
+                                ui,
+                                theme,
+                                dialog::Tone::Neutral,
+                                &format!(
+                                    "Already used by {used}. Replace moves it to this command."
+                                ),
+                            );
+                        }
                     });
-                },
-            );
+            self.recording_review_focus = shown.actions.iter().any(egui::Response::has_focus);
+            if let Some(index) = shown.clicked {
+                let action = shown.actions[index].id;
+                if action == id.with("clear") {
+                    clear = true;
+                } else if action == id.with("cancel") {
+                    components::close_dialog(ctx, id);
+                } else {
+                    assign = Some(replace);
+                }
+            }
             if components::dialog_is_closing(ctx, Id::new("hotkey-recording")) {
                 self.recording_cancel = true;
                 self.native_capture.stop();
@@ -4114,6 +4143,18 @@ mod tests {
             ],
         );
         frame += 1;
+        // Focus follows the footer's visual order: Clear, Cancel, then Assign.
+        for _ in 0..2 {
+            editor_frame(
+                &mut hotkeys,
+                &ctx,
+                &theme,
+                frame,
+                size,
+                vec![key(Key::Tab, Modifiers::NONE)],
+            );
+            frame += 1;
+        }
         let (changed, _) = editor_frame(
             &mut hotkeys,
             &ctx,
@@ -4156,20 +4197,19 @@ mod tests {
             vec![key(Key::A, Modifiers::NONE), up(Key::A, Modifiers::NONE)],
         );
         frame += 1;
-        for _ in 0..2 {
-            editor_frame(
-                &mut hotkeys,
-                &ctx,
-                &theme,
-                frame,
-                size,
-                vec![
-                    key(Key::Tab, Modifiers::NONE),
-                    up(Key::Tab, Modifiers::NONE),
-                ],
-            );
-            frame += 1;
-        }
+        // Clear is the first footer action after the capture field.
+        editor_frame(
+            &mut hotkeys,
+            &ctx,
+            &theme,
+            frame,
+            size,
+            vec![
+                key(Key::Tab, Modifiers::NONE),
+                up(Key::Tab, Modifiers::NONE),
+            ],
+        );
+        frame += 1;
         editor_frame(
             &mut hotkeys,
             &ctx,
