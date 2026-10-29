@@ -27,6 +27,8 @@ mod persistence;
 mod picker;
 mod platform;
 mod recycle_bin;
+#[cfg(windows)]
+mod redirection_guard;
 mod search;
 mod selection;
 mod sidebar;
@@ -88,6 +90,14 @@ fn main() -> eframe::Result {
             eprintln!("Search benchmark failed: {error}");
             std::process::exit(1);
         }
+        return Ok(());
+    }
+    // A moved tab's window is started by a Foldex that has already shed the
+    // policy, so the tab transfer handoff is left alone.
+    #[cfg(windows)]
+    if !args.iter().any(|arg| arg == "--tab-transfer")
+        && redirection_guard::restart_without_inherited_guard()
+    {
         return Ok(());
     }
     let mut startup_transfer = app::window_transfer::read_startup(&args)
