@@ -278,7 +278,7 @@ impl OptionsPopup {
         paint: &Theme,
         area: Id,
     ) -> bool {
-        if !self.scheme_menu.active() {
+        if !self.scheme_menu.active() || self.scheme_option == OptionId::LauncherOpenFolder {
             return false;
         }
         let mode_menu = self.scheme_option == OptionId::ColorMode;

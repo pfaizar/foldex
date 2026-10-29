@@ -38,6 +38,7 @@ pub struct Settings {
     pub clipboard_history: bool,
     pub hotkey: String,
     pub file_roots: Vec<PathBuf>,
+    pub open_folder: OpenFolder,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -46,6 +47,26 @@ impl Default for Settings {
             clipboard_history: true,
             hotkey: "Ctrl+Alt+Space".into(),
             file_roots: vec![],
+            open_folder: OpenFolder::default(),
+        }
+    }
+}
+/// Where a folder chosen in the launcher opens.
+#[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OpenFolder {
+    /// The active tab navigates to it.
+    Replace,
+    #[default]
+    NewTab,
+    NewWindow,
+}
+impl OpenFolder {
+    pub const ALL: [Self; 3] = [Self::Replace, Self::NewTab, Self::NewWindow];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Replace => "Replace Tab",
+            Self::NewTab => "New Tab",
+            Self::NewWindow => "New Window",
         }
     }
 }
@@ -613,7 +634,8 @@ impl Launcher {
                     Some(SearchEvent::Failed { request, message }) if request == file.request => {
                         file.building = false;
                         file.advance = true;
-                        self.status = crate::friendly::present("Couldn't search your files", &message);
+                        self.status =
+                            crate::friendly::present("Couldn't search your files", &message);
                     }
                     None => break,
                     _ => {}

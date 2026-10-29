@@ -491,6 +491,11 @@ impl Launcher {
         }
     }
 
+    pub fn set_open_folder(&mut self, open: super::OpenFolder) {
+        self.settings.open_folder = open;
+        self.settings_changed = true;
+    }
+
     pub fn clear_text_history(&mut self) {
         self.worker.clear_history.store(true, Ordering::Release);
         let _ = self.worker.signal.try_send(());

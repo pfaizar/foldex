@@ -75,6 +75,27 @@ impl Foldex {
         }
     }
 
+    /// Open a folder chosen in the launcher where its option says. Returns
+    /// whether it opened in this window, rather than a new one.
+    fn open_launcher_folder(&mut self, ctx: &egui::Context, folder: PathBuf) -> bool {
+        match self.launcher.settings.open_folder {
+            crate::launcher::OpenFolder::NewWindow => {
+                self.job(Job::NewWindow(folder));
+                return false;
+            }
+            crate::launcher::OpenFolder::Replace => {
+                self.show_explorer(ctx);
+                self.pane_mut().navigate(folder, true);
+                self.apply_folder_view();
+            }
+            crate::launcher::OpenFolder::NewTab => {
+                self.show_explorer(ctx);
+                self.new_tab(folder);
+            }
+        }
+        true
+    }
+
     pub(super) fn show_explorer(&mut self, ctx: &egui::Context) {
         self.explorer_visible = true;
         ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Visible(true));
@@ -412,23 +433,22 @@ impl Foldex {
                 }
                 ResultAction::Browse(path) => {
                     self.close_launcher(false);
-                    self.show_explorer(ctx);
-                    self.new_tab(path);
+                    self.open_launcher_folder(ctx, path);
                 }
                 ResultAction::Reveal(path) => {
                     if let Some((folder, selection)) = launcher_reveal_location(&path) {
                         self.close_launcher(false);
-                        self.show_explorer(ctx);
-                        self.new_tab(folder);
-                        if let Some(name) = selection {
-                            let pane = self.pane_mut();
-                            pane.pending_selection = Some(name);
-                            pane.query.show_hidden = true;
+                        if self.open_launcher_folder(ctx, folder) {
+                            if let Some(name) = selection {
+                                let pane = self.pane_mut();
+                                pane.pending_selection = Some(name);
+                                pane.query.show_hidden = true;
+                            }
+                            crate::keyboard::request_id(
+                                ctx,
+                                crate::keyboard::listing_id(self.pane().id),
+                            );
                         }
-                        crate::keyboard::request_id(
-                            ctx,
-                            crate::keyboard::listing_id(self.pane().id),
-                        );
                     } else {
                         self.launcher.status = "That result has no folder location".into();
                     }
@@ -510,6 +530,42 @@ fn apply_launcher_theme(ui: &mut Ui, theme: &Theme) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launcher_folders_open_in_a_new_tab_or_replace_the_active_one() {
+        use crate::launcher::OpenFolder;
+        let (mut app, ctx, root) = super::super::tests::fixture_app();
+        let first = root.join("First");
+        let second = root.join("Second");
+        std::fs::create_dir(&first).unwrap();
+        std::fs::create_dir(&second).unwrap();
+        let tabs = app.tabs.len();
+        assert_eq!(app.launcher.settings.open_folder, OpenFolder::NewTab);
+        assert!(app.open_launcher_folder(&ctx, first.clone()));
+        assert_eq!(app.tabs.len(), tabs + 1);
+        assert_eq!(app.pane().path, first);
+        app.launcher.set_open_folder(OpenFolder::Replace);
+        assert!(app.open_launcher_folder(&ctx, second.clone()));
+        assert_eq!(app.tabs.len(), tabs + 1);
+        assert_eq!(app.pane().path, second);
+        assert_eq!(
+            app.session_snapshot().launcher.open_folder,
+            OpenFolder::Replace
+        );
+    }
+
+    #[test]
+    fn saved_launcher_settings_without_a_folder_choice_keep_opening_new_tabs() {
+        use crate::launcher::{OpenFolder, Settings};
+        let old: Settings = serde_json::from_str(r#"{"background":false}"#).unwrap();
+        assert_eq!(old.open_folder, OpenFolder::NewTab);
+        let saved = Settings {
+            open_folder: OpenFolder::NewWindow,
+            ..Settings::default()
+        };
+        let text = serde_json::to_string(&saved).unwrap();
+        assert_eq!(serde_json::from_str::<Settings>(&text).unwrap(), saved);
+    }
 
     #[test]
     fn launcher_reveal_uses_the_parent_and_native_name_for_both_file_and_folder_hits() {

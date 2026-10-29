@@ -730,6 +730,24 @@ fn scenarios() -> Vec<Scenario> {
             "Calculator answer",
             |stage| { stage.launcher("200*200") }
         ),
+        scenario!(
+            "Options",
+            "launcher-open-folder",
+            "Open Folder from Launcher",
+            |stage| {
+                let ctx = stage.ctx.clone();
+                stage.app.open_options(&ctx);
+                stage.settle(4);
+                let settings = stage.app.launcher.settings.clone();
+                stage.app.options_popup.open_launcher_section(&settings);
+                stage.settle(6);
+                stage.app.options_popup.catalog_open_folder_menu();
+                stage.settle(10);
+                let popup = Id::new("appearance-options-popup");
+                let menu = stage.area(popup.with("scheme-menu"))?;
+                Some(stage.area(popup)?.union(menu))
+            }
+        ),
         scenario!("Options", "accent-color", "Accent Color editor", |stage| {
             let ctx = stage.ctx.clone();
             stage.app.open_options(&ctx);

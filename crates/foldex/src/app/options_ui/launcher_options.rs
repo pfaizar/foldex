@@ -1,6 +1,6 @@
 //! Launcher behavior and search preferences. Keyboard shortcuts live in Hotkeys.
 use super::*;
-use crate::launcher::{Launcher, Settings};
+use crate::launcher::{Launcher, OpenFolder, Settings};
 
 #[derive(Default)]
 pub(super) struct LauncherOptions {
@@ -119,6 +119,37 @@ impl OptionsPopup {
             }
             return;
         }
+        if option == OptionId::LauncherOpenFolder {
+            // Shares the options popup's one dropdown with the theme menus.
+            let open = self.scheme_menu.open && self.scheme_option == option;
+            let response = foldex_ui::components::select_button(
+                ui,
+                theme,
+                launcher.settings.open_folder.label(),
+                rect.width(),
+                open,
+            );
+            self.control_focus(ui, option, &response);
+            if response.clicked() || activate {
+                self.selected = Some(option);
+                self.child_return_focus = Some(response.id);
+                if self.scheme_option != option {
+                    self.scheme_menu = Default::default();
+                }
+                self.scheme_option = option;
+                self.scheme_menu.toggle(ui.ctx());
+                let current = OpenFolder::ALL
+                    .iter()
+                    .position(|choice| *choice == launcher.settings.open_folder);
+                self.scheme_menu.select(current.unwrap_or(0));
+                response.request_focus();
+            }
+            if self.scheme_option == option {
+                self.scheme_anchor = response.rect;
+                self.scheme_seen = ui.ctx().cumulative_frame_nr();
+            }
+            return;
+        }
         let label = match option {
             OptionId::LauncherFolders => "Configure…",
             OptionId::LauncherHistory => "Clear history",
@@ -162,6 +193,40 @@ impl OptionsPopup {
             OptionId::LauncherFolders => "Choose launcher file search folders",
             _ => "Clear text history stored in memory",
         });
+    }
+    pub(super) fn launcher_menu(
+        &mut self,
+        ctx: &egui::Context,
+        paint: &Theme,
+        area: Id,
+        launcher: &mut Launcher,
+    ) {
+        if !self.scheme_menu.active() || self.scheme_option != OptionId::LauncherOpenFolder {
+            return;
+        }
+        let items: Vec<_> = OpenFolder::ALL
+            .iter()
+            .enumerate()
+            .map(|(index, choice)| foldex_ui::components::MenuItem {
+                id: index as u32,
+                label: choice.label(),
+                shortcut: "",
+                glyph: Icon::Empty,
+                checked: Some(*choice == launcher.settings.open_folder),
+                enabled: true,
+            })
+            .collect();
+        if let Some(choice) = self.scheme_menu.show_width(
+            ctx,
+            area.with("scheme-menu"),
+            paint,
+            self.scheme_anchor,
+            &items,
+            self.scheme_anchor.width(),
+        ) && let Some(open) = OpenFolder::ALL.get(choice as usize)
+        {
+            launcher.set_open_folder(*open);
+        }
     }
     pub(super) fn launcher_editor_ui(
         &mut self,
@@ -284,6 +349,7 @@ pub(super) fn is_launcher_option(option: OptionId) -> bool {
         option,
         OptionId::LauncherBackground
             | OptionId::LauncherClipboard
+            | OptionId::LauncherOpenFolder
             | OptionId::LauncherFolders
             | OptionId::LauncherHistory
     )
@@ -302,7 +368,8 @@ mod tests {
             .iter()
             .map(|(index, _)| OPTIONS[*index].title)
             .collect();
-        assert_eq!(titles.len(), 4);
+        assert_eq!(titles.len(), 5);
+        assert!(titles.contains(&"Open Folder from Launcher"));
         assert!(
             titles
                 .iter()

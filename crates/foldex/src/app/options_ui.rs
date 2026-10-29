@@ -41,6 +41,7 @@ enum OptionId {
     Updates,
     LauncherBackground,
     LauncherClipboard,
+    LauncherOpenFolder,
     LauncherFolders,
     LauncherHistory,
     SectionBookmarks,
@@ -166,6 +167,11 @@ const OPTIONS: &[Definition] = &[
         id: OptionId::LauncherClipboard,
         title: "Launcher Clipboard History",
         description: "Remember copied text while Foldex runs. Stored only in memory.",
+    },
+    Definition {
+        id: OptionId::LauncherOpenFolder,
+        title: "Open Folder from Launcher",
+        description: "Replace the current tab, or open a new tab or window.",
     },
     Definition {
         id: OptionId::LauncherFolders,
@@ -490,6 +496,11 @@ impl OptionsPopup {
             self.color_option = Some(OptionId::Accent);
             self.color_picker.open(*value);
         }
+    }
+    /// Opens the Open Folder from Launcher dropdown for the offscreen catalog.
+    #[cfg(test)]
+    pub(in crate::app) fn catalog_open_folder_menu(&mut self) {
+        self.activate = Some(OptionId::LauncherOpenFolder);
     }
     /// Transfer focus before any covered editor is rendered. In particular,
     /// text delivered with the Options shortcut must reach only this search.
@@ -1355,6 +1366,9 @@ impl OptionsPopup {
         {
             self.scheme_menu.close();
         }
+        if let Some(launcher) = launcher.as_deref_mut() {
+            self.launcher_menu(ctx, &paint, area_id, launcher);
+        }
         result.apply |= self.theme_menu(ctx, theme, &paint, area_id);
         if self.color_picker.is_open()
             && let Some(option) = self.color_option
@@ -1559,6 +1573,7 @@ impl OptionsPopup {
                 }
                 OptionId::LauncherBackground
                 | OptionId::LauncherClipboard
+                | OptionId::LauncherOpenFolder
                 | OptionId::LauncherFolders
                 | OptionId::LauncherHistory => {
                     // Live launcher controls are supplied by ui_with_services.
