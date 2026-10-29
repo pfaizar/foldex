@@ -31,6 +31,7 @@ OUT = ROOT / "target" / "ui-catalog"
 
 
 def render(out: Path, only: str = "") -> None:
+    previous = load(out) if only else {}
     env = dict(os.environ)
     env["FOLDEX_UI_CATALOG_OUT"] = str(out)
     if only:
@@ -47,6 +48,11 @@ def render(out: Path, only: str = "") -> None:
         env=env,
         check=True,
     )
+    if previous:
+        # A filtered run keeps the set's other shots.
+        merged = {**previous, **load(out)}
+        manifest = out / "manifest.json"
+        manifest.write_text(json.dumps({"shots": list(merged.values())}, indent=2), "utf-8")
 
 
 def slug(name: str) -> str:

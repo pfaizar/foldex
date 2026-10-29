@@ -727,6 +727,13 @@ impl Pane {
         Some(self.entry_at(row)?.path(self.snapshot.as_ref()?))
     }
 
+    /// Opens the view size popup for the offscreen catalog.
+    #[cfg(test)]
+    pub fn catalog_open_zoom(&mut self) {
+        self.zoom_open = true;
+        self.zoom_thumb = self.zoom;
+    }
+
     /// Selects a row range for the offscreen catalog.
     #[cfg(test)]
     pub fn catalog_select(&mut self, first: u32, last: u32) {

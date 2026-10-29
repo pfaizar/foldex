@@ -129,6 +129,28 @@ impl<'a> Stage<'a> {
     }
 
     fn pump(&mut self, events: Vec<egui::Event>) {
+        self.pump_with(events, |app, ui| {
+            app.ui(ui, &mut eframe::Frame::_new_kittest())
+        });
+    }
+
+    /// Draws the launcher palette alone, centred, at its own window size.
+    fn launcher(&mut self, query: &str) -> Option<Rect> {
+        self.app.launcher.catalog_calculator(query);
+        let mut rect = Rect::NOTHING;
+        for _ in 0..12 {
+            self.pump_with(vec![], |app, ui| {
+                let [width, height] = app.launcher.render_size(ui.ctx(), &app.theme, false);
+                rect =
+                    Rect::from_center_size(pos2(SIZE.x * 0.5, SIZE.y * 0.5), vec2(width, height));
+                let mut palette = ui.new_child(UiBuilder::new().max_rect(rect));
+                app.launcher.ui(&mut palette, &app.theme);
+            });
+        }
+        Some(rect.expand(12.0 - MARGIN))
+    }
+
+    fn pump_with(&mut self, events: Vec<egui::Event>, mut draw: impl FnMut(&mut Foldex, &mut Ui)) {
         let mut input = egui::RawInput {
             time: Some(self.frame as f64 / 60.0),
             screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, SIZE)),
@@ -142,9 +164,7 @@ impl<'a> Stage<'a> {
             .native_pixels_per_point = Some(PIXELS_PER_POINT);
         self.app.raw_input_hook(&self.ctx, &mut input);
         let app = &mut self.app;
-        let mut output = self
-            .ctx
-            .run_ui(input, |ui| app.ui(ui, &mut eframe::Frame::_new_kittest()));
+        let mut output = self.ctx.run_ui(input, |ui| draw(app, ui));
         for (id, deltas) in &output.textures_delta.set {
             for delta in deltas {
                 self.renderer
@@ -369,6 +389,33 @@ fn recording(stage: &mut Stage, keys: &[&str]) -> Option<Rect> {
     stage.app.hotkeys.catalog_recording(keys);
     stage.settle(6);
     stage.area(Id::new("hotkey-recording"))
+}
+
+/// The pane's footer strip, full width.
+fn footer(stage: &Stage) -> Rect {
+    let pane = stage.app.pane();
+    let bar = pane
+        .benchmark_footer_search_rect()
+        .union(pane.benchmark_footer_view_rect());
+    Rect::from_min_max(
+        pos2(bar.left() - 16.0, bar.top() - 14.0),
+        pos2(SIZE.x, bar.bottom() + 8.0),
+    )
+    .expand(-MARGIN)
+}
+
+fn view_size(stage: &mut Stage, zoom: f32) -> Option<Rect> {
+    stage.app.pane_mut().set_zoom(zoom);
+    stage.settle(4);
+    stage.app.pane_mut().catalog_open_zoom();
+    stage.settle(16);
+    let pane = stage.app.pane();
+    let popup = stage.area(Id::new((pane.id, "view-popup")))?;
+    Some(
+        popup
+            .union(pane.benchmark_footer_view_rect())
+            .expand(24.0 - MARGIN),
+    )
 }
 
 fn scenarios() -> Vec<Scenario> {
@@ -619,6 +666,37 @@ fn scenarios() -> Vec<Scenario> {
             crate::friendly::set_developer_mode(false);
             area
         }),
+        scenario!(
+            "Footer",
+            "footer",
+            "Folder footer with a selection",
+            |stage| {
+                stage.app.pane_mut().catalog_select(5, 6);
+                stage.settle(4);
+                Some(footer(stage))
+            }
+        ),
+        scenario!("Footer", "footer-filter", "Filtering", |stage| {
+            stage.app.pane_mut().filter = "photo".into();
+            stage.app.pane_mut().refilter();
+            stage.settle(8);
+            Some(footer(stage))
+        }),
+        scenario!("Footer", "view-size", "View size, Details", |stage| {
+            view_size(stage, 0.0)
+        }),
+        scenario!(
+            "Footer",
+            "view-size-icons",
+            "View size, between icon sizes",
+            |stage| { view_size(stage, 0.5) }
+        ),
+        scenario!(
+            "Launcher",
+            "launcher-calculator",
+            "Calculator answer",
+            |stage| { stage.launcher("200*200") }
+        ),
         scenario!("Options", "accent-color", "Accent Color editor", |stage| {
             let ctx = stage.ctx.clone();
             stage.app.open_options(&ctx);
