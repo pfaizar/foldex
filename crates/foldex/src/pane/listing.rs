@@ -1022,6 +1022,8 @@ impl Pane {
                                             },
                                     );
                                     if column.column.numeric() {
+                                        // Counts and sizes change in place; rolling
+                                        // digits read as noise across many rows.
                                         self.numeric_motion.paint(
                                             &p,
                                             identity.with(("numeric-value", column.column)),
@@ -1029,7 +1031,10 @@ impl Pane {
                                             &value.text,
                                             t.font(),
                                             color,
-                                            foldex_ui::rolling::RollingOptions::from_theme(t),
+                                            foldex_ui::rolling::RollingOptions {
+                                                duration: 0.0,
+                                                ..foldex_ui::rolling::RollingOptions::from_theme(t)
+                                            },
                                         );
                                     } else {
                                         foldex_ui::components::elided_label(
