@@ -565,7 +565,7 @@ pub fn dialog<R>(
     dialog_interactive(ctx, id, t, title, desired_width, open, true, content)
 }
 
-/// A parent stays visually stable while its nested surface owns interaction.
+//// A parent stays visually stable while its nested surface owns interaction.
 pub fn dialog_interactive<R>(
     ctx: &egui::Context,
     id: Id,
@@ -576,12 +576,33 @@ pub fn dialog_interactive<R>(
     interactive: bool,
     content: impl FnOnce(&mut Ui) -> R,
 ) -> R {
+    crate::dialog::Dialog::new(id, title, desired_width)
+        .interactive(interactive)
+        .show(ctx, t, open, content)
+        .inner
+}
+
+/// Shared modal geometry, motion and focus. Measurement uses the available
+/// screen, independently of the animated clip, so asynchronous content can
+/// grow beyond its first frame. The header and footer stay fixed while the
+/// body scrolls.
+pub(crate) fn dialog_frame<R>(
+    ctx: &egui::Context,
+    t: &Theme,
+    spec: crate::dialog::Dialog<'_>,
+    open: &mut bool,
+    content: impl FnOnce(&mut Ui) -> R,
+) -> crate::dialog::Shown<R> {
     let m = t.metrics();
+    let id = spec.id;
+    let interactive = spec.interactive;
     let screen = ctx.content_rect();
-    let width = desired_width.min((screen.width() - 32.0 * m.scale).max(120.0));
+    let width = spec.width.min((screen.width() - 32.0 * m.scale).max(120.0));
+    let header_height = spec.header_height(ctx, t);
+    let footer_height = spec.footer_height(t);
     let max_height =
-        (screen.height() - 64.0 * m.scale).max(m.popup_header + m.control + 24.0 * m.scale);
-    let max_body = (max_height - m.popup_header - 24.0 * m.scale).max(m.control);
+        (screen.height() - 64.0 * m.scale).max(header_height + footer_height + m.control);
+    let max_body = (max_height - header_height - footer_height).max(m.control);
     let frame = ctx.cumulative_frame_nr();
     let key = id.with("entry-motion");
     let mut motion = ctx
@@ -630,11 +651,15 @@ pub fn dialog_interactive<R>(
         }
         motion.frame = frame;
     }
-    let outer = Rect::from_center_size(
-        screen.center() - vec2(0.0, 4.0 * m.scale * (1.0 - motion.opacity)),
+    // Center on the settled height so growth does not shift the title, and
+    // keep the footer on the visible bottom edge while the surface opens.
+    let settled = motion.measured.min(max_height).max(motion.height);
+    let top = screen.center().y - settled * 0.5 - 4.0 * m.scale * (1.0 - motion.opacity);
+    let outer = Rect::from_min_size(
+        pos2(screen.center().x - width * 0.5, top),
         vec2(width, motion.height),
     );
-    let mut dismiss = false;
+    let mut chrome = (false, None, Vec::new());
     let area = egui::Area::new(id)
         .kind(egui::UiKind::Modal)
         .order(egui::Order::Foreground)
@@ -644,6 +669,7 @@ pub fn dialog_interactive<R>(
         .fade_in(false)
         .constrain(false);
     let layer = area.layer();
+    let title = spec.title;
     let render = |ui: &mut Ui| {
         ui.ctx().accesskit_node_builder(ui.id(), |node| {
             node.set_role(egui::accesskit::Role::Dialog);
@@ -652,56 +678,42 @@ pub fn dialog_interactive<R>(
         });
         ui.set_min_size(outer.size());
         ui.set_max_size(outer.size());
-        ui.set_clip_rect(outer.intersect(screen));
         ui.set_opacity(motion.opacity);
         if motion.closing || !interactive {
             disable_interaction(ui);
         }
+        let radius = t.radius.saturating_add(3);
+        let dark = t.resolved_mode == crate::ResolvedMode::Dark;
+        ui.painter().with_clip_rect(screen).add(
+            egui::epaint::Shadow {
+                offset: [0, 10],
+                blur: 32,
+                spread: 0,
+                color: egui::Color32::from_black_alpha(if dark { 110 } else { 38 }),
+            }
+            .as_shape(outer, radius),
+        );
+        ui.set_clip_rect(outer.intersect(screen));
         ui.painter()
-            .rect_filled(outer, t.radius.saturating_add(3), Theme::color(t.surface));
+            .rect_filled(outer, radius, Theme::color(t.surface));
         ui.painter().rect_stroke(
             outer,
-            t.radius.saturating_add(3),
+            radius,
             Stroke::new(1.0, t.line()),
             StrokeKind::Inside,
         );
-        let header = Rect::from_min_size(outer.min, vec2(width, m.popup_header));
-        let close = popup_action_rect(header, 0, 1);
-        elided_label(
-            ui.painter(),
-            Rect::from_min_max(
-                header.min + vec2(12.0 * m.scale, 0.0),
-                pos2(close.left() - m.gap, header.bottom()),
-            ),
-            t,
-            title,
-            t.fg(),
-            false,
-        );
-        dismiss = icon_button_at(ui, close, id.with("close"), t, Icon::Close, false)
-            .on_hover_text("Close")
-            .clicked();
-        ui.painter().hline(
-            header.x_range(),
-            header.bottom(),
-            Stroke::new(1.0, t.line()),
-        );
-        let origin = pos2(
-            outer.left() + 12.0 * m.scale,
-            header.bottom() + 12.0 * m.scale,
-        );
+        let pad = crate::dialog::PAD * m.scale;
+        let origin = pos2(outer.left() + pad, outer.top() + header_height);
         let mut body = ui.new_child(UiBuilder::new().id_salt(id.with("content")).max_rect(
-            Rect::from_min_size(origin, vec2((width - 24.0 * m.scale).max(1.0), max_body)),
+            Rect::from_min_size(origin, vec2((width - 2.0 * pad).max(1.0), max_body)),
         ));
+        let visible_bottom = outer.bottom() - footer_height;
         let clip = Rect::from_min_max(
-            origin,
-            pos2(
-                outer.right() - 12.0 * m.scale,
-                (outer.bottom() - 12.0 * m.scale).max(origin.y),
-            ),
+            pos2(outer.left() + 2.0, origin.y),
+            pos2(outer.right() - 2.0, visible_bottom.max(origin.y)),
         );
-        body.set_clip_rect(clip.intersect(outer).intersect(screen));
-        body.spacing_mut().item_spacing = vec2(m.gap, m.gap);
+        body.set_clip_rect(clip.intersect(screen));
+        body.spacing_mut().item_spacing = vec2(m.gap, crate::dialog::ROW_GAP * m.scale);
         let mut scroll = egui::ScrollArea::vertical()
             .id_salt(id.with("body"))
             .max_height(max_body)
@@ -710,20 +722,31 @@ pub fn dialog_interactive<R>(
             scroll = scroll.vertical_scroll_offset(0.0);
         }
         let output = scroll.show(&mut body, content);
-        let measured = m.popup_header + 24.0 * m.scale + output.content_size.y.min(max_body);
+        let overflow = output.content_size.y > max_body + 0.5;
+        let measured = header_height + output.content_size.y.min(max_body) + footer_height;
         if (measured - motion.measured).abs() > 0.25 {
             ctx.request_repaint();
         }
         motion.measured = measured;
+        chrome = spec.paint_chrome(ui, t, outer, overflow);
         output.inner
     };
+    // A light scrim marks the window behind as unavailable. It fades with the
+    // surface so stacked dialogs deepen it only while both are visible.
+    let scrim = if t.resolved_mode == crate::ResolvedMode::Dark {
+        84.0
+    } else {
+        40.0
+    };
+    let scrim = egui::Color32::from_black_alpha((scrim * motion.opacity) as u8);
     // Keep the modal layer through its closing animation. A disabled Area alone
     // would expose the covered controls to Tab and activation during the fade.
     let response = egui::Modal::new(id)
         .area(area)
-        .backdrop_color(egui::Color32::TRANSPARENT)
+        .backdrop_color(scrim)
         .frame(egui::Frame::NONE)
         .show(ctx, render);
+    let (dismiss, clicked, actions) = chrome;
     let close = interactive && response.should_close();
     let inner = response.inner;
     if !motion.closing && (dismiss || close) {
@@ -736,11 +759,20 @@ pub fn dialog_interactive<R>(
     } else if interactive && !motion.closing {
         focus.contain(ctx, layer, id.with("close"));
     }
+    let closing = motion.closing;
     ctx.data_mut(|data| {
         data.insert_temp(key, motion);
         data.insert_temp(focus_key, focus);
     });
-    inner
+    crate::dialog::Shown {
+        inner,
+        clicked: if interactive && !closing {
+            clicked
+        } else {
+            None
+        },
+        actions,
+    }
 }
 
 #[derive(Clone, Default)]
@@ -2028,7 +2060,7 @@ pub fn checkbox(ui: &mut Ui, t: &Theme, value: &mut bool, label: &str) -> Respon
     response
 }
 
-fn checkbox_mark(ui: &Ui, glyph: Rect, response: &Response, t: &Theme, state: i8) {
+pub(crate) fn checkbox_mark(ui: &Ui, glyph: Rect, response: &Response, t: &Theme, state: i8) {
     let id = response.id;
     let hover = animated_state(
         ui.ctx(),
@@ -2071,7 +2103,7 @@ fn checkbox_mark(ui: &Ui, glyph: Rect, response: &Response, t: &Theme, state: i8
         ui.painter().hline(
             (glyph.center().x - 4.0 * scale * mixed)..=(glyph.center().x + 4.0 * scale * mixed),
             glyph.center().y,
-            Stroke::new(1.5, egui::Color32::WHITE.gamma_multiply(mixed)),
+            Stroke::new(1.5, crate::dialog::on_color(t.accent).gamma_multiply(mixed)),
         );
     }
     if checked > 0.0 {
@@ -2079,7 +2111,7 @@ fn checkbox_mark(ui: &Ui, glyph: Rect, response: &Response, t: &Theme, state: i8
             ui.painter(),
             glyph.center(),
             Icon::Check,
-            egui::Color32::WHITE.gamma_multiply(checked),
+            crate::dialog::on_color(t.accent).gamma_multiply(checked),
             12.0 * scale * (0.8 + 0.2 * checked),
         );
     }

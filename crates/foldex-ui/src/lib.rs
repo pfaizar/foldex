@@ -2,6 +2,7 @@
 pub mod breadcrumb;
 pub mod color;
 pub mod components;
+pub mod dialog;
 pub mod focus;
 pub mod fonts;
 pub mod inline_edit;
