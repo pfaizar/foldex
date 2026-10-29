@@ -88,6 +88,12 @@ fn retained_bytes(galley: &Galley) -> usize {
         + 4 * size_of::<usize>()
 }
 
+/// Frame numbers and pixel density are per viewport. One shared table would
+/// evict every explorer label whenever the launcher's viewport paints.
+fn cache_key(ctx: &Context) -> Id {
+    Id::new((TEXT_CACHE_ID, ctx.viewport_id()))
+}
+
 /// Reuse simple immutable labels before allocating their String and section
 /// vector. egui still performs all shaping, wrapping and elision on cache misses.
 /// Placeholder-colored layouts can be painted in any hover/selection color.
@@ -109,8 +115,9 @@ pub(crate) fn layout(
     let frame = ctx.cumulative_frame_nr();
     let style = (revision(ctx), ctx.pixels_per_point().to_bits());
     let id = Id::new((text, &font, color, width.to_bits(), max_rows));
+    let key = cache_key(ctx);
     let cached = ctx.data_mut(|data| {
-        let cache = data.get_temp_mut_or_default::<TextCache>(Id::new(TEXT_CACHE_ID));
+        let cache = data.get_temp_mut_or_default::<TextCache>(key);
         cache.begin_frame(style, frame);
         let item = cache.items.get_mut(&id)?;
         let job = &item.galley.job;
@@ -135,7 +142,7 @@ pub(crate) fn layout(
     job.wrap.break_anywhere = max_rows == 1;
     let galley = ctx.fonts_mut(|fonts| fonts.layout_job(job));
     ctx.data_mut(|data| {
-        let cache = data.get_temp_mut_or_default::<TextCache>(Id::new(TEXT_CACHE_ID));
+        let cache = data.get_temp_mut_or_default::<TextCache>(key);
         #[cfg(test)]
         {
             cache.layouts += 1;
@@ -265,8 +272,9 @@ mod tests {
     use super::*;
 
     fn cache_stats(ctx: &Context) -> (usize, usize, usize) {
+        let key = cache_key(ctx);
         ctx.data_mut(|data| {
-            let cache = data.get_temp_mut_or_default::<TextCache>(Id::new(TEXT_CACHE_ID));
+            let cache = data.get_temp_mut_or_default::<TextCache>(key);
             (cache.items.len(), cache.bytes, cache.layouts)
         })
     }

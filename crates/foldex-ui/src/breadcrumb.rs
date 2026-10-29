@@ -594,12 +594,8 @@ mod tests {
     }
 
     fn hover_value(ctx: &egui::Context, id: Id) -> f32 {
-        ctx.data(|data| {
-            data.get_temp::<crate::ControlStates>(Id::new("foldex-control-motion"))
-                .unwrap()
-                .items[&id]
-                .0
-        })
+        let key = Id::new(("foldex-control-motion", ctx.viewport_id()));
+        ctx.data(|data| data.get_temp::<crate::ControlStates>(key).unwrap().items[&id].0)
     }
 
     #[test]

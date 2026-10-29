@@ -583,9 +583,11 @@ pub fn animated_state(
 ) -> f32 {
     let frame = ctx.cumulative_frame_nr();
     let dt = ctx.input(|i| i.stable_dt);
+    // Frame numbers are per viewport. A table shared with the launcher's
+    // immediate viewport would evict and restart every explorer control.
+    let key = egui::Id::new(("foldex-control-motion", ctx.viewport_id()));
     let (value, moving) = ctx.data_mut(|data| {
-        let states =
-            data.get_temp_mut_or_default::<ControlStates>(egui::Id::new("foldex-control-motion"));
+        let states = data.get_temp_mut_or_default::<ControlStates>(key);
         states.step(id, active, frame, dt, t.duration(), profile)
     });
     if moving {
@@ -706,6 +708,63 @@ mod control_motion_tests {
             states.step(id, false, 40, 1.0 / 60.0, 0.0, motion::MotionProfile::Fast),
             (0.0, false)
         );
+    }
+    #[test]
+    fn an_immediate_child_viewport_cannot_restart_root_controls() {
+        let ctx = egui::Context::default();
+        ctx.set_embed_viewports(false);
+        egui::Context::set_immediate_viewport_renderer(|ctx, viewport| {
+            let mut input = egui::RawInput {
+                viewport_id: viewport.ids.this,
+                ..Default::default()
+            };
+            input.viewports.entry(viewport.ids.this).or_default().parent =
+                Some(viewport.ids.parent);
+            let mut ui = viewport.viewport_ui_cb;
+            let mut output = ctx.run_ui(input, |child| ui(child));
+            output.textures_delta.clear();
+        });
+        let theme = Theme::default();
+        assert!(theme.duration() > 0.0);
+        let mut root = vec![];
+        for frame in 0..60 {
+            let input = egui::RawInput {
+                time: Some(f64::from(frame) / 60.0),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                // Like the launcher, the child appears long after the root.
+                if frame < 20 {
+                    return;
+                }
+                ui.ctx().show_viewport_immediate(
+                    egui::ViewportId::from_hash_of("launcher"),
+                    egui::ViewportBuilder::default(),
+                    |child, _| {
+                        animated_state(
+                            child.ctx(),
+                            egui::Id::new("result-row"),
+                            true,
+                            &theme,
+                            motion::MotionProfile::Fast,
+                        );
+                    },
+                );
+                root.push(animated_state(
+                    ui.ctx(),
+                    egui::Id::new("selected-place"),
+                    true,
+                    &theme,
+                    motion::MotionProfile::Fast,
+                ));
+            });
+            output.textures_delta.clear();
+        }
+        // The launcher's own frame counter must not retire explorer states:
+        // a restarted state fades the highlight out and back in on every pass.
+        assert!(root.len() == 40);
+        assert!(root.windows(2).all(|pair| pair[1] >= pair[0]), "{root:?}");
+        assert_eq!(root.last().copied(), Some(1.0));
     }
 }
 
