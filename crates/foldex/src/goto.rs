@@ -147,6 +147,18 @@ impl GoTo {
             self.filtering = self.browser.filter(s, self.query.clone());
         }
     }
+    /// A newer listing of the folder already shown, under the same query. Its
+    /// current rows stay valid destinations until the replacement view arrives;
+    /// hiding them would flash an empty list on every streamed or refreshed batch.
+    fn refilter_listing(&mut self) {
+        if !self.view_ready || self.snapshot.is_none() {
+            self.refilter();
+            return;
+        }
+        if let Some(s) = self.pending.clone() {
+            self.filtering = self.browser.filter(s, self.query.clone());
+        }
+    }
     fn refresh_input(&mut self, remember: bool) {
         self.cursor = None;
         self.scroll_to = Some(0);
@@ -249,7 +261,7 @@ impl GoTo {
                     if let Some(old) = self.pending.replace(snapshot) {
                         self.retire(old);
                     }
-                    self.refilter();
+                    self.refilter_listing();
                 }
                 Event::View {
                     generation,
@@ -1075,5 +1087,47 @@ mod tests {
             .is_none()
         );
         assert!(goto.closing);
+    }
+
+    #[test]
+    fn a_newer_listing_of_the_shown_folder_keeps_its_rows_visible() {
+        let dir = std::env::temp_dir().join(format!(
+            "foldex-goto-relist-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        for i in 0..24 {
+            std::fs::write(dir.join(format!("file {i:02}.txt")), b"x").unwrap();
+        }
+        let engine = Engine::new(Arc::new(|| {})).unwrap();
+        let ctx = egui::Context::default();
+        let mut goto = GoTo::new(&engine, 7, Some(dir.clone()), vec![]);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let mut frame = 0;
+        while goto.len() != 24 {
+            keyboard_frame(&ctx, &mut goto, frame, vec![]);
+            frame += 1;
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the folder never listed"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        // Opening from the address bar can receive another listing of the same
+        // folder after its rows appear. They must not vanish while it filters.
+        goto.navigation = goto.browser.navigate(dir.clone(), true);
+        for _ in 0..60 {
+            keyboard_frame(&ctx, &mut goto, frame, vec![]);
+            frame += 1;
+            assert_eq!(goto.len(), 24, "rows disappeared during a relist");
+            assert!(goto.destination(23).is_some());
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        drop(goto);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
