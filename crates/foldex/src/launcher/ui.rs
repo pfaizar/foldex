@@ -5,6 +5,8 @@ const PALETTE_HEADER: f32 = foldex_ui::components::POPUP_HEADER;
 const PALETTE_FOOTER: f32 = 28.0;
 const RESULT_HEIGHT: f32 = 36.0;
 const SECTION_HEIGHT: f32 = 28.0;
+/// The calculator's heading plus its single answer row.
+const CALCULATOR_HEIGHT: f32 = SECTION_HEIGHT + 56.0 + 8.0;
 const DISCOVERY_APPS: usize = 6;
 
 fn results_focus_id() -> Id {
@@ -129,7 +131,7 @@ fn result_lines(
     if let Some(answer) = calculator {
         push(
             LineKind::Calculator(answer),
-            148.0 * row_height / RESULT_HEIGHT,
+            CALCULATOR_HEIGHT * row_height / RESULT_HEIGHT,
         );
         if rows.len() > 1 {
             push(LineKind::Heading("Other results", ""), group_height);
@@ -611,8 +613,10 @@ impl Launcher {
         let ideal = if self.mode == Mode::Settings || discovery && self.provider_pending {
             420.0 * scale
         } else {
+            // A lone answer fits its row; other scenes keep a steady minimum.
+            let floor = if calculator.is_some() { 0.0 } else { 224.0 };
             (content + (PALETTE_HEADER + PALETTE_FOOTER + 16.0) * scale)
-                .clamp(224.0 * scale, 420.0 * scale)
+                .clamp(floor * scale, 420.0 * scale)
         };
         let now = ctx.input(|input| input.time);
         let duration = f64::from(t.duration().min(0.11));
@@ -1322,24 +1326,70 @@ impl Launcher {
         let ready = self.row_action_ready(at);
         let m = t.metrics();
         let p = ui.painter().with_clip_rect(clip.intersect(rect));
-        let left = rect.left() + 18.0 * m.scale;
-        let right = rect.right() - 18.0 * m.scale;
+        let small = FontId::proportional((t.font_size - 1.0).max(10.0));
         p.text(
-            pos2(left, rect.top() + 20.0 * m.scale),
+            pos2(
+                rect.left() + 12.0 * m.scale,
+                rect.top() + (SECTION_HEIGHT * 0.5 + 2.0) * m.scale,
+            ),
             Align2::LEFT_CENTER,
-            "Result",
-            FontId::proportional((t.font_size - 1.0).max(10.0)),
-            t.dim(),
+            "Calculator",
+            small.clone(),
+            t.fg().lerp_to_gamma(t.dim(), 0.7),
         );
-        let copy = Rect::from_center_size(
-            pos2(right - m.control * 0.5, rect.top() + 68.0 * m.scale),
-            vec2(m.control, m.control),
+        let card = Rect::from_min_size(
+            rect.min + vec2(4.0, SECTION_HEIGHT) * m.scale,
+            vec2(rect.width() - 8.0 * m.scale, 56.0 * m.scale),
+        );
+        let selected = self.selected == at;
+        let radius = t.radius.saturating_add(2);
+        // Filled once hover is known, beneath the row's content.
+        let background = p.add(egui::Shape::Noop);
+        // An "=" mark, drawn so it sits optically centred in its badge.
+        let badge = Rect::from_center_size(
+            pos2(card.left() + 26.0 * m.scale, card.center().y),
+            vec2(24.0, 24.0) * m.scale,
+        );
+        p.rect_filled(badge, t.radius, Theme::color(t.chrome));
+        p.rect_stroke(
+            badge,
+            t.radius,
+            Stroke::new(1.0, t.line()),
+            StrokeKind::Inside,
+        );
+        for offset in [-2.5, 2.5] {
+            let y = badge.center().y + offset * m.scale;
+            p.line_segment(
+                [
+                    pos2(badge.center().x - 5.0 * m.scale, y),
+                    pos2(badge.center().x + 5.0 * m.scale, y),
+                ],
+                Stroke::new(1.5 * m.scale, t.fg()),
+            );
+        }
+        let hint = if ready {
+            "Enter to copy"
+        } else {
+            "Updating…"
+        };
+        // Both hints share one slot so a pending answer never moves the row.
+        let hint_width = ["Enter to copy", "Updating…"]
+            .map(|text| {
+                p.layout_no_wrap(text.into(), small.clone(), t.dim())
+                    .size()
+                    .x
+            })
+            .into_iter()
+            .fold(0.0, f32::max);
+        let copy = Rect::from_min_max(
+            pos2(card.right() - hint_width - 28.0 * m.scale, card.top()),
+            card.max,
         );
         let answer = Rect::from_min_max(
-            pos2(left, rect.top() + 35.0 * m.scale),
-            pos2(copy.left() - 18.0 * m.scale, rect.top() + 100.0 * m.scale),
+            pos2(badge.right() + 14.0 * m.scale, card.top()),
+            pos2(copy.left() - 8.0 * m.scale, card.bottom()),
         );
-        let font = FontId::proportional(40.0 * m.scale);
+        let font = FontId::proportional(24.0 * m.scale);
         let options = foldex_ui::rolling::RollingOptions {
             align: egui::Align::LEFT,
             ..foldex_ui::rolling::RollingOptions::from_theme(t)
@@ -1395,7 +1445,7 @@ impl Launcher {
             copy_rect: Some(copy),
             rolling,
         };
-        let select = Rect::from_min_max(rect.min, pos2(copy.left() - m.gap, rect.bottom()));
+        let select = Rect::from_min_max(card.min, pos2(copy.left(), card.bottom()));
         let response = ui.interact(
             select.intersect(clip),
             Id::new("launcher-calculator-result"),
@@ -1407,30 +1457,46 @@ impl Launcher {
             results_focus_id(),
             Id::new("launcher-query"),
             &format!("Copy result {}", row.title),
-            self.selected == at,
+            selected,
             ready,
         );
-        if self.selected == at {
-            p.rect_filled(
-                Rect::from_min_size(
-                    pos2(rect.left() + 2.0 * m.scale, rect.top() + 40.0 * m.scale),
-                    vec2(2.0 * m.scale, 48.0 * m.scale),
-                ),
-                1,
-                t.accent(),
-            );
-        }
-        if self.selected == at
+        let hover = foldex_ui::animated_state(
+            ui.ctx(),
+            response.id.with("hover"),
+            response.hovered(),
+            t,
+            MotionProfile::Fast,
+        );
+        p.set(
+            background,
+            if selected {
+                egui::epaint::RectShape::new(
+                    card,
+                    radius,
+                    Theme::color(t.selection),
+                    Stroke::new(1.0, t.line()),
+                    StrokeKind::Inside,
+                )
+            } else {
+                egui::epaint::RectShape::filled(
+                    card,
+                    radius,
+                    Theme::color(t.hover).gamma_multiply(hover),
+                )
+            },
+        );
+        if selected
             && ui.memory(|memory| memory.has_focus(results_focus_id()))
             && foldex_ui::focus::keyboard_visible(ui.ctx())
         {
             p.rect_stroke(
-                rect.shrink(1.0),
-                t.radius,
+                card,
+                radius,
                 Stroke::new(1.0, t.accent()),
                 StrokeKind::Inside,
             );
         }
+        // The hint is also the copy target, so the row carries no extra icon.
         // Copy is this result's activation, so it shares the result composite's
         // Tab stop while retaining its explicit mouse target.
         let copied = if copy.intersects(clip) {
@@ -1445,21 +1511,16 @@ impl Launcher {
             let hover = foldex_ui::animated_state(
                 ui.ctx(),
                 hit.id.with("hover"),
-                hit.hovered(),
+                hit.hovered() && ready,
                 t,
                 MotionProfile::Fast,
             );
-            p.rect_filled(
-                copy,
-                t.radius,
-                Theme::color(t.chrome).lerp_to_gamma(Theme::color(t.hover), hover),
-            );
-            icon(
-                &p,
-                copy.center(),
-                Icon::Copy,
-                if ready { t.fg() } else { t.dim() },
-                m.icon,
+            p.text(
+                pos2(copy.right() - 16.0 * m.scale, copy.center().y),
+                Align2::RIGHT_CENTER,
+                hint,
+                small,
+                t.dim().lerp_to_gamma(t.fg(), hover),
             );
             hit.on_hover_text(if ready {
                 "Copy result · Enter"
@@ -1478,6 +1539,24 @@ impl Launcher {
             crate::keyboard::request_id(ui.ctx(), results_focus_id());
         }
         ready && clicked
+    }
+}
+
+#[cfg(test)]
+impl Launcher {
+    /// Shows a settled calculator answer for the offscreen catalog without
+    /// starting providers.
+    pub(crate) fn catalog_calculator(&mut self, query: &str) {
+        self.worker.stop.store(true, Ordering::Release);
+        self.native.state.opened.store(true, Ordering::Release);
+        self.mode = Mode::All;
+        self.query = query.into();
+        let answer = calculator_row(Mode::All, query);
+        self.calculator.begin(0, answer.clone());
+        self.calculator.finish(0, answer.clone());
+        self.rows = answer.into_iter().collect();
+        self.selected = 0;
+        self.dirty = false;
     }
 }
 
@@ -1872,8 +1951,8 @@ mod tests {
         f.launcher.focus = false;
         crate::keyboard::request_id(&f.ctx, results_focus_id());
         let (_, copy) = f.draw(vec![]);
-        let copy = copy.expect("Calculator must expose its copy button");
-        assert!((copy.width() - copy.height()).abs() < 0.01);
+        let copy = copy.expect("Calculator must expose its copy target");
+        assert!(copy.width() > copy.height());
         let pointer = |pressed| egui::Event::PointerButton {
             pos: copy.center(),
             button: egui::PointerButton::Primary,
@@ -2124,7 +2203,7 @@ mod tests {
     }
 
     #[test]
-    fn calculator_scene_paints_only_the_result_heading_and_answer_as_text() {
+    fn calculator_scene_paints_only_its_heading_answer_and_copy_hint_as_text() {
         let mut f = CalculatorFixture::new(Mode::Calculator);
         for font_size in [14.0, 24.0] {
             let theme = Theme {
@@ -2133,7 +2212,8 @@ mod tests {
             };
             theme.apply(&f.ctx);
             let scale = theme.metrics().scale;
-            let rect = Rect::from_min_size(egui::Pos2::ZERO, vec2(640.0, 148.0) * scale);
+            let rect =
+                Rect::from_min_size(egui::Pos2::ZERO, vec2(640.0, CALCULATOR_HEIGHT) * scale);
             let output = f.ctx.run_ui(
                 egui::RawInput {
                     screen_rect: Some(rect),
@@ -2151,7 +2231,7 @@ mod tests {
                     _ => None,
                 })
                 .collect();
-            assert_eq!(text, ["Result", "42"]);
+            assert_eq!(text, ["Calculator", "42", "Enter to copy"]);
             output.drop_without_applying_deltas();
         }
     }
