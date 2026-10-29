@@ -418,6 +418,33 @@ fn view_size(stage: &mut Stage, zoom: f32) -> Option<Rect> {
     )
 }
 
+fn sort_menu(stage: &mut Stage, more: bool) -> Option<Rect> {
+    let ctx = stage.ctx.clone();
+    stage.settle(4);
+    stage.app.pane_mut().catalog_open_sort(&ctx, false);
+    stage.settle(6);
+    if more {
+        stage.app.pane_mut().catalog_open_sort(&ctx, true);
+        stage.settle(6);
+    }
+    let id = stage.app.pane().id;
+    let mut rect = stage.area(Id::new((id, "sort-menu")))?;
+    if let Some(flyout) = more
+        .then(|| stage.area(Id::new((id, "sort-more"))))
+        .flatten()
+    {
+        rect = rect.union(flyout);
+    }
+    // Include the toolbar button the menu hangs from.
+    Some(
+        rect.union(Rect::from_min_size(
+            pos2(rect.left(), MARGIN),
+            vec2(1.0, 1.0),
+        ))
+        .expand(16.0),
+    )
+}
+
 fn scenarios() -> Vec<Scenario> {
     use crate::recycle_bin::Intent;
     use crate::updates::CatalogPhase;
@@ -691,6 +718,12 @@ fn scenarios() -> Vec<Scenario> {
             "View size, between icon sizes",
             |stage| { view_size(stage, 0.5) }
         ),
+        scenario!("Toolbar", "sort-menu", "Sort menu", |stage| {
+            sort_menu(stage, false)
+        }),
+        scenario!("Toolbar", "sort-more", "Sort menu, More columns", |stage| {
+            sort_menu(stage, true)
+        }),
         scenario!(
             "Launcher",
             "launcher-calculator",

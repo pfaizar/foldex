@@ -1882,6 +1882,7 @@ fn icon_button_label(glyph: Icon) -> &'static str {
         Icon::Window => "Open window",
         Icon::Calculator => "Calculator",
         Icon::Filter => "Search conditions",
+        Icon::Sort => "Sort",
         Icon::Folder => "Open folder",
         Icon::File => "Open file",
         Icon::Image => "Open image",
@@ -2914,15 +2915,39 @@ pub fn menu_row(
         icon(&p, layout.check.unwrap(), Icon::Check, color, m.icon);
     }
     elided_label(&p, layout.label, t, item.label, color, false);
-    p.with_clip_rect(layout.shortcut.intersect(hit)).galley(
-        pos2(
-            layout.shortcut.right() - shortcut.size().x,
-            layout.shortcut.top(),
-        ),
-        shortcut,
-        shortcut_color,
-    );
+    if item.shortcut == SUBMENU {
+        icon(
+            &p,
+            pos2(
+                layout.shortcut.right() - shortcut.size().x * 0.5,
+                rect.center().y,
+            ),
+            Icon::Forward,
+            shortcut_color,
+            m.icon * 0.75,
+        );
+    } else {
+        p.with_clip_rect(layout.shortcut.intersect(hit)).galley(
+            pos2(
+                layout.shortcut.right() - shortcut.size().x,
+                layout.shortcut.top(),
+            ),
+            shortcut,
+            shortcut_color,
+        );
+    }
     response
+}
+
+/// The shortcut text that marks a row as opening a flyout submenu.
+pub const SUBMENU: &str = "\u{203A}";
+
+#[derive(Clone, Copy)]
+enum MenuPlacement {
+    /// Below (or above) the invoking control, right-aligned to it.
+    Anchor(Rect),
+    /// A flyout beside a row of the parent menu shown with id `parent`.
+    Beside { row: Rect, parent: Id },
 }
 
 #[derive(Default)]
@@ -2937,10 +2962,72 @@ pub struct MenuState {
     typeahead: String,
     typeahead_until: f64,
     reveal_cursor: bool,
+    rows: Vec<(u32, Rect)>,
+    outer: Option<Rect>,
+    companion: Option<Rect>,
+    submenu: Option<u32>,
 }
 impl MenuState {
     pub fn active(&self) -> bool {
         self.open || self.height > 0.25
+    }
+    /// The painted screen rectangle of a row, as of the last shown frame.
+    pub fn item_rect(&self, id: u32) -> Option<Rect> {
+        self.rows
+            .iter()
+            .find_map(|(item, rect)| (*item == id).then_some(*rect))
+    }
+    /// The whole painted menu, as of the last shown frame.
+    pub fn rect(&self) -> Rect {
+        self.outer.unwrap_or(Rect::NOTHING)
+    }
+    /// A related surface, such as an open flyout. Pressing inside it is not an
+    /// outside click, so the parent stays open while its submenu is used.
+    pub fn set_companion(&mut self, rect: Option<Rect>) {
+        self.companion = rect;
+    }
+    /// The row that opens a flyout. Activating it is still reported, but
+    /// does not close this menu.
+    pub fn set_submenu(&mut self, id: Option<u32>) {
+        self.submenu = id;
+    }
+    /// The keyboard or pointer highlight, when it rests on a usable row.
+    pub fn highlighted(&self, items: &[MenuItem<'_>]) -> Option<u32> {
+        items
+            .get(self.cursor)
+            .filter(|item| item.selectable())
+            .map(|item| item.id)
+    }
+    /// Whether the highlight follows the pointer rather than the keyboard.
+    pub fn pointer_highlight(&self) -> bool {
+        self.pointer_navigation
+    }
+    /// Whether this open menu currently receives keyboard input.
+    pub fn has_keyboard(&self, ctx: &egui::Context, id: Id) -> bool {
+        self.open && self.focus.owns_keyboard(ctx, id.with("keyboard"))
+    }
+    /// Show a submenu beside `row`, a row of the menu shown with id `parent`.
+    /// It keeps the ordinary keyboard, type-ahead and outside-click behavior.
+    #[allow(clippy::too_many_arguments)]
+    pub fn show_flyout(
+        &mut self,
+        ctx: &egui::Context,
+        id: Id,
+        parent: Id,
+        t: &Theme,
+        row: Rect,
+        items: &[MenuItem<'_>],
+        desired_width: f32,
+    ) -> Option<u32> {
+        self.show_placed(
+            ctx,
+            id,
+            t,
+            MenuPlacement::Beside { row, parent },
+            items,
+            &[],
+            desired_width,
+        )
     }
     pub fn toggle(&mut self, ctx: &egui::Context) {
         self.open = !self.open;
@@ -3008,20 +3095,53 @@ impl MenuState {
         sections: &[MenuSection<'_>],
         desired_width: f32,
     ) -> Option<u32> {
+        self.show_placed(
+            ctx,
+            id,
+            t,
+            MenuPlacement::Anchor(anchor),
+            items,
+            sections,
+            desired_width,
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn show_placed(
+        &mut self,
+        ctx: &egui::Context,
+        id: Id,
+        t: &Theme,
+        placement: MenuPlacement,
+        items: &[MenuItem<'_>],
+        sections: &[MenuSection<'_>],
+        desired_width: f32,
+    ) -> Option<u32> {
         let focus_id = id.with("keyboard");
         let opening = self.open && !self.focus.owns;
         self.focus.update(ctx, focus_id, self.open);
         let screen = ctx.content_rect();
         let m = t.metrics();
         let safe_top = screen.top() + 36.0;
-        let below = (anchor.bottom() + m.gap).max(safe_top);
-        let above = (anchor.top() - m.gap).min(screen.bottom() - m.inset);
-        let below_room = (screen.bottom() - m.inset - below).max(0.0);
-        let above_room = (above - safe_top).max(0.0);
         let (content_height, _) = menu_content_heights(t, items, sections, f32::MAX);
         let desired = content_height + 8.0 * m.scale;
-        let open_below = desired <= below_room || below_room >= above_room;
-        let available = (if open_below { below_room } else { above_room }).max(1.0);
+        let (below, above, open_below, available) = match placement {
+            MenuPlacement::Anchor(anchor) => {
+                let below = (anchor.bottom() + m.gap).max(safe_top);
+                let above = (anchor.top() - m.gap).min(screen.bottom() - m.inset);
+                let below_room = (screen.bottom() - m.inset - below).max(0.0);
+                let above_room = (above - safe_top).max(0.0);
+                let open_below = desired <= below_room || below_room >= above_room;
+                let available = (if open_below { below_room } else { above_room }).max(1.0);
+                (below, above, open_below, available)
+            }
+            // A flyout slides up to fit, so it may use the whole usable height.
+            MenuPlacement::Beside { .. } => (
+                safe_top,
+                safe_top,
+                true,
+                (screen.bottom() - m.inset - safe_top).max(1.0),
+            ),
+        };
         let (_, viewport_height) =
             menu_content_heights(t, items, sections, (available - 8.0 * m.scale).max(1.0));
         let target = (viewport_height + 8.0 * m.scale).min(available);
@@ -3037,16 +3157,36 @@ impl MenuState {
             return None;
         }
         let width = desired_width.min((screen.width() - 12.0 * m.scale).max(1.0));
-        let x = (anchor.right() - width).clamp(
-            screen.left() + m.inset,
-            (screen.right() - width - m.inset).max(screen.left() + m.inset),
-        );
-        let y = if open_below {
-            below
-        } else {
-            above - self.height
+        let (x, y) = match placement {
+            MenuPlacement::Anchor(anchor) => (
+                (anchor.right() - width).clamp(
+                    screen.left() + m.inset,
+                    (screen.right() - width - m.inset).max(screen.left() + m.inset),
+                ),
+                if open_below {
+                    below
+                } else {
+                    above - self.height
+                },
+            ),
+            MenuPlacement::Beside { row, .. } => {
+                // Align the first row with its parent row and open toward the
+                // side with room, like a native cascading menu.
+                let right = row.right() + 6.0 * m.scale;
+                let x = if right + width <= screen.right() - m.inset {
+                    right
+                } else {
+                    (row.left() - 6.0 * m.scale - width).max(screen.left() + m.inset)
+                };
+                let y = (row.top() - 4.0 * m.scale)
+                    .min(screen.bottom() - m.inset - target)
+                    .max(safe_top);
+                (x, y)
+            }
         };
         let outer = Rect::from_min_size(pos2(x, y), vec2(width, self.height));
+        self.outer = Some(outer);
+        self.rows.clear();
         let mut picked = None;
         let mut follow_cursor = opening || self.reveal_cursor;
         if !items.get(self.cursor).is_some_and(MenuItem::selectable) {
@@ -3119,7 +3259,7 @@ impl MenuState {
                     } => {
                         if !opening && items.get(self.cursor).is_some_and(MenuItem::selectable) {
                             picked = Some(items[self.cursor].id);
-                            self.open = false;
+                            self.open = picked == self.submenu;
                         }
                     }
                     egui::Event::Key { key, .. } => {
@@ -3199,13 +3339,27 @@ impl MenuState {
             }
         }
         let keyboard_focus = self.open && self.focus.owns_keyboard(ctx, focus_id);
-        popup_surface(
+        // A flyout rides directly above its parent. The parent's modal
+        // backdrop would otherwise cover it, and a second modal would lock
+        // the parent's rows.
+        let parent = match placement {
+            MenuPlacement::Beside { parent, .. } => {
+                ctx.set_sublayer(
+                    egui::LayerId::new(egui::Order::Foreground, parent),
+                    egui::LayerId::new(egui::Order::Foreground, id),
+                );
+                true
+            }
+            MenuPlacement::Anchor(_) => false,
+        };
+        popup_surface_with_backdrop(
             ctx,
             egui::Area::new(id)
                 .order(egui::Order::Foreground)
                 .fixed_pos(outer.min)
                 .fade_in(false),
             self.open,
+            !parent,
             |ui| {
                 if self.open {
                     PopupFocus::surface(ui, outer, focus_id, "Menu");
@@ -3273,6 +3427,7 @@ impl MenuState {
                                 if self.pointer_navigation && r.hovered() && item.selectable() {
                                     self.cursor = row;
                                 }
+                                self.rows.push((item.id, rect.intersect(ui.clip_rect())));
                                 if self.open && r.clicked() && item.selectable() {
                                     picked = Some(item.id);
                                 }
@@ -3301,18 +3456,22 @@ impl MenuState {
                 }
             },
         );
+        let companion = self.companion;
         if self.open
             && ctx.cumulative_frame_nr() > self.opened
             && ctx.input(|i| {
                 i.pointer.any_pressed()
-                    && i.pointer.interact_pos().is_some_and(|p| !outer.contains(p))
+                    && i.pointer.interact_pos().is_some_and(|p| {
+                        !outer.contains(p) && !companion.is_some_and(|rect| rect.contains(p))
+                    })
             })
         {
             self.open = false;
             ctx.request_repaint();
         }
         if picked.is_some() {
-            self.open = false;
+            // Activating a flyout's row opens it; the parent stays open.
+            self.open = picked == self.submenu;
             ctx.request_repaint();
         }
         self.focus.update(ctx, focus_id, self.open);

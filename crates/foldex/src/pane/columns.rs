@@ -175,6 +175,14 @@ impl Column {
     pub(super) fn needs_folders(self) -> bool {
         self.numeric()
     }
+    /// Sizes, counts and dates start with the largest or newest, as in Explorer.
+    fn descending_first(self) -> bool {
+        self.numeric()
+            || matches!(
+                self,
+                Self::Created | Self::Modified | Self::Accessed | Self::DateDeleted
+            )
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -320,6 +328,15 @@ pub(super) struct ColumnCell {
 pub(super) struct DetailsLayout {
     pub cells: Vec<ColumnCell>,
     name: Rect,
+}
+impl DetailsLayout {
+    /// No value cells: icon and list views still order by a calculated column.
+    pub(super) fn sort_only(&self) -> Self {
+        Self {
+            cells: vec![],
+            name: self.name,
+        }
+    }
 }
 
 /// A single fixed status slot serves the sort arrow or calculation spinner.
@@ -949,12 +966,180 @@ impl Pane {
         let descending = if self.sorted_column() == column {
             !self.sort_descending()
         } else {
-            column.numeric()
-                || matches!(
-                    column,
-                    Column::Created | Column::Modified | Column::Accessed | Column::DateDeleted
-                )
+            column.descending_first()
         };
+        self.sort_by(column, descending);
+    }
+    /// Recursive results order calculated folder columns only by Size.
+    fn sortable(&self, column: Column) -> bool {
+        !(self.recursive && column.numeric() && column != Column::Size)
+    }
+    pub(super) fn toggle_sort_menu(&mut self, ctx: &egui::Context, anchor: Rect) {
+        self.sort_anchor = anchor;
+        self.sort_more.close();
+        self.sort_menu.toggle(ctx);
+    }
+    /// Opens the Sort menu, and optionally its More flyout, for the catalog.
+    #[cfg(test)]
+    pub fn catalog_open_sort(&mut self, ctx: &egui::Context, more: bool) {
+        if !self.sort_menu.open {
+            self.sort_menu.toggle(ctx);
+        }
+        if more && !self.sort_more.open {
+            self.sort_more.toggle(ctx);
+        }
+    }
+    pub(super) fn close_sort_menu(&mut self) {
+        self.sort_menu.close();
+        self.sort_more.close();
+    }
+    pub(super) fn sort_menu_open(&self) -> bool {
+        self.sort_menu.open
+    }
+    /// The order comes from the column worker rather than the folder query.
+    pub(super) fn calculated_sort(&self) -> bool {
+        !self.recursive && self.columns.settings.sort.is_some()
+    }
+    /// Explorer's Sort menu: the columns shown in Details, the remaining
+    /// columns under More, then the direction. Every view keeps this order.
+    pub(super) fn sort_menu_ui(&mut self, ctx: &egui::Context, t: &Theme) {
+        use foldex_ui::components::{MenuItem, MenuSection, SUBMENU};
+        const MORE: u32 = 1;
+        const ASCENDING: u32 = 2;
+        const DESCENDING: u32 = 3;
+        if !self.sort_menu.active() && !self.sort_more.active() {
+            return;
+        }
+        let recycle = self.is_recycle_bin();
+        let sorted = self.sorted_column();
+        let descending = self.sort_descending();
+        let item = |column: Column| MenuItem {
+            id: 100 + Column::ALL.iter().position(|c| *c == column).unwrap_or(0) as u32,
+            label: column.label(),
+            shortcut: "",
+            glyph: Icon::Empty,
+            checked: Some(sorted == column),
+            enabled: self.sortable(column),
+        };
+        let shown = |column: Column| {
+            self.columns
+                .settings
+                .columns
+                .iter()
+                .any(|setting| setting.column == column && setting.visible)
+        };
+        let mut items = self
+            .columns
+            .settings
+            .columns
+            .iter()
+            .filter(|setting| setting.visible && setting.column.supported(recycle))
+            .map(|setting| item(setting.column))
+            .collect::<Vec<_>>();
+        let hidden = Column::ALL
+            .into_iter()
+            .filter(|column| column.supported(recycle) && !shown(*column))
+            .map(item)
+            .collect::<Vec<_>>();
+        if !hidden.is_empty() {
+            items.push(MenuItem {
+                id: MORE,
+                label: "More",
+                shortcut: SUBMENU,
+                glyph: Icon::Empty,
+                checked: None,
+                enabled: true,
+            });
+        }
+        for (id, label, glyph, checked) in [
+            (ASCENDING, "Ascending", Icon::Up, !descending),
+            (DESCENDING, "Descending", Icon::MoveDown, descending),
+        ] {
+            items.push(MenuItem {
+                id,
+                label,
+                shortcut: "",
+                glyph,
+                checked: Some(checked),
+                enabled: true,
+            });
+        }
+        let width = 220.0 * t.metrics().scale;
+        let menu_id = Id::new((self.id, "sort-menu"));
+        let more_id = Id::new((self.id, "sort-more"));
+        self.sort_menu
+            .set_submenu((!hidden.is_empty()).then_some(MORE));
+        self.sort_menu
+            .set_companion(self.sort_more.active().then(|| self.sort_more.rect()));
+        // Pressing More again keeps its flyout rather than closing and reopening it.
+        self.sort_more
+            .set_companion(self.sort_menu.active().then(|| self.sort_menu.rect()));
+        // Like a native cascading menu: pointing at More, Right or Enter opens
+        // its flyout; pointing at another parent row closes it again.
+        let pointing = |rect: Option<Rect>| {
+            ctx.input(|input| {
+                input.pointer.delta() != egui::Vec2::ZERO
+                    && input
+                        .pointer
+                        .hover_pos()
+                        .is_some_and(|pointer| rect.is_some_and(|rect| rect.contains(pointer)))
+            })
+        };
+        let mut open_more = false;
+        if pointing(self.sort_menu.item_rect(MORE)) {
+            open_more = true;
+        } else if self.sort_menu.highlighted(&items) == Some(MORE) {
+            open_more = self.sort_menu.has_keyboard(ctx, menu_id)
+                && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::ArrowRight));
+        } else if self.sort_menu.pointer_highlight() && pointing(Some(self.sort_menu.rect())) {
+            self.sort_more.close();
+        }
+        let picked = self.sort_menu.show_sections_width(
+            ctx,
+            menu_id,
+            t,
+            self.sort_anchor,
+            &items,
+            &[MenuSection::separator(ASCENDING)],
+            width,
+        );
+        open_more |= picked == Some(MORE);
+        if !self.sort_menu.open {
+            self.sort_more.close();
+        } else if open_more && !self.sort_more.open {
+            self.sort_more.toggle(ctx);
+        }
+        let mut chosen = picked.filter(|id| *id != MORE);
+        if self.sort_more.active()
+            && let Some(row) = self.sort_menu.item_rect(MORE)
+        {
+            if let Some(id) = self
+                .sort_more
+                .show_flyout(ctx, more_id, menu_id, t, row, &hidden, width)
+            {
+                chosen = Some(id);
+                self.sort_menu.close();
+            }
+            if self.sort_more.has_keyboard(ctx, more_id)
+                && ctx.input_mut(|input| input.consume_key(egui::Modifiers::NONE, Key::ArrowLeft))
+            {
+                self.sort_more.close();
+            }
+        }
+        match chosen {
+            Some(ASCENDING) if descending => self.sort_by(sorted, false),
+            Some(DESCENDING) if !descending => self.sort_by(sorted, true),
+            Some(id) if id >= 100 => {
+                if let Some(column) = Column::ALL.get((id - 100) as usize).copied()
+                    && column != sorted
+                {
+                    self.sort_by(column, column.descending_first());
+                }
+            }
+            _ => {}
+        }
+    }
+    fn sort_by(&mut self, column: Column, descending: bool) {
         self.columns.applied = None;
         if let Some(sort) = column.core_sort() {
             self.columns.settings.sort = None;
@@ -1631,9 +1816,14 @@ impl Pane {
                 Some(error) => crate::friendly::present("Couldn't calculate this value", error),
                 None => crate::friendly::with_detail(
                     "Some items couldn't be read or counted, so this number may be lower than the real one.",
-                    &format!("Incomplete recursive coverage: {} unreadable, {} links, {} offline, {} depth limits, {} entry limits. Shown counts and bytes are lower bounds.",
-                        stats.issues.unreadable, stats.issues.skipped_reparse, stats.issues.skipped_offline,
-                        stats.issues.depth_limited, stats.issues.entry_limited),
+                    &format!(
+                        "Incomplete recursive coverage: {} unreadable, {} links, {} offline, {} depth limits, {} entry limits. Shown counts and bytes are lower bounds.",
+                        stats.issues.unreadable,
+                        stats.issues.skipped_reparse,
+                        stats.issues.skipped_offline,
+                        stats.issues.depth_limited,
+                        stats.issues.entry_limited
+                    ),
                 ),
             }
         } else if busy {
@@ -2284,5 +2474,98 @@ mod tests {
                 .visible
         );
         assert!(settings.columns.iter().all(|c| c.width.is_finite()));
+    }
+
+    #[test]
+    fn sort_menu_sorts_by_shown_and_more_columns_and_keeps_the_direction() {
+        let engine = Engine::with_options(
+            Arc::new(|| {}),
+            foldex_core::EngineOptions {
+                poll_interval: None,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let mut pane = Pane::dormant(723, &engine, PathBuf::from("virtual-columns-fixture"));
+        let ctx = egui::Context::default();
+        let t = Theme {
+            reduced_motion: true,
+            ..Default::default()
+        };
+        t.apply(&ctx);
+        pane.sort_anchor = Rect::from_min_size(pos2(500.0, 10.0), vec2(30.0, 30.0));
+        let mut frame = 0_u64;
+        let mut draw = |pane: &mut Pane, events: Vec<egui::Event>| {
+            frame += 1;
+            ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(1100.0, 700.0))),
+                    time: Some(frame as f64 / 60.0),
+                    events,
+                    ..Default::default()
+                },
+                |ui| pane.sort_menu_ui(ui.ctx(), &t),
+            )
+            .drop_without_applying_deltas();
+        };
+        let click =
+            |pane: &mut Pane, draw: &mut dyn FnMut(&mut Pane, Vec<egui::Event>), at: Pos2| {
+                let button = |pressed| egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                draw(pane, vec![egui::Event::PointerMoved(at)]);
+                draw(pane, vec![button(true)]);
+                draw(pane, vec![button(false)]);
+                draw(pane, vec![]);
+            };
+        let id =
+            |column: Column| 100 + Column::ALL.iter().position(|c| *c == column).unwrap() as u32;
+        pane.catalog_open_sort(&ctx, false);
+        draw(&mut pane, vec![]);
+        draw(&mut pane, vec![]);
+
+        // A numeric column starts with the largest values, like Explorer.
+        let size = pane.sort_menu.item_rect(id(Column::Size)).unwrap();
+        click(&mut pane, &mut draw, size.center());
+        assert_eq!(pane.columns.settings.sort, Some((Column::Size, true)));
+        assert!(!pane.sort_menu.open);
+
+        // Ascending keeps the column and flips only the direction.
+        pane.catalog_open_sort(&ctx, false);
+        draw(&mut pane, vec![]);
+        draw(&mut pane, vec![]);
+        let ascending = pane.sort_menu.item_rect(2).unwrap();
+        click(&mut pane, &mut draw, ascending.center());
+        assert_eq!(pane.columns.settings.sort, Some((Column::Size, false)));
+
+        // A hidden column is picked from the More flyout.
+        pane.catalog_open_sort(&ctx, false);
+        draw(&mut pane, vec![]);
+        draw(&mut pane, vec![]);
+        let more = pane.sort_menu.item_rect(1).unwrap();
+        click(&mut pane, &mut draw, more.center());
+        assert!(pane.sort_menu.open && pane.sort_more.open);
+        draw(&mut pane, vec![]);
+        let created = pane.sort_more.item_rect(id(Column::Created)).unwrap();
+        assert!(!pane.sort_menu.rect().intersects(created.shrink(1.0)));
+        click(&mut pane, &mut draw, created.center());
+        assert_eq!(
+            (pane.sorted_column(), pane.sort_descending()),
+            (Column::Created, true)
+        );
+        assert!(!pane.sort_menu.open && !pane.sort_more.open);
+
+        // Name is a folder query sort rather than a calculated one.
+        pane.catalog_open_sort(&ctx, false);
+        draw(&mut pane, vec![]);
+        draw(&mut pane, vec![]);
+        let name = pane.sort_menu.item_rect(id(Column::Name)).unwrap();
+        click(&mut pane, &mut draw, name.center());
+        assert_eq!(pane.columns.settings.sort, None);
+        assert_eq!(pane.query.sort, SortColumn::Name);
+        assert!(!pane.query.descending);
     }
 }

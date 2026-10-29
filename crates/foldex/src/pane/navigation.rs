@@ -157,6 +157,7 @@ impl Pane {
         self.breadcrumb_anchor = None;
         self.breadcrumb_menu.menu.close();
         self.more_menu.close();
+        self.close_sort_menu();
         self.zoom_open = false;
         self.marquee = None;
         self.focus_visual = None;

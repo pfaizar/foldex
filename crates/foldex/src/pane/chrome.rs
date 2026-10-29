@@ -178,6 +178,22 @@ impl Pane {
                 actions.push(Action::Bookmark(self.path.clone()));
             }
             right = bookmark.left() - m.gap;
+            // Sorting is available in every view mode, not only from the
+            // Details headers. Home and This PC are pages without a listing.
+            if !self.is_virtual() || self.is_recycle_bin() {
+                let sort = bookmark.translate(vec2(-m.control, 0.0));
+                self.sort_anchor = sort;
+                let open = self.sort_menu_open();
+                let response =
+                    icon_button_at(ui, sort, Id::new((self.id, "sort")), t, Icon::Sort, open);
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, ui.is_enabled(), "Sort")
+                });
+                if response.on_hover_text("Sort").clicked() {
+                    self.toggle_sort_menu(ui.ctx(), sort);
+                }
+                right = sort.left() - m.gap;
+            }
         }
         let mut recycle_controls = (Rect::NOTHING, Rect::NOTHING);
         if self.is_recycle_bin() {
@@ -302,6 +318,7 @@ impl Pane {
                 actions.push(action);
             }
         }
+        self.sort_menu_ui(ui.ctx(), t);
         PaneChrome {
             toolbar,
             footer,

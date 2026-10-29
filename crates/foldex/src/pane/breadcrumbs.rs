@@ -171,6 +171,8 @@ impl Pane {
                 .nth(self.breadcrumbs.len() - 1 - index)
         {
             self.more_menu.close();
+            self.sort_menu.close();
+            self.sort_more.close();
             self.zoom_open = false;
             self.breadcrumb_menu.target = Some((path.to_path_buf(), trigger, anchor));
             self.breadcrumb_menu.menu.open = false;

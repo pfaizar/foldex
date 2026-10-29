@@ -71,6 +71,7 @@ pub enum Icon {
     Window,
     Calculator,
     Filter,
+    Sort,
 }
 
 pub fn icon(p: &egui::Painter, center: Pos2, icon: Icon, color: Color32, size: f32) {
@@ -114,6 +115,15 @@ pub fn icon(p: &egui::Painter, center: Pos2, icon: Icon, color: Color32, size: f
             }
         }
         Icon::Empty => {}
+        Icon::Sort => {
+            // Ascending and descending arrows, side by side.
+            line((0.3, 0.86), (0.3, 0.14));
+            line((0.12, 0.32), (0.3, 0.14));
+            line((0.3, 0.14), (0.48, 0.32));
+            line((0.7, 0.14), (0.7, 0.86));
+            line((0.52, 0.68), (0.7, 0.86));
+            line((0.7, 0.86), (0.88, 0.68));
+        }
         Icon::Filter => {
             p.add(egui::Shape::closed_line(
                 vec![

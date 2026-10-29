@@ -248,6 +248,9 @@ pub struct Pane {
     search_elapsed: Duration,
     more_menu: foldex_ui::components::MenuState,
     more_anchor: Rect,
+    sort_menu: foldex_ui::components::MenuState,
+    sort_more: foldex_ui::components::MenuState,
+    sort_anchor: Rect,
     marquee: Option<Marquee>,
     search: Option<SearchClient>,
     active: bool,
@@ -452,6 +455,8 @@ impl Pane {
 
     pub fn has_popup(&self) -> bool {
         self.more_menu.active()
+            || self.sort_menu.active()
+            || self.sort_more.active()
             || self.breadcrumb_menu.menu.active()
             || self.zoom_open
             || self.zoom_height > 0.25
@@ -616,6 +621,9 @@ impl Pane {
             search_elapsed: Duration::ZERO,
             more_menu: Default::default(),
             more_anchor: Rect::ZERO,
+            sort_menu: Default::default(),
+            sort_more: Default::default(),
+            sort_anchor: Rect::ZERO,
             marquee: None,
             search: None,
             active: false,
@@ -1011,6 +1019,7 @@ impl Pane {
         self.query.conditions = Default::default();
         self.query.kind = foldex_core::KindFilter::All;
         self.more_menu.close();
+        self.close_sort_menu();
         self.breadcrumb_menu.menu.close();
         self.zoom_open = false;
         self.marquee = None;

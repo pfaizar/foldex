@@ -500,6 +500,15 @@ impl Pane {
                         self.visible_rows.clone(),
                         active,
                     );
+                } else if self.calculated_sort() {
+                    // Icons and lists follow a Size or count sort without
+                    // calculating values for columns they do not show.
+                    self.request_column_values(
+                        ui.ctx(),
+                        &columns.sort_only(),
+                        self.visible_rows.clone(),
+                        active,
+                    );
                 } else {
                     self.columns.cancel(self.id);
                 }
