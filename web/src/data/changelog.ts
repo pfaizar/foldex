@@ -12,6 +12,55 @@ export interface Release {
 
 export const releases: Release[] = [
   {
+    version: '0.1.5',
+    date: '2026-10-30',
+    title: 'Rename in place, one Sort menu',
+    summary:
+      'Items rename where they sit, This PC joins the sidebar, and one Sort button works in every view.',
+    changes: [
+      {
+        kind: 'new',
+        text: 'Rename and create items inline. Press F2, click a selected name again, or use New folder, New file and shell templates; Enter saves, Esc cancels and Tab moves on. Explorer\u2019s naming rules apply.',
+      },
+      {
+        kind: 'new',
+        text: 'A This PC page lists every drive as a card with its free space, and going up from a drive root opens it.',
+      },
+      {
+        kind: 'new',
+        text: 'A Sort button on the toolbar sorts every view, including icon and list views, with hidden columns under More and Ascending or Descending.',
+      },
+      {
+        kind: 'new',
+        text: 'Choose where launcher folders open: the current tab, a new tab or a new window.',
+      },
+      {
+        kind: 'improved',
+        text: 'Every dialog shares one layout: one primary action on the right, status on the left, and a dimmed window behind.',
+      },
+      {
+        kind: 'improved',
+        text: 'Errors are written in plain language. Developer Mode adds the raw detail and unlocks Performance Details and an Error Log shortcut.',
+      },
+      {
+        kind: 'improved',
+        text: 'The default color scheme is neutral, folders and destructive actions keep their color, and the old palette is available as Classic.',
+      },
+      {
+        kind: 'improved',
+        text: 'The footer is a bar with a view-size wedge, and calculator answers sit in one compact launcher row.',
+      },
+      {
+        kind: 'fixed',
+        text: 'Explorer controls no longer flicker while the launcher is open, and go-to rows stay visible when a folder is listed again.',
+      },
+      {
+        kind: 'fixed',
+        text: 'After an update, Foldex restarts without an inherited Redirection Guard policy that broke user junctions such as nvm, scoop and pnpm links.',
+      },
+    ],
+  },
+  {
     version: '0.1.4',
     date: '2026-10-26',
     title: 'Faster search, bigger folders',
