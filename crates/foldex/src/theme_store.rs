@@ -103,7 +103,12 @@ impl Library {
                 self.busy = true;
                 self.send(Request::List);
             }
-            Err(error) => self.status = Some(failed("Couldn't open the theme library", &error.to_string())),
+            Err(error) => {
+                self.status = Some(failed(
+                    "Couldn't open the theme library",
+                    &error.to_string(),
+                ))
+            }
         }
     }
     fn send(&mut self, request: Request) -> bool {
@@ -182,7 +187,10 @@ impl Library {
             }
             Err(error) => {
                 self.preferences_error = Some(error.to_string());
-                self.status = Some(failed("Couldn't save your appearance settings", &error.to_string()));
+                self.status = Some(failed(
+                    "Couldn't save your appearance settings",
+                    &error.to_string(),
+                ));
             }
         }
     }

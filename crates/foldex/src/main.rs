@@ -143,7 +143,10 @@ fn main() -> eframe::Result {
                 .unwrap_or_default()
         });
     let _running_installation = installation::claim(&exe_dir).map_err(|error| {
-        installation::show_error(&friendly::simple("Foldex couldn't start", &error.to_string()));
+        installation::show_error(&friendly::simple(
+            "Foldex couldn't start",
+            &error.to_string(),
+        ));
         eframe::Error::AppCreation(Box::new(error))
     })?;
     let state_dir = startup_transfer

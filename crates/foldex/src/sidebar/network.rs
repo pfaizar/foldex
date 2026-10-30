@@ -378,7 +378,9 @@ impl Data {
                             self.loaded = true;
                             self.error = None;
                         }
-                        Err(error) => self.error = Some(crate::friendly::present(NETWORK_FAILED, &error)),
+                        Err(error) => {
+                            self.error = Some(crate::friendly::present(NETWORK_FAILED, &error))
+                        }
                     }
                 }
             }
@@ -395,7 +397,9 @@ impl Data {
                 self.action = None;
                 match outcome {
                     Ok(refresh) => self.requested |= refresh && active,
-                    Err(error) => self.error = Some(crate::friendly::present(NETWORK_FAILED, &error)),
+                    Err(error) => {
+                        self.error = Some(crate::friendly::present(NETWORK_FAILED, &error))
+                    }
                 }
             }
         }

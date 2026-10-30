@@ -2202,12 +2202,8 @@ mod tests {
         crate::friendly::set_developer_mode(false);
         let mut popup = OptionsPopup::default();
         popup.open(0);
-        let listed = |popup: &OptionsPopup, id| {
-            popup
-                .rows
-                .iter()
-                .any(|(index, _)| OPTIONS[*index].id == id)
-        };
+        let listed =
+            |popup: &OptionsPopup, id| popup.rows.iter().any(|(index, _)| OPTIONS[*index].id == id);
         assert!(listed(&popup, OptionId::DeveloperMode));
         assert!(!listed(&popup, OptionId::PerformanceDetails));
         assert!(!listed(&popup, OptionId::ErrorLog));

@@ -27,9 +27,7 @@ impl SearchLocation {
             || self.scope.as_os_str().as_encoded_bytes().contains(&0)
             || self.query.text.len() > 1024
         {
-            return Err(
-                "Search needs a full folder path and a shorter search text".into(),
-            );
+            return Err("Search needs a full folder path and a shorter search text".into());
         }
         self.query.conditions.validate()
     }
