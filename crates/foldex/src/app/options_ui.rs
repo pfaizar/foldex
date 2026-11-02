@@ -38,6 +38,7 @@ enum OptionId {
     LoadThemes,
     ExportTheme,
     DefaultExplorer,
+    StartWithWindows,
     Updates,
     LauncherBackground,
     LauncherClipboard,
@@ -152,6 +153,11 @@ const OPTIONS: &[Definition] = &[
         id: OptionId::DefaultExplorer,
         title: "Default File Explorer",
         description: "Open folders, drives and Win+E in Foldex. Turn off to restore.",
+    },
+    Definition {
+        id: OptionId::StartWithWindows,
+        title: "Start with Windows",
+        description: "Start Foldex quietly in the system tray when you sign in.",
     },
     Definition {
         id: OptionId::Updates,
@@ -381,6 +387,7 @@ pub(super) struct OptionsResponse {
     pub save: bool,
     pub closed: bool,
     pub integration: Option<IntegrationRequest>,
+    pub autostart: Option<AutostartRequest>,
     pub sidebar_changed: bool,
     pub updates: bool,
     pub developer: Option<DeveloperAction>,
@@ -388,6 +395,12 @@ pub(super) struct OptionsResponse {
 
 #[derive(Clone, Copy)]
 pub(super) struct IntegrationRequest {
+    pub id: u64,
+    pub enabled: Option<bool>,
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct AutostartRequest {
     pub id: u64,
     pub enabled: Option<bool>,
 }
@@ -422,6 +435,12 @@ pub(super) struct OptionsPopup {
     integration_target: Option<bool>,
     integration_status: Option<crate::integration::Status>,
     integration_error: Option<String>,
+    autostart_sequence: u64,
+    autostart_request: Option<AutostartRequest>,
+    autostart_pending: bool,
+    autostart_target: Option<bool>,
+    autostart_status: Option<bool>,
+    autostart_error: Option<String>,
     developer_action: Option<DeveloperAction>,
     refilter_pending: bool,
     launcher_options: LauncherOptions,
@@ -470,6 +489,12 @@ impl Default for OptionsPopup {
             integration_target: None,
             integration_status: None,
             integration_error: None,
+            autostart_sequence: 0,
+            autostart_request: None,
+            autostart_pending: false,
+            autostart_target: None,
+            autostart_status: None,
+            autostart_error: None,
             developer_action: None,
             refilter_pending: false,
             launcher_options: LauncherOptions::default(),
@@ -557,9 +582,42 @@ impl OptionsPopup {
             }
         }
     }
+
+    fn request_autostart(&mut self, enabled: Option<bool>) {
+        self.autostart_sequence = self.autostart_sequence.wrapping_add(1);
+        self.autostart_request = Some(AutostartRequest {
+            id: self.autostart_sequence,
+            enabled,
+        });
+        self.autostart_pending = true;
+        self.autostart_target = enabled;
+        self.autostart_error = None;
+    }
+    pub(super) fn finish_autostart(&mut self, id: u64, result: Result<bool, String>) {
+        if id != self.autostart_sequence {
+            return;
+        }
+        self.autostart_pending = false;
+        self.autostart_target = None;
+        match result {
+            Ok(enabled) => {
+                self.autostart_status = Some(enabled);
+                self.autostart_error = None;
+            }
+            Err(error) => {
+                self.autostart_error = Some(crate::friendly::present(
+                    "Couldn't change the startup setting",
+                    &error,
+                ));
+            }
+        }
+    }
     fn open(&mut self, frame: u64) {
         if !self.integration_pending {
             self.request_integration(None);
+        }
+        if !self.autostart_pending {
+            self.request_autostart(None);
         }
         self.scheme_menu = Default::default();
         self.color_picker = Default::default();
@@ -847,11 +905,14 @@ impl OptionsPopup {
                 } else {
                     self.selected
                 };
-                if target == Some(OptionId::DefaultExplorer) && self.integration_pending {
+                if (target == Some(OptionId::DefaultExplorer) && self.integration_pending)
+                    || (target == Some(OptionId::StartWithWindows) && self.autostart_pending)
+                {
+                    let pending = target.unwrap();
                     let at = self
                         .rows
                         .iter()
-                        .position(|(at, _)| OPTIONS[*at].id == OptionId::DefaultExplorer);
+                        .position(|(at, _)| OPTIONS[*at].id == pending);
                     target = at
                         .and_then(|at| {
                             if backwards {
@@ -1416,6 +1477,7 @@ impl OptionsPopup {
             ctx.request_repaint();
         }
         result.integration = self.integration_request.take();
+        result.autostart = self.autostart_request.take();
         result.developer = self.developer_action.take();
         result.sidebar_changed = std::mem::take(&mut self.sidebar_changed);
         if result.sidebar_changed {
@@ -1636,6 +1698,55 @@ impl OptionsPopup {
                         response.on_hover_text("Some Windows registrations changed. Turn off to restore Foldex's remaining registrations.");
                     }
                     // This changes the Windows registration, not Theme preferences.
+                    return false;
+                }
+                OptionId::StartWithWindows => {
+                    if self.autostart_pending {
+                        let mut enabled = self
+                            .autostart_target
+                            .or(self.autostart_status)
+                            .unwrap_or(false);
+                        ui.disable();
+                        foldex_ui::components::checkbox(
+                            ui,
+                            paint,
+                            &mut enabled,
+                            if self.autostart_target.is_some() {
+                                "Updating…"
+                            } else {
+                                "Checking…"
+                            },
+                        );
+                        return false;
+                    }
+                    if let Some(error) = &self.autostart_error {
+                        let response = foldex_ui::components::text_button_at(
+                            ui,
+                            rect,
+                            ui.id().with("autostart-retry"),
+                            paint,
+                            "Retry",
+                            false,
+                        )
+                        .on_hover_text(error.as_str());
+                        self.control_focus(ui, option, &response);
+                        if response.clicked() || activate {
+                            self.request_autostart(None);
+                        }
+                        return false;
+                    }
+                    let mut enabled = self.autostart_status.unwrap_or(false);
+                    let label = if enabled { "On" } else { "Off" };
+                    let response = foldex_ui::components::checkbox(ui, paint, &mut enabled, label);
+                    self.control_focus(ui, option, &response);
+                    if activate {
+                        enabled = !enabled;
+                    }
+                    if response.changed() || activate {
+                        self.request_autostart(Some(enabled));
+                        self.selected = Some(option);
+                    }
+                    // This changes the Windows login registration, not Theme preferences.
                     return false;
                 }
                 OptionId::FontSize | OptionId::InspectorFontSize => {
@@ -1906,6 +2017,9 @@ mod tests {
                     if next.integration.is_some() {
                         response.integration = next.integration;
                     }
+                    if next.autostart.is_some() {
+                        response.autostart = next.autostart;
+                    }
                 }
             },
         );
@@ -2146,6 +2260,43 @@ mod tests {
         );
         popup.finish_integration(off.id, Ok(crate::integration::Status::default()));
         assert!(!popup.integration_pending);
+        assert_eq!(theme.write().unwrap(), original);
+    }
+
+    #[test]
+    fn start_with_windows_switch_requests_background_changes_without_saving_theme() {
+        let ctx = egui::Context::default();
+        let mut popup = OptionsPopup::default();
+        let mut theme = Theme {
+            reduced_motion: true,
+            ..Default::default()
+        };
+        let original = theme.write().unwrap();
+        let (opened, _) = pump(&mut popup, &mut theme, &ctx, 0, vec![]);
+        let inspect = opened
+            .autostart
+            .expect("opening Options must inspect the live startup state");
+        assert_eq!(inspect.enabled, None);
+        popup.finish_autostart(inspect.id, Ok(false));
+        popup.query = "start with windows".into();
+        popup.refilter();
+        for frame in 1..6 {
+            pump(&mut popup, &mut theme, &ctx, frame, vec![]);
+        }
+        let (enabled, _) = pump(&mut popup, &mut theme, &ctx, 6, vec![key(Key::Enter)]);
+        let request = enabled
+            .autostart
+            .expect("Enter must activate the visible switch");
+        assert_eq!(request.enabled, Some(true));
+        assert!(!enabled.apply && !enabled.save);
+        let (busy, _) = pump(&mut popup, &mut theme, &ctx, 7, vec![key(Key::Enter)]);
+        assert!(busy.autostart.is_none(), "pending changes must not pile up");
+        popup.finish_autostart(request.id, Ok(true));
+        let (disabled, _) = pump(&mut popup, &mut theme, &ctx, 8, vec![key(Key::Enter)]);
+        let off = disabled.autostart.unwrap();
+        assert_eq!(off.enabled, Some(false));
+        assert!(!disabled.apply && !disabled.save);
+        popup.finish_autostart(off.id, Ok(false));
         assert_eq!(theme.write().unwrap(), original);
     }
 

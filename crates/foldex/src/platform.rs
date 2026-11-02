@@ -51,6 +51,10 @@ pub enum Job {
         id: u64,
         enabled: Option<bool>,
     },
+    Autostart {
+        id: u64,
+        enabled: Option<bool>,
+    },
     Open(PathBuf),
     /// Open Windows Folder Options only after an explicit pane-menu action.
     FolderOptions,
@@ -128,6 +132,7 @@ impl Job {
     pub fn failure_context(&self) -> &'static str {
         match self {
             Job::ExplorerIntegration { .. } => "Couldn't change the Windows Explorer setting",
+            Job::Autostart { .. } => "Couldn't change the startup setting",
             Job::Open(_) => "Couldn't open that item",
             Job::FolderOptions => "Couldn't open Folder Options",
             Job::Properties(_) => "Couldn't open Properties",
@@ -185,6 +190,10 @@ pub enum Event {
     ExplorerIntegration {
         id: u64,
         result: Result<crate::integration::Status, String>,
+    },
+    Autostart {
+        id: u64,
+        result: Result<bool, String>,
     },
     Done {
         message: String,
@@ -252,6 +261,7 @@ pub struct Platform {
     owner: Arc<AtomicIsize>,
     integration_events: SyncSender<Event>,
     integration_busy: Arc<AtomicBool>,
+    autostart_busy: Arc<AtomicBool>,
     pending_jobs: Arc<AtomicU64>,
     launcher_busy: Arc<AtomicBool>,
     integration_wake: Wake,
@@ -354,6 +364,7 @@ impl Platform {
             owner,
             integration_events,
             integration_busy: Arc::new(AtomicBool::new(false)),
+            autostart_busy: Arc::new(AtomicBool::new(false)),
             pending_jobs,
             launcher_busy: Arc::new(AtomicBool::new(false)),
             integration_wake,
@@ -379,6 +390,7 @@ impl Platform {
         self.pending_jobs.load(Ordering::Acquire) != 0
             || self.properties.is_busy()
             || self.integration_busy.load(Ordering::Acquire)
+            || self.autostart_busy.load(Ordering::Acquire)
             || self.history.state().busy
     }
 
@@ -462,6 +474,32 @@ impl Platform {
                     });
                 if let Err(error) = result {
                     self.integration_busy.store(false, Ordering::Release);
+                    return Err(error.to_string());
+                }
+                return Ok(());
+            }
+            Job::Autostart { id, enabled } => {
+                if self.autostart_busy.swap(true, Ordering::AcqRel) {
+                    return Err("The startup setting is busy. Try again.".into());
+                }
+                let events = self.integration_events.clone();
+                let busy = self.autostart_busy.clone();
+                let wake = self.integration_wake.clone();
+                let stop = self.stop.clone();
+                let result = thread::Builder::new()
+                    .name("foldex-autostart".into())
+                    .stack_size(256 * 1024)
+                    .spawn(move || {
+                        let result = crate::integration::autostart(enabled);
+                        let delivered = !stop.load(Ordering::Acquire)
+                            && events.send(Event::Autostart { id, result }).is_ok();
+                        busy.store(false, Ordering::Release);
+                        if delivered {
+                            wake();
+                        }
+                    });
+                if let Err(error) = result {
+                    self.autostart_busy.store(false, Ordering::Release);
                     return Err(error.to_string());
                 }
                 return Ok(());
@@ -748,7 +786,10 @@ fn operation_worker(
         let what = job.failure_context();
         let mut outcome = None;
         let (result, refresh) = match job {
-            Job::ExplorerIntegration { .. } | Job::Properties(_) | Job::Launcher { .. } => {
+            Job::ExplorerIntegration { .. }
+            | Job::Autostart { .. }
+            | Job::Properties(_)
+            | Job::Launcher { .. } => {
                 unreachable!("Independent on-demand shell work")
             }
             Job::Metrics { .. }

@@ -1226,6 +1226,12 @@ impl Foldex {
                     }
                     self.options_popup.finish_integration(id, result);
                 }
+                platform::Event::Autostart { id, result } => {
+                    if let Err(error) = &result {
+                        self.toast_error("Couldn't change the startup setting", error);
+                    }
+                    self.options_popup.finish_autostart(id, result);
+                }
                 platform::Event::Done {
                     message,
                     refresh,
@@ -1714,6 +1720,16 @@ impl Foldex {
                     self.options_popup
                         .finish_integration(request.id, Err(error.clone()));
                     self.toast_error("Couldn't change the Windows Explorer setting", &error);
+                }
+            }
+            if let Some(request) = response.autostart {
+                if let Err(error) = self.platform.try_submit(Job::Autostart {
+                    id: request.id,
+                    enabled: request.enabled,
+                }) {
+                    self.options_popup
+                        .finish_autostart(request.id, Err(error.clone()));
+                    self.toast_error("Couldn't change the startup setting", &error);
                 }
             }
             match response.developer {

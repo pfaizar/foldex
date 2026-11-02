@@ -10,6 +10,8 @@ mod windows;
 
 const BACKUP_KEY: &str = r"Software\Foldex\ExplorerIntegration";
 const BACKUP_VALUE: &str = "RestoreV1";
+const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+const RUN_VALUE: &str = "Foldex";
 const CLASSES: &str = r"Software\Classes";
 const WIN_E: &str =
     r"Software\Classes\CLSID\{52205fd8-5dfb-447d-801a-d0b52f2e83e1}\shell\opennewwindow\command";
@@ -122,6 +124,51 @@ fn command(executable: &Path, folder: bool) -> Value {
             "--shell-home"
         }
     ))
+}
+
+#[cfg(windows)]
+fn autostart_command(executable: &Path) -> Value {
+    use std::os::windows::ffi::OsStrExt;
+    let mut line = OsString::from("\"");
+    line.push(shell_path(executable));
+    line.push("\" --background");
+    Value::wide(line.encode_wide())
+}
+#[cfg(not(windows))]
+fn autostart_command(executable: &Path) -> Value {
+    Value::text(&format!("\"{}\" --background", executable.display()))
+}
+
+fn same_command(current: &Value, expected: &Value) -> bool {
+    text_value(current)
+        .ok()
+        .zip(text_value(expected).ok())
+        .is_some_and(|(current, expected)| current.eq_ignore_ascii_case(&expected))
+}
+
+fn inspect_autostart(registry: &impl Registry, executable: &Path) -> Result<bool, String> {
+    let expected = autostart_command(executable);
+    Ok(registry
+        .read(RUN_KEY, RUN_VALUE)?
+        .is_some_and(|current| same_command(&current, &expected)))
+}
+
+fn apply_autostart(
+    registry: &mut impl Registry,
+    executable: &Path,
+    enabled: bool,
+) -> Result<bool, String> {
+    let expected = autostart_command(executable);
+    if enabled {
+        registry.write(RUN_KEY, RUN_VALUE, &expected)?;
+    } else if let Some(current) = registry.read(RUN_KEY, RUN_VALUE)? {
+        // Only remove the command this executable installed. A value owned by
+        // another copy or application is left untouched.
+        if same_command(&current, &expected) {
+            registry.remove(RUN_KEY, RUN_VALUE)?;
+        }
+    }
+    inspect_autostart(registry, executable)
 }
 
 fn plan(executable: &Path) -> Vec<Change> {
@@ -360,6 +407,22 @@ pub fn run(_: Option<bool>) -> Result<Status, String> {
     Err("Default file explorer integration is available on Windows.".into())
 }
 
+#[cfg(windows)]
+pub fn autostart(enabled: Option<bool>) -> Result<bool, String> {
+    let _guard = windows::RegistrationLock::acquire()?;
+    let mut registry = windows::UserRegistry::default();
+    let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+    let executable = std::fs::canonicalize(&executable).unwrap_or(executable);
+    match enabled {
+        Some(enabled) => apply_autostart(&mut registry, &executable, enabled),
+        None => inspect_autostart(&registry, &executable),
+    }
+}
+#[cfg(not(windows))]
+pub fn autostart(_: Option<bool>) -> Result<bool, String> {
+    Err("Start with Windows is available on Windows.".into())
+}
+
 fn text_value(value: &Value) -> Result<String, String> {
     if !matches!(value.kind, 1 | 2) || value.bytes.len() % 2 != 0 || value.bytes.len() > MAX_VALUE {
         return Err("An installer registry value has an unsupported format".into());
@@ -430,6 +493,13 @@ fn uninstall_with(registry: &mut impl Registry, executable: &Path) -> Result<(),
             registry.remove_empty_key(INSTALLER)?;
         }
     }
+    // Only remove the login entry when it still points at this installation.
+    let expected = autostart_command(executable);
+    if let Some(current) = registry.read(RUN_KEY, RUN_VALUE)?
+        && same_command(&current, &expected)
+    {
+        registry.remove(RUN_KEY, RUN_VALUE)?;
+    }
     Ok(())
 }
 
@@ -451,6 +521,40 @@ pub fn uninstall() -> Result<(), String> {
 mod tests {
     use super::*;
     use std::collections::{BTreeMap, BTreeSet};
+
+    #[test]
+    fn autostart_round_trip_writes_a_quiet_login_command_and_removes_only_its_own_value() {
+        let mut registry = MemoryRegistry::default();
+        let executable = Path::new(r"C:\Program Space\Foldex.exe");
+        assert!(!inspect_autostart(&registry, executable).unwrap());
+        assert!(apply_autostart(&mut registry, executable, true).unwrap());
+        let value = registry.read(RUN_KEY, RUN_VALUE).unwrap().unwrap();
+        assert_eq!(
+            text_value(&value).unwrap(),
+            r#""C:\Program Space\Foldex.exe" --background"#
+        );
+        assert!(!apply_autostart(&mut registry, executable, false).unwrap());
+        assert!(registry.read(RUN_KEY, RUN_VALUE).unwrap().is_none());
+
+        let foreign = Value::text(r#""C:\Other\Foldex.exe" --background"#);
+        registry.write(RUN_KEY, RUN_VALUE, &foreign).unwrap();
+        assert!(!apply_autostart(&mut registry, executable, false).unwrap());
+        assert_eq!(registry.read(RUN_KEY, RUN_VALUE).unwrap(), Some(foreign));
+    }
+
+    #[test]
+    fn uninstall_removes_its_autostart_entry_but_preserves_a_foreign_one() {
+        let mut registry = MemoryRegistry::default();
+        let executable = Path::new(r"C:\Apps\Foldex.exe");
+        apply_autostart(&mut registry, executable, true).unwrap();
+        uninstall_with(&mut registry, executable).unwrap();
+        assert!(registry.read(RUN_KEY, RUN_VALUE).unwrap().is_none());
+
+        let foreign = Value::text(r#""C:\Other\Foldex.exe" --background"#);
+        registry.write(RUN_KEY, RUN_VALUE, &foreign).unwrap();
+        uninstall_with(&mut registry, executable).unwrap();
+        assert_eq!(registry.read(RUN_KEY, RUN_VALUE).unwrap(), Some(foreign));
+    }
 
     #[test]
     fn uninstall_owns_commands_even_when_the_executable_was_launched_with_different_case() {

@@ -50,6 +50,7 @@ LicenseFile=..\..\LICENSE
 [Tasks]
 Name: desktopicon; Description: "Create a &desktop shortcut"; Flags: unchecked
 Name: addtopath; Description: "Add Foldex to my &PATH (new terminals)"; Flags: unchecked
+Name: autostart; Description: "Start Foldex quietly when I &sign in"; Flags: checkedonce; Check: FreshInstall
 
 [Files]
 Source: "{#SourceDir}\Foldex.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -69,6 +70,8 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\App Paths\Foldex.
 ; Never use uninsdeletevalue on Environment\Path: it belongs to the user.
 Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; ValueData: "{code:UserPathWithApp}"; Flags: preservestringtype; Check: AddPathNeeded
 Root: HKCU; Subkey: "Software\Foldex\Installer"; ValueType: string; ValueName: "OwnedPath"; ValueData: "{app}"; Flags: uninsdeletevalue uninsdeletekeyifempty; Check: AddPathNeeded
+; The app can change this later; only a fresh installation applies the task.
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "Foldex"; ValueData: """{app}\Foldex.exe"" --background"; Flags: uninsdeletevalue; Check: AutostartNeeded
 
 [Run]
 Filename: "{app}\Foldex.exe"; Description: "Launch Foldex"; Flags: nowait postinstall skipifsilent
@@ -292,6 +295,16 @@ end;
 function AddPathNeeded: Boolean;
 begin
   Result := AddPath;
+end;
+
+function FreshInstall: Boolean;
+begin
+  Result := ExistingDir = '';
+end;
+
+function AutostartNeeded: Boolean;
+begin
+  Result := FreshInstall and WizardIsTaskSelected('autostart');
 end;
 
 function UserPathWithApp(Param: String): String;
