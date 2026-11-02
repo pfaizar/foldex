@@ -12,6 +12,31 @@ export interface Release {
 
 export const releases: Release[] = [
   {
+    version: '0.2.0',
+    date: '2026-11-02',
+    title: 'Start with Windows, smoother scrolling',
+    summary:
+      'Start Foldex when you sign in, and keep folder data ready as you scroll and switch tabs.',
+    changes: [
+      {
+        kind: 'new',
+        text: 'Start Foldex quietly in the tray when you sign in. Turn it on in Options or during a fresh install.',
+      },
+      {
+        kind: 'improved',
+        text: 'Drag a selected item from anywhere across its row. Empty space and unselected rows still start a selection box.',
+      },
+      {
+        kind: 'improved',
+        text: 'Folder sizes and sort results stay ready as you scroll and switch tabs, avoiding repeated background work.',
+      },
+      {
+        kind: 'fixed',
+        text: 'Search notices when a monitored folder is deleted or replaced, even if Windows sends no change event.',
+      },
+    ],
+  },
+  {
     version: '0.1.5',
     date: '2026-10-30',
     title: 'Rename in place, one Sort menu',
