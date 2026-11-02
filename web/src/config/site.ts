@@ -32,13 +32,13 @@ export const site = {
   installer: assets
     ? {
         href: `${assets}/Foldex-${version}-windows-x64-setup.exe`,
-        size: '9.8 MB',
+        size: '9.9 MB',
       }
     : undefined,
   portable: assets
     ? {
         href: `${assets}/Foldex-${version}-windows-x64-portable.zip`,
-        size: '11.4 MB',
+        size: '11.5 MB',
       }
     : undefined,
   license: '/LICENSE.txt',
