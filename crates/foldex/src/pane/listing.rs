@@ -924,16 +924,12 @@ impl Pane {
                         }
                         let name_hit =
                             Rect::from_min_size(text_position, gal.size()).intersect(name_clip);
-                        // Like Explorer, only a selected item's icon and name
-                        // carry it. Anything else, including an unselected item
-                        // and the content's edges, starts a selection
-                        // rectangle, so a full folder can still be drag-selected.
-                        let handle = if grid.mode.is_grid() {
-                            rect
-                        } else {
-                            icon_rect.union(name_hit)
-                        }
-                        .intersect(body.shrink2(vec2(MARQUEE_EDGE * metrics.scale, 0.0)));
+                        // A selected item carries from anywhere on its row. The
+                        // content's edges still start a selection rectangle so
+                        // a full folder can be drag-selected, and an unselected
+                        // item always starts one.
+                        let handle =
+                            rect.intersect(body.shrink2(vec2(MARQUEE_EDGE * metrics.scale, 0.0)));
                         let on_handle =
                             |point: Option<Pos2>| point.is_some_and(|point| handle.contains(point));
                         let carried = !recycle_bin && selected;
@@ -1832,20 +1828,20 @@ mod tests {
     }
 
     #[test]
-    fn a_selected_item_outside_its_icon_and_name_starts_a_selection_rectangle() {
+    fn a_selected_item_drags_from_empty_space_on_its_row() {
         let engine = Engine::new(Arc::new(|| {})).unwrap();
-        // Details: another column of the row, then the listing's left edge.
+        // Details: another column of the row, then the empty area left of it.
         for at in [
             |rect: Rect| pos2(rect.right() - 20.0, rect.center().y),
-            |rect: Rect| pos2(rect.left() + 2.0, rect.center().y),
+            |rect: Rect| pos2(rect.left() + 40.0, rect.center().y),
         ] {
             let (mut pane, mut input) = drag_fixture(952, &engine, 0.0);
             pane.selected.select(0, 2);
             pane.sync_selection();
             let point = at(input.item_rect(&pane, 1));
             let actions = press_and_drag(&mut pane, &mut input, point);
-            assert!(dragged_files(actions).is_none());
-            assert!(pane.marquee.as_ref().is_some_and(|drag| drag.active));
+            assert!(dragged_files(actions).is_some());
+            assert!(pane.marquee.is_none());
         }
     }
 
