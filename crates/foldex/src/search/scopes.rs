@@ -10,6 +10,7 @@ const IDLE_SCOPE_CACHE: usize = 8;
 const MAX_SCANS: usize = 2;
 const CHANGE_QUIET: Duration = Duration::from_millis(120);
 const WATCH_RETRY: Duration = Duration::from_secs(5);
+const ROOT_RECHECK: Duration = Duration::from_secs(1);
 const REBUILD_SPACING: Duration = Duration::from_secs(1);
 
 #[derive(Default)]
@@ -143,24 +144,38 @@ struct Monitor {
     signal: Arc<Signal>,
     _watch: Watch,
     root_id: Option<foldex_fs::capabilities::DirectoryId>,
+    start: Instant,
     verified: AtomicU64,
+    checked: AtomicU64,
 }
 impl Monitor {
     fn native(&self) -> bool {
         matches!(self._watch, Watch::Native { .. })
     }
     /// Windows sends no event for the watched folder itself, so a deleted or replaced root is
-    /// found by identity whenever new changes arrive.
+    /// found by identity whenever new changes arrive, and at least once per recheck interval
+    /// because a replaced root produces no events of its own.
     fn verify_root(&self, root: &Path) {
         let revision = self.signal.revision.load(Ordering::Acquire);
-        if self.verified.swap(revision, Ordering::AcqRel) == revision {
+        let elapsed = self.start.elapsed().as_millis() as u64;
+        if self.verified.load(Ordering::Acquire) == revision
+            && elapsed.saturating_sub(self.checked.load(Ordering::Acquire))
+                < ROOT_RECHECK.as_millis() as u64
+        {
             return;
         }
-        if self.root_id.is_some()
-            && foldex_fs::capabilities::directory_identity(root).ok() != self.root_id
+        self.verified.store(revision, Ordering::Release);
+        self.checked.store(elapsed, Ordering::Release);
+        // A monitor built while the root was missing never attached, so it must keep retrying
+        // instead of trusting an identity it never had.
+        if self.root_id.is_none()
+            || foldex_fs::capabilities::directory_identity(root).ok() != self.root_id
         {
             self.signal.healthy.store(false, Ordering::Release);
         }
+    }
+    fn next_check(&self) -> Instant {
+        self.start + Duration::from_millis(self.checked.load(Ordering::Acquire)) + ROOT_RECHECK
     }
 }
 impl Monitor {
@@ -228,7 +243,9 @@ impl Monitor {
             signal,
             _watch: watch,
             root_id: foldex_fs::capabilities::directory_identity(root).ok(),
+            start: Instant::now(),
             verified: AtomicU64::new(0),
+            checked: AtomicU64::new(0),
         }
     }
 }
@@ -1027,6 +1044,7 @@ impl Scopes {
                             || !scope.monitor.native())
                         .then_some(scope.retried + WATCH_RETRY),
                     )
+                    .chain(std::iter::once(scope.monitor.next_check()))
             })
             .min()
     }
