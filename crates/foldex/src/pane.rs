@@ -662,9 +662,6 @@ impl Pane {
             self.loading = false;
         }
         self.active = active;
-        if !active {
-            self.columns.cancel(self.id);
-        }
         self.browser
             .set_active(active && !self.recursive && !self.is_virtual());
         if let Some(search) = &self.search {

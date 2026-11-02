@@ -50,14 +50,16 @@ impl ValueKey {
     }
 }
 
-/// At most the previous viewport (128 rows) is retained. Match exact raw paths
-/// and metadata revisions, never row positions or lossy display names.
-fn remap_rows(rows: &mut HashMap<u32, worker::RowValues>, snapshot: &Snapshot, visible: &[u32]) {
+/// Keep every previously computed row that still belongs to this snapshot.
+/// Matching uses exact raw paths and metadata revisions, never row positions or
+/// lossy display names. Retaining offscreen rows is what keeps scrolling and
+/// tab switches from repeating metadata or folder walks.
+fn remap_rows(rows: &mut HashMap<u32, worker::RowValues>, snapshot: &Snapshot, indices: &[u32]) {
     let mut previous = std::mem::take(rows)
         .into_values()
         .filter_map(|mut values| values.key.take().map(|key| (key, values)))
         .collect::<HashMap<_, _>>();
-    for &index in visible.iter().take(128) {
+    for &index in indices {
         let Some(entry) = snapshot.entries.get(index as usize) else {
             continue;
         };
@@ -1580,8 +1582,13 @@ impl Pane {
             self.columns.revision = self.render_epoch;
             self.columns.base_indices = self.indices.clone();
             self.columns.applied = None;
+            let retained: &[u32] = if self.recursive {
+                &visible
+            } else {
+                self.columns.base_indices.as_ref()
+            };
             let output = Arc::make_mut(&mut self.columns.output);
-            remap_rows(&mut output.rows, &snapshot, &visible);
+            remap_rows(&mut output.rows, &snapshot, retained);
             output.order = None;
             output.remap = None;
             output.busy = (layout.cells.iter().any(|cell| cell.column.needs_folders())

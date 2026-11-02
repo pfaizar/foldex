@@ -6,7 +6,7 @@ use foldex_folder_stats::{
 };
 use std::{
     cmp::Ordering,
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     ffi::OsString,
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
@@ -317,7 +317,12 @@ impl Job {
         let mut folders = HashMap::new();
         if !input.refresh && restore_presented {
             output.rows = input.presented.rows.clone();
-            remap_rows(&mut output.rows, &input.snapshot, &input.visible);
+            let retained: &[u32] = if input.indices.is_empty() {
+                &input.visible
+            } else {
+                input.indices.as_ref()
+            };
+            remap_rows(&mut output.rows, &input.snapshot, retained);
             for (&index, values) in &output.rows {
                 if let Some(stats) = &values.folder {
                     folders.insert(index, stats.clone());
@@ -564,7 +569,12 @@ impl Job {
                                 })
                         })
                         .collect::<HashMap<_, _>>();
-                    for &index in &next.input.visible {
+                    let retained: &[u32] = if next.input.indices.is_empty() {
+                        &next.input.visible
+                    } else {
+                        next.input.indices.as_ref()
+                    };
+                    for &index in retained {
                         if let Some(entry) = next.input.snapshot.entries.get(index as usize) {
                             if let Some(stats) =
                                 previous.get(&ValueKey::of(&next.input.snapshot, entry))
@@ -573,11 +583,7 @@ impl Job {
                             }
                         }
                     }
-                    remap_rows(
-                        &mut self.output.rows,
-                        &next.input.snapshot,
-                        &next.input.visible,
-                    );
+                    remap_rows(&mut self.output.rows, &next.input.snapshot, retained);
                     next.output.rows = std::mem::take(&mut self.output.rows);
                 }
                 next.apply_filesystem_changes(self.input.data_revision);
@@ -604,8 +610,6 @@ impl Job {
         if !self.dirty {
             return;
         }
-        let visible: HashSet<u32> = self.input.visible.iter().copied().collect();
-        self.output.rows.retain(|index, _| visible.contains(index));
         for &index in &self.input.visible {
             let Some(entry) = self.input.snapshot.entries.get(index as usize) else {
                 continue;
@@ -709,13 +713,6 @@ impl Job {
                 ));
             }
         }
-        let retained = self
-            .requests
-            .iter()
-            .filter_map(|(index, _)| *index)
-            .chain(self.input.visible.iter().copied())
-            .collect::<HashSet<_>>();
-        self.folders.retain(|index, _| retained.contains(index));
         self.output.busy = self.input.folders
             && self.input.visible.iter().any(|index| {
                 self.input
@@ -1459,6 +1456,36 @@ mod tests {
         assert_eq!(refreshed.requests.len(), 1);
     }
     #[test]
+    fn lease_recreation_keeps_rows_scrolled_out_of_view() {
+        let mut job = Job::new(input(folders(
+            vec![
+                Entry::from_name("a", true, 0, 1),
+                Entry::from_name("b", true, 0, 1),
+                Entry::from_name("c", true, 0, 1),
+            ],
+            false,
+        )));
+        complete(&mut job);
+        let retained = job.folders[&0].clone();
+        let mut scrolled = job.input.clone();
+        scrolled.visible = vec![2];
+        job.update(scrolled);
+        job.prepare();
+        let mut next = job.input.clone();
+        next.presented = Arc::new(job.output.clone());
+        next.sort = Some((Column::Files, false));
+        let mut recreated = Job::new(next);
+        recreated.prepare();
+        recreated.finish_sort();
+        assert!(recreated.requests.is_empty());
+        assert_eq!(recreated.pending_keys, 0);
+        assert!(Arc::ptr_eq(
+            &retained,
+            recreated.output.rows[&0].folder.as_ref().unwrap()
+        ));
+    }
+
+    #[test]
     fn source_revision_ignores_enumeration_order_and_access_time_but_detects_content_changes() {
         let a = Entry::from_name("a", true, 0, 1);
         let b = Entry::from_name("b", false, 39, 2);
@@ -1762,11 +1789,37 @@ mod tests {
         assert_eq!(job.pending_keys, 0);
         assert_eq!(
             job.folders.len(),
-            1,
-            "completed offscreen snapshots stay bounded"
+            96,
+            "completed values stay cached while they are offscreen"
         );
         job.finish_sort();
         job
+    }
+
+    #[test]
+    fn scrolling_does_not_recompute_completed_offscreen_values_or_sort_keys() {
+        let mut job = settled_offscreen_sort();
+        let keys = job.keys.clone();
+        let order = job.output.order.clone().unwrap();
+        let first = job.folders[&0].clone();
+        let mut scrolled = job.input.clone();
+        scrolled.visible = (40..80).collect();
+        job.update(scrolled);
+        job.prepare();
+        assert_eq!(job.keys, keys);
+        assert!(
+            job.requests.is_empty(),
+            "completed rows scrolled out of view must not restart folder walks"
+        );
+        assert!(!job.output.busy);
+        assert!(Arc::ptr_eq(&first, job.folders.get(&0).unwrap()));
+        assert!(job.output.rows.contains_key(&0));
+        assert!(job.output.rows.contains_key(&40));
+        job.finish_sort();
+        assert!(Arc::ptr_eq(
+            &order,
+            job.output.order.as_ref().expect("the settled order stays")
+        ));
     }
 
     #[test]
