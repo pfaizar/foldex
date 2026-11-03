@@ -293,8 +293,9 @@ impl Foldex {
     pub(super) fn titlebar(&mut self, ui: &mut Ui, rect: Rect) {
         let t = &self.theme;
         let geometry = TitlebarGeometry::new(rect, self.sidebar_width);
-        ui.painter()
-            .rect_filled(geometry.controls, 0, Theme::color(t.chrome));
+        // The strip spans the whole window, including the space above the
+        // inspector, so the titlebar reads as one continuous chrome band.
+        ui.painter().rect_filled(rect, 0, Theme::color(t.chrome));
         let drag = ui.interact(rect, Id::new("title-drag"), Sense::CLICK | Sense::DRAG);
         if drag.drag_started() {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
