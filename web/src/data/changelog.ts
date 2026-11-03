@@ -12,6 +12,19 @@ export interface Release {
 
 export const releases: Release[] = [
   {
+    version: '0.2.1',
+    date: '2026-11-03',
+    title: 'One continuous titlebar',
+    summary:
+      'The strip above the Inspector now matches the rest of the titlebar.',
+    changes: [
+      {
+        kind: 'fixed',
+        text: 'The titlebar keeps its background color across the window, including the space above the Inspector.',
+      },
+    ],
+  },
+  {
     version: '0.2.0',
     date: '2026-11-02',
     title: 'Start with Windows, smoother scrolling',

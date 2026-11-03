@@ -13,7 +13,7 @@ const repository = publicUrl(
 );
 
 // Update with each release. Asset names follow scripts/package_installer.py.
-const version = '0.2.0';
+const version = '0.2.1';
 const assets = repository
   ? `${repository.replace(/\/$/, '')}/releases/download/v${version}`
   : undefined;
